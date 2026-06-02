@@ -4,6 +4,7 @@ import threading
 import unittest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from tidal_dl import download
@@ -109,6 +110,68 @@ class DownloadBackendTests(unittest.TestCase):
         self.assertEqual(output_file.read_bytes(), b"first-second")
         self.assertFalse(partial_file.exists())
         self.assertEqual(request.call_args.kwargs["headers"], {"Range": "bytes=6-"})
+
+    def test_flac_export_without_ffmpeg_falls_back_to_m4a_container(self):
+        old_value = download.SETTINGS.saveAsFlac
+        source = self.root / "track.flac"
+        source.write_bytes(b"mp4-container")
+        stream = SimpleNamespace(codec="flac", container="mp4", manifestMimeType="application/dash+xml")
+        try:
+            download.SETTINGS.saveAsFlac = True
+            with mock.patch.object(download.shutil, "which", return_value=None):
+                final_path = download.__exportFlacFromContainer__(str(source), stream)
+        finally:
+            download.SETTINGS.saveAsFlac = old_value
+
+        fallback = self.root / "track.m4a"
+        self.assertEqual(final_path, str(fallback))
+        self.assertFalse(source.exists())
+        self.assertEqual(fallback.read_bytes(), b"mp4-container")
+
+    def test_flac_export_uses_ffmpeg_flac_muxer(self):
+        old_value = download.SETTINGS.saveAsFlac
+        source = self.root / "track.flac"
+        source.write_bytes(b"mp4-container")
+        stream = SimpleNamespace(codec="flac", container="mp4", manifestMimeType="application/dash+xml")
+
+        def fake_run(command, **kwargs):
+            Path(command[-1]).write_bytes(b"raw-flac")
+            return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+        try:
+            download.SETTINGS.saveAsFlac = True
+            with mock.patch.object(download.shutil, "which", return_value="/usr/bin/ffmpeg"), \
+                 mock.patch.object(download.subprocess, "run", side_effect=fake_run) as run:
+                final_path = download.__exportFlacFromContainer__(str(source), stream)
+        finally:
+            download.SETTINGS.saveAsFlac = old_value
+
+        self.assertEqual(final_path, str(source))
+        self.assertEqual(source.read_bytes(), b"raw-flac")
+        self.assertIn("-f", run.call_args.args[0])
+        self.assertIn("flac", run.call_args.args[0])
+
+    def test_save_as_flac_skip_accepts_existing_remuxed_file(self):
+        old_values = {
+            "saveAsFlac": download.SETTINGS.saveAsFlac,
+            "checkExist": download.SETTINGS.checkExist,
+        }
+        existing = self.root / "track.flac"
+        existing.write_bytes(b"raw-flac")
+        stream = SimpleNamespace(
+            urls=["https://example.invalid/init.mp4"],
+            codec="flac",
+            container="mp4",
+            manifestMimeType="application/dash+xml",
+        )
+        try:
+            download.SETTINGS.saveAsFlac = True
+            download.SETTINGS.checkExist = True
+            with mock.patch.object(download, "__remoteSize__", return_value=-1):
+                self.assertEqual(download.__skipPath__(str(existing), stream), str(existing))
+        finally:
+            for key, value in old_values.items():
+                setattr(download.SETTINGS, key, value)
 
 
 if __name__ == "__main__":

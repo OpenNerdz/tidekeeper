@@ -408,6 +408,8 @@ class DemoBackend(TidekeeperBackend):
         SETTINGS.downloadVideos = False
         SETTINGS.multiThread = False
         SETTINGS.downloadDelay = True
+        SETTINGS.requestIntervalSeconds = 1.0
+        SETTINGS.saveAsFlac = False
         SETTINGS.usePlaylistFolder = True
 
     def auth_status(self) -> AuthStatus:

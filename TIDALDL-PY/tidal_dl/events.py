@@ -198,8 +198,24 @@ def changeSettings():
     SETTINGS.multiThread = Printf.enterBool(LANG.select.CHANGE_MULITHREAD_DOWNLOAD)
     SETTINGS.usePlaylistFolder = Printf.enterBool(LANG.select.SETTING_USE_PLAYLIST_FOLDER + "('0'-No,'1'-Yes):")
     SETTINGS.downloadDelay = Printf.enterBool(LANG.select.CHANGE_USE_DOWNLOAD_DELAY)
+    interval_prompt = getattr(
+        LANG.select,
+        "CHANGE_REQUEST_INTERVAL_SECONDS",
+        "Request delay seconds (0=off, 30 or 60 can help rate limits):",
+    )
+    interval = Printf.enter(interval_prompt)
+    try:
+        SETTINGS.requestIntervalSeconds = max(0.0, float(interval))
+    except (TypeError, ValueError):
+        Printf.info("Keeping existing request delay seconds.")
+    SETTINGS.saveAsFlac = Printf.enterBool(getattr(
+        LANG.select,
+        "CHANGE_SAVE_AS_FLAC",
+        "Save FLAC streams as .flac files when ffmpeg can remux them('0'-No,'1'-Yes):",
+    ))
     SETTINGS.language = Printf.enter(LANG.select.CHANGE_LANGUAGE + "(" + LANG.getLangChoicePrint() + "):")
     LANG.setLang(SETTINGS.language)
+    syncPlaybackRateLimiter()
     SETTINGS.save()
 
 

@@ -164,6 +164,8 @@ class Printf(object):
             [LANG.select.SETTING_MULITHREAD_DOWNLOAD, data.multiThread],
             [LANG.select.SETTING_APIKEY, f"[{data.apiKeyIndex}]" + apiKey.getItem(data.apiKeyIndex)['formats']],
             [LANG.select.SETTING_DOWNLOAD_DELAY, data.downloadDelay],
+            [getattr(LANG.select, "SETTING_REQUEST_INTERVAL_SECONDS", "Request delay seconds"), data.requestIntervalSeconds],
+            [getattr(LANG.select, "SETTING_SAVE_AS_FLAC", "Save FLAC as .flac files"), data.saveAsFlac],
         ])
         print(tb)
 

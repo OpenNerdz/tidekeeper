@@ -381,21 +381,42 @@ def __isFlacInM4a__(stream):
     return 'flac' in codec and ('mp4' in container or 'dash+xml' in manifestMimeType)
 
 
+def __containerFallbackPath__(path):
+    return path.rsplit('.', 1)[0] + '.m4a'
+
+
+def __skipPath__(path, stream):
+    if __isSkip__(path, stream.urls):
+        return path
+
+    if not SETTINGS.checkExist:
+        return None
+
+    if SETTINGS.saveAsFlac and __isFlacInM4a__(stream):
+        for candidate in (path, __containerFallbackPath__(path)):
+            if aigpy.file.getSize(candidate) > 0:
+                return candidate
+    return None
+
+
 def __exportFlacFromContainer__(path, stream):
     if not SETTINGS.saveAsFlac or not __isFlacInM4a__(stream):
         return path
 
     flacPath = path.rsplit('.', 1)[0] + '.flac'
+    fallbackPath = __containerFallbackPath__(path)
     ffmpeg = shutil.which('ffmpeg')
     if not ffmpeg:
-        logging.warning("saveAsFlac is enabled but ffmpeg was not found; keeping %s", path)
-        return path
+        logging.warning("saveAsFlac is enabled but ffmpeg was not found; saving container as %s", fallbackPath)
+        if os.path.abspath(path) != os.path.abspath(fallbackPath):
+            os.replace(path, fallbackPath)
+        return fallbackPath
 
-    tempPath = flacPath + f'.tmp.{os.getpid()}'
+    tempPath = f"{flacPath}.tmp.{os.getpid()}.flac"
     __removeFile__(tempPath)
     try:
         completed = subprocess.run(
-            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', path, '-map', '0:a:0', '-c', 'copy', tempPath],
+            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'flac', tempPath],
             capture_output=True,
             text=True,
             check=False,
@@ -409,8 +430,10 @@ def __exportFlacFromContainer__(path, stream):
         return flacPath
     except Exception as e:
         __removeFile__(tempPath)
-        logging.warning("Unable to export FLAC for %s: %s", path, e)
-        return path
+        logging.warning("Unable to export FLAC for %s: %s; saving container as %s", path, e, fallbackPath)
+        if os.path.abspath(path) != os.path.abspath(fallbackPath):
+            os.replace(path, fallbackPath)
+        return fallbackPath
 
 
 def __lyricsText__(value):
@@ -785,10 +808,11 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             userProgress.updateStream(stream)
 
         # check exist
-        if __isSkip__(path, stream.urls):
+        skipPath = __skipPath__(path, stream)
+        if skipPath is not None:
             if SETTINGS.lyricFile:
-                __saveLyricsForTrack__(track, path)
-            Printf.success(aigpy.path.getFileName(path) + " (skip:already exists!)")
+                __saveLyricsForTrack__(track, skipPath)
+            Printf.success(aigpy.path.getFileName(skipPath) + " (skip:already exists!)")
             return True, ''
 
         # download

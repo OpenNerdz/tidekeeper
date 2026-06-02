@@ -4,11 +4,12 @@ import webbrowser
 from typing import Dict, List, Tuple
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QColor, QTextCursor
+from PySide6.QtGui import QColor, QPalette, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -21,7 +22,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -362,8 +362,10 @@ class MainWindow(QMainWindow):
         ):
             self.checks[key] = QCheckBox(label)
 
-        self.request_interval = QSpinBox()
-        self.request_interval.setRange(0, 300)
+        self.request_interval = QDoubleSpinBox()
+        self.request_interval.setRange(0.0, 300.0)
+        self.request_interval.setSingleStep(0.5)
+        self.request_interval.setDecimals(1)
         self.request_interval.setSuffix(" s")
         self.request_interval.setToolTip("Minimum delay between TIDAL playback API requests.")
         self.checks["downloadDelay"].toggled.connect(self._update_request_interval_enabled)
@@ -890,7 +892,7 @@ class MainWindow(QMainWindow):
         self.api_client.setCurrentIndex(client_index if client_index >= 0 else 0)
         for key, checkbox in self.checks.items():
             checkbox.setChecked(bool(getattr(SETTINGS, key)))
-        self.request_interval.setValue(int(max(0, round(float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0)))))
+        self.request_interval.setValue(max(0.0, float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0.0)))
         self._update_request_interval_enabled(self.checks["downloadDelay"].isChecked())
         self.album_format.setText(SETTINGS.albumFolderFormat)
         self.playlist_format.setText(SETTINGS.playlistFolderFormat)
@@ -1091,6 +1093,21 @@ class MainWindow(QMainWindow):
 
 def configure_application_theme(app: QApplication):
     app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor("#f5f7fb"))
+    palette.setColor(QPalette.WindowText, QColor("#172033"))
+    palette.setColor(QPalette.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.AlternateBase, QColor("#f8fafc"))
+    palette.setColor(QPalette.Text, QColor("#172033"))
+    palette.setColor(QPalette.Button, QColor("#ffffff"))
+    palette.setColor(QPalette.ButtonText, QColor("#172033"))
+    palette.setColor(QPalette.Highlight, QColor("#0f766e"))
+    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipText, QColor("#172033"))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor("#98a2b3"))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor("#98a2b3"))
+    app.setPalette(palette)
     hints = app.styleHints()
     if hasattr(hints, "setColorScheme"):
         hints.setColorScheme(Qt.ColorScheme.Light)
