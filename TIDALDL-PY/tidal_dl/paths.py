@@ -40,6 +40,9 @@ def __getExtension__(stream: StreamUrl):
     manifestMimeType = (stream.manifestMimeType or '').lower()
     codec = (stream.codec or '').lower()
 
+    if SETTINGS.saveAsFlac and 'flac' in codec:
+        return '.flac'
+
     if 'dash+xml' in manifestMimeType or 'mp4' in container:
         return '.m4a'
 

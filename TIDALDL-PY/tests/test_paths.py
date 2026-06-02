@@ -13,7 +13,20 @@ class PathTests(unittest.TestCase):
         stream.manifestMimeType = "application/dash+xml"
         stream.container = "mp4"
 
-        self.assertEqual(__getExtension__(stream), ".m4a")
+        with mock.patch("tidal_dl.paths.SETTINGS") as settings:
+            settings.saveAsFlac = False
+            self.assertEqual(__getExtension__(stream), ".m4a")
+
+    def test_save_as_flac_setting_uses_flac_extension_for_dash_flac(self):
+        stream = StreamUrl()
+        stream.url = "https://example.invalid/init.mp4"
+        stream.codec = "flac"
+        stream.manifestMimeType = "application/dash+xml"
+        stream.container = "mp4"
+
+        with mock.patch("tidal_dl.paths.SETTINGS") as settings:
+            settings.saveAsFlac = True
+            self.assertEqual(__getExtension__(stream), ".flac")
 
     def test_native_flac_url_uses_flac_extension(self):
         stream = StreamUrl()

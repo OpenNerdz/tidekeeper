@@ -17,7 +17,7 @@ from ..events import loginByConfig, logout, start, start_type
 from ..lang.language import LANG
 from ..paths import getProfilePath, getTokenPath, openPath
 from ..printf import VERSION
-from ..settings import SETTINGS, TOKEN
+from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter
 from ..tidal import TIDAL_API
 from ..updater import run_update
 
@@ -318,6 +318,8 @@ class TidekeeperBackend:
         SETTINGS.downloadVideos = values["downloadVideos"]
         SETTINGS.multiThread = values["multiThread"]
         SETTINGS.downloadDelay = values["downloadDelay"]
+        SETTINGS.requestIntervalSeconds = max(0.0, float(values.get("requestIntervalSeconds", 1.0) or 0.0))
+        SETTINGS.saveAsFlac = values.get("saveAsFlac", False)
         SETTINGS.usePlaylistFolder = values["usePlaylistFolder"]
         SETTINGS.showProgress = values["showProgress"]
         SETTINGS.showTrackInfo = values["showTrackInfo"]
@@ -330,6 +332,7 @@ class TidekeeperBackend:
         TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
         LANG.setLang(SETTINGS.language)
         SETTINGS.save()
+        syncPlaybackRateLimiter()
 
     def open_download_folder(self, path: str = "") -> str:
         return openPath(path or SETTINGS.downloadPath)

@@ -12,6 +12,7 @@
 import logging
 import os
 import shutil
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock, local
@@ -371,6 +372,45 @@ def __encrypted__(stream, srcPath, descPath):
         key, nonce = decrypt_security_token(stream.encryptionKey)
         decrypt_file(srcPath, descPath, key, nonce)
         os.remove(srcPath)
+
+
+def __isFlacInM4a__(stream):
+    codec = (getattr(stream, 'codec', None) or '').lower()
+    container = (getattr(stream, 'container', None) or '').lower()
+    manifestMimeType = (getattr(stream, 'manifestMimeType', None) or '').lower()
+    return 'flac' in codec and ('mp4' in container or 'dash+xml' in manifestMimeType)
+
+
+def __exportFlacFromContainer__(path, stream):
+    if not SETTINGS.saveAsFlac or not __isFlacInM4a__(stream):
+        return path
+
+    flacPath = path.rsplit('.', 1)[0] + '.flac'
+    ffmpeg = shutil.which('ffmpeg')
+    if not ffmpeg:
+        logging.warning("saveAsFlac is enabled but ffmpeg was not found; keeping %s", path)
+        return path
+
+    tempPath = flacPath + f'.tmp.{os.getpid()}'
+    __removeFile__(tempPath)
+    try:
+        completed = subprocess.run(
+            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', path, '-map', '0:a:0', '-c', 'copy', tempPath],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or '').strip()
+            raise RuntimeError(detail or f"ffmpeg exited with code {completed.returncode}")
+        os.replace(tempPath, flacPath)
+        if os.path.abspath(path) != os.path.abspath(flacPath):
+            __removeFile__(path)
+        return flacPath
+    except Exception as e:
+        __removeFile__(tempPath)
+        logging.warning("Unable to export FLAC for %s: %s", path, e)
+        return path
 
 
 def __lyricsText__(value):
@@ -773,6 +813,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         # encrypted -> decrypt and remove encrypted file
         __encrypted__(stream, partPath, path)
+        path = __exportFlacFromContainer__(path, stream)
 
         # contributors
         try:

@@ -76,6 +76,21 @@ class TidalAPI(object):
         self.session.mount("https://", adapter)
         self.playbackRateLimiter = PLAYBACK_RATE_LIMITER
 
+    def __responseBody__(self, response):
+        try:
+            return response.json()
+        except ValueError:
+            return {}
+
+    def __isAssetNotReady__(self, response):
+        if response is None or response.status_code != 401:
+            return False
+        body = self.__responseBody__(response)
+        if body.get('subStatus') == 4005:
+            return True
+        message = str(body.get('userMessage', '')).lower()
+        return 'not ready for playback' in message
+
     def __responseErrorCodes__(self, response):
         try:
             data = response.json()
@@ -139,10 +154,13 @@ class TidalAPI(object):
         respond = None
         refreshedToken = False
         url = urlpre + path
-        for index in range(0, 3):
+        playbackRequest = "playbackinfopostpaywall" in url
+        maxAttempts = 6 if playbackRequest else 3
+        for index in range(0, maxAttempts):
             try:
                 header = {'authorization': f'Bearer {self.key.accessToken}'}
-                if "playbackinfopostpaywall" in url and SETTINGS.downloadDelay is not False:
+                if playbackRequest and SETTINGS.downloadDelay is not False:
+                    syncPlaybackRateLimiter()
                     self.playbackRateLimiter.wait()
 
                 respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT)
@@ -150,6 +168,13 @@ class TidalAPI(object):
                 if respond.status_code == 429:
                     delay = self.__retryAfter__(respond, index)
                     print(f"Too many requests, waiting {delay:g} seconds before retry.")
+                    time.sleep(delay)
+                    continue
+
+                if respond.status_code == 401 and self.__isAssetNotReady__(respond):
+                    delay = min(5 * (index + 1), 30)
+                    print(f"Asset not ready for playback, waiting {delay:g} seconds before retry.")
+                    respond.close()
                     time.sleep(delay)
                     continue
 
@@ -168,10 +193,10 @@ class TidalAPI(object):
                     errmsg += result['userMessage']
                 break
             except TidalApiError as e:
-                if index == 2:
+                if index >= maxAttempts - 1:
                     raise e
             except Exception as e:
-                if index == 2 and respond is not None:
+                if index >= maxAttempts - 1 and respond is not None:
                     errmsg += respond.text
 
         raise Exception(errmsg)

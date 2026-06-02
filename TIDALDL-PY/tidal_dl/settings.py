@@ -31,6 +31,8 @@ class Settings(aigpy.model.ModelBase):
     downloadVideos = True
     multiThread = False
     downloadDelay = True
+    requestIntervalSeconds = 1.0
+    saveAsFlac = False
 
     downloadPath = "./download/"
     audioQuality = AudioQuality.Normal
@@ -137,10 +139,17 @@ class Settings(aigpy.model.ModelBase):
             self.videoFileFormat = self.getDefaultPathFormat(Type.Video)
         if self.apiKeyIndex is None:
             self.apiKeyIndex = 0
+        if getattr(self, 'requestIntervalSeconds', None) is None:
+            self.requestIntervalSeconds = 1.0
+        else:
+            self.requestIntervalSeconds = max(0.0, float(self.requestIntervalSeconds))
+        if getattr(self, 'saveAsFlac', None) is None:
+            self.saveAsFlac = False
         if not hasSavedSettings:
             self.downloadPath = getDefaultDownloadPath()
 
         LANG.setLang(self.language)
+        syncPlaybackRateLimiter()
 
     def save(self):
         data = aigpy.model.modelToDict(self)
@@ -194,6 +203,15 @@ class TokenSettings(aigpy.model.ModelBase):
                 os.chmod(self._path_, 0o600)
             except OSError:
                 pass
+
+
+def syncPlaybackRateLimiter():
+    from .tidal import PLAYBACK_RATE_LIMITER
+
+    if SETTINGS.downloadDelay is False:
+        PLAYBACK_RATE_LIMITER.minInterval = 0.0
+        return
+    PLAYBACK_RATE_LIMITER.minInterval = max(0.0, float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0.0))
 
 
 # Singleton

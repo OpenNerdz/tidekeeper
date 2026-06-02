@@ -4,7 +4,7 @@ import webbrowser
 from typing import Dict, List, Tuple
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -32,7 +33,7 @@ from PySide6.QtWidgets import (
 from ..enums import AudioQuality, Type, VideoQuality
 from ..settings import SETTINGS
 from .backend import SearchItem, TidekeeperBackend, with_video_only
-from .style import APP_STYLESHEET
+from .style import APP_STYLESHEET, TABLE_TEXT_COLOR
 from .workers import DownloadWorker, TaskWorker
 
 
@@ -356,9 +357,16 @@ class MainWindow(QMainWindow):
             ("downloadVideos", "Download videos"),
             ("multiThread", "Parallel downloads"),
             ("downloadDelay", "Use request delay"),
+            ("saveAsFlac", "Save FLAC as .flac files"),
             ("usePlaylistFolder", "Use playlist folders"),
         ):
             self.checks[key] = QCheckBox(label)
+
+        self.request_interval = QSpinBox()
+        self.request_interval.setRange(0, 300)
+        self.request_interval.setSuffix(" s")
+        self.request_interval.setToolTip("Minimum delay between TIDAL playback API requests.")
+        self.checks["downloadDelay"].toggled.connect(self._update_request_interval_enabled)
 
         self.album_format = QLineEdit()
         self.playlist_format = QLineEdit()
@@ -438,13 +446,16 @@ class MainWindow(QMainWindow):
         groups = [
             ("Files", ["checkExist", "saveCovers", "lyricFile", "saveAlbumInfo", "usePlaylistFolder"]),
             ("Catalog", ["includeEP", "downloadVideos"]),
-            ("Run behavior", ["multiThread", "downloadDelay", "showProgress", "showTrackInfo"]),
+            ("Run behavior", ["multiThread", "downloadDelay", "saveAsFlac", "showProgress", "showTrackInfo"]),
         ]
         for column, (title, keys) in enumerate(groups):
             grid.addWidget(_label(title, "SectionTitle"), 0, column)
             for row, key in enumerate(keys, start=1):
                 grid.addWidget(self.checks[key], row, column)
             grid.setColumnStretch(column, 1)
+        grid.addWidget(_label("Request interval", "SectionTitle"), 0, len(groups))
+        grid.addWidget(self.request_interval, 1, len(groups))
+        grid.setColumnStretch(len(groups), 1)
         return _panel(grid)
 
     def _build_naming_settings_panel(self) -> QFrame:
@@ -549,6 +560,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.account_log, 1)
         return page
 
+    def _table_cell(self, value, item=None) -> QTableWidgetItem:
+        cell = QTableWidgetItem(str(value))
+        cell.setForeground(QColor(TABLE_TEXT_COLOR))
+        if item is not None:
+            cell.setData(Qt.UserRole, item)
+        return cell
+
+    def _update_request_interval_enabled(self, enabled: bool):
+        self.request_interval.setEnabled(enabled)
+
     def _setup_table(self, table: QTableWidget, headers: List[str]):
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
@@ -610,9 +631,7 @@ class MainWindow(QMainWindow):
         for row, item in enumerate(items):
             values = [item.kind.name, item.title, item.artists, item.quality, item.duration, item.identifier]
             for col, value in enumerate(values):
-                cell = QTableWidgetItem(str(value))
-                if col == 0:
-                    cell.setData(Qt.UserRole, item)
+                cell = self._table_cell(value, item if col == 0 else None)
                 if col == 5:
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.results_table.setItem(row, col, cell)
@@ -764,10 +783,7 @@ class MainWindow(QMainWindow):
                 kind += " videos"
             values = [kind, item.title, item.artists, item.quality, "Queued"]
             for col, value in enumerate(values):
-                cell = QTableWidgetItem(str(value))
-                if col == 0:
-                    cell.setData(Qt.UserRole, item)
-                self.queue_table.setItem(row, col, cell)
+                self.queue_table.setItem(row, col, self._table_cell(value, item if col == 0 else None))
         self.queue_table.setSortingEnabled(True)
         self.queue_status.setText(f"{len(self.queue)} item{'s' if len(self.queue) != 1 else ''} in queue.")
         self.update_queue_actions()
@@ -874,6 +890,8 @@ class MainWindow(QMainWindow):
         self.api_client.setCurrentIndex(client_index if client_index >= 0 else 0)
         for key, checkbox in self.checks.items():
             checkbox.setChecked(bool(getattr(SETTINGS, key)))
+        self.request_interval.setValue(int(max(0, round(float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0)))))
+        self._update_request_interval_enabled(self.checks["downloadDelay"].isChecked())
         self.album_format.setText(SETTINGS.albumFolderFormat)
         self.playlist_format.setText(SETTINGS.playlistFolderFormat)
         self.track_format.setText(SETTINGS.trackFileFormat)
@@ -945,6 +963,7 @@ class MainWindow(QMainWindow):
             "apiKeyIndex": self.api_client.currentData(),
         }
         values.update({key: checkbox.isChecked() for key, checkbox in self.checks.items()})
+        values["requestIntervalSeconds"] = float(self.request_interval.value())
         self.backend.save_settings(values)
         self.settings_status.setText("Settings saved.")
 
@@ -1070,8 +1089,16 @@ class MainWindow(QMainWindow):
         )
 
 
+def configure_application_theme(app: QApplication):
+    app.setStyle("Fusion")
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):
+        hints.setColorScheme(Qt.ColorScheme.Light)
+
+
 def run_app(backend: TidekeeperBackend):
     app = QApplication.instance() or QApplication([])
+    configure_application_theme(app)
     backend.initialize()
     window = MainWindow(backend)
     window.show()

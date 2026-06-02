@@ -1,3 +1,6 @@
+TABLE_TEXT_COLOR = "#172033"
+TABLE_ALT_COLOR = "#f8fafc"
+
 APP_STYLESHEET = """
 * {
     font-family: "Segoe UI", "Inter", "Noto Sans", Arial, sans-serif;
@@ -220,5 +223,23 @@ QScrollBar::handle:vertical {
     background: #cbd5e1;
     border-radius: 6px;
     min-height: 24px;
+}
+
+QMenu, QMenuBar, QMenuBar::item {
+    background: #ffffff;
+    color: #172033;
+    border: 1px solid #e4e7ec;
+}
+
+QMenu::item:selected, QMenuBar::item:selected {
+    background: #dff3ec;
+    color: #0f172a;
+}
+
+QListView, QAbstractItemView {
+    background: #ffffff;
+    color: #172033;
+    selection-background-color: #dff3ec;
+    selection-color: #0f172a;
 }
 """

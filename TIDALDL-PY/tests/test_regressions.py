@@ -355,6 +355,41 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             for key, value in old_values.items():
                 setattr(events.TOKEN, key, value)
 
+    def test_playback_asset_not_ready_retries_before_failing(self):
+        api = TidalAPI()
+        manifest = base64.b64encode(json.dumps({
+            "codecs": "flac",
+            "urls": ["https://example.invalid/track.flac"],
+            "mimeType": "audio/flac",
+        }).encode("utf-8")).decode("utf-8")
+
+        def fake_response(status_code, payload):
+            return SimpleNamespace(
+                status_code=status_code,
+                text=json.dumps(payload),
+                headers={},
+                close=mock.Mock(),
+            )
+
+        with mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
+             mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+             mock.patch.object(api.session, "get", side_effect=[
+                 fake_response(401, {"status": 401, "subStatus": 4005, "userMessage": "Asset is not ready for playback"}),
+                 fake_response(200, {
+                     "trackid": 123,
+                     "audioQuality": "LOSSLESS",
+                     "manifestMimeType": "application/vnd.tidal.bt",
+                     "manifest": manifest,
+                 }),
+             ]):
+            data = api.__get__(
+                "tracks/123/playbackinfopostpaywall",
+                {"audioquality": "LOSSLESS", "playbackmode": "STREAM", "assetpresentation": "FULL"},
+            )
+
+        self.assertEqual(data["trackid"], 123)
+        sleep.assert_called_once()
+
     def test_playback_api_requests_use_rate_limiter(self):
         api = TidalAPI()
         old_delay = events.SETTINGS.downloadDelay
