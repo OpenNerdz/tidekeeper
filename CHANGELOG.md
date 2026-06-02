@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed downloads labeled FLAC saving with .m4a extension: now use .flac for FLAC codec (with optional ffmpeg remux from containerized DASH segments to produce valid standalone FLAC files; falls back gracefully).
+- Fixed GUI elements (menus, track lists, sections) invisible or white/blank on Windows 11 dark theme by forcing Fusion style + explicit light QPalette + expanded stylesheet rules.
+- Added configurable request delay interval (downloadDelaySec) to manually set seconds between audio stream requests, helping avoid Tidal rate limiting (CLI prompt, GUI spinbox, settings, dynamic rate limiter).
+- Improved vague "can't download" cases with better error hints in output (quality, network, permission, disk), Windows-specific doctor advice, and more actionable messages.
+- Updated tests, paths logic, GUI, CLI, backend, diagnostics, and docs accordingly.
 - Added video-only artist downloads in the terminal and desktop GUI.
 - Improved download reliability with resumable single-file downloads, safer final-file replacement, pooled HTTP sessions, token refresh retry on expired API calls, and reduced duplicate album/cover lookups.
 - Added a README GUI gallery with Search, Queue, Settings, and Account screenshots.

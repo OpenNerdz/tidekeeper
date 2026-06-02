@@ -164,6 +164,7 @@ class Printf(object):
             [LANG.select.SETTING_MULITHREAD_DOWNLOAD, data.multiThread],
             [LANG.select.SETTING_APIKEY, f"[{data.apiKeyIndex}]" + apiKey.getItem(data.apiKeyIndex)['formats']],
             [LANG.select.SETTING_DOWNLOAD_DELAY, data.downloadDelay],
+            [LANG.select.SETTING_DOWNLOAD_DELAY_SEC or "Request delay (sec)", getattr(data, "downloadDelaySec", 1.0)],
         ])
         print(tb)
 

@@ -40,6 +40,14 @@ def __getExtension__(stream: StreamUrl):
     manifestMimeType = (stream.manifestMimeType or '').lower()
     codec = (stream.codec or '').lower()
 
+    # Prefer raw extension based on codec for lossless etc. Dash/ mp4 container
+    # FLAC from openapi is often delivered as mp4-wrapped segments; remux in
+    # download.py turns it into proper .flac when ffmpeg is available.
+    if codec in ('flac', 'fLaC', 'FLAC'):
+        return '.flac'
+    if codec in ('ec-3', 'eac3', 'ac-3', 'aac'):
+        return '.m4a'
+
     if 'dash+xml' in manifestMimeType or 'mp4' in container:
         return '.m4a'
 

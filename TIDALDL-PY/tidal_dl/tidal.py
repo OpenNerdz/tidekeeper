@@ -31,10 +31,23 @@ REQUEST_TIMEOUT = (5, 60)
 
 class RequestRateLimiter:
     def __init__(self, minInterval=1.0, jitter=0.5):
-        self.minInterval = minInterval
+        self._minInterval = minInterval
         self.jitter = jitter
         self._lock = Lock()
         self._nextAllowed = 0.0
+
+    @property
+    def minInterval(self):
+        try:
+            if hasattr(SETTINGS, "downloadDelaySec") and SETTINGS.downloadDelaySec is not None:
+                return max(0.0, float(SETTINGS.downloadDelaySec))
+        except Exception:
+            pass
+        return self._minInterval
+
+    @minInterval.setter
+    def minInterval(self, v):
+        self._minInterval = float(v) if v is not None else 1.0
 
     def wait(self):
         if self.minInterval <= 0:

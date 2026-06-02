@@ -4,11 +4,12 @@ import webbrowser
 from typing import Dict, List, Tuple
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QBrush, QColor, QPalette, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -360,6 +361,17 @@ class MainWindow(QMainWindow):
         ):
             self.checks[key] = QCheckBox(label)
 
+        self.delay_sec = QDoubleSpinBox()
+        self.delay_sec.setRange(0.0, 300.0)
+        self.delay_sec.setSingleStep(0.5)
+        self.delay_sec.setDecimals(1)
+        self.delay_sec.setSuffix(" s")
+        self.delay_sec.setToolTip(
+            "Interval (seconds) between each audio stream request. "
+            "Raise this (e.g. 5s or 30s) if Tidal rate limits your account. "
+            "0 disables the delay. Applies when 'Use request delay' is on."
+        )
+
         self.album_format = QLineEdit()
         self.playlist_format = QLineEdit()
         self.track_format = QLineEdit()
@@ -445,6 +457,9 @@ class MainWindow(QMainWindow):
             for row, key in enumerate(keys, start=1):
                 grid.addWidget(self.checks[key], row, column)
             grid.setColumnStretch(column, 1)
+        # delay seconds config (under run behavior)
+        grid.addWidget(_label("Request delay (sec)", "Muted"), 6, 2)
+        grid.addWidget(self.delay_sec, 7, 2)
         return _panel(grid)
 
     def _build_naming_settings_panel(self) -> QFrame:
@@ -874,6 +889,7 @@ class MainWindow(QMainWindow):
         self.api_client.setCurrentIndex(client_index if client_index >= 0 else 0)
         for key, checkbox in self.checks.items():
             checkbox.setChecked(bool(getattr(SETTINGS, key)))
+        self.delay_sec.setValue(float(getattr(SETTINGS, "downloadDelaySec", 1.0)))
         self.album_format.setText(SETTINGS.albumFolderFormat)
         self.playlist_format.setText(SETTINGS.playlistFolderFormat)
         self.track_format.setText(SETTINGS.trackFileFormat)
@@ -945,6 +961,7 @@ class MainWindow(QMainWindow):
             "apiKeyIndex": self.api_client.currentData(),
         }
         values.update({key: checkbox.isChecked() for key, checkbox in self.checks.items()})
+        values["downloadDelaySec"] = float(self.delay_sec.value())
         self.backend.save_settings(values)
         self.settings_status.setText("Settings saved.")
 
@@ -1072,6 +1089,28 @@ class MainWindow(QMainWindow):
 
 def run_app(backend: TidekeeperBackend):
     app = QApplication.instance() or QApplication([])
+    # Force Fusion style + explicit light palette so custom stylesheet
+    # (light panels, dark text) is respected on Windows 11 dark theme etc.
+    # This prevents system dark mode from making nav/text "all white" or
+    # sections invisible/blank.
+    app.setStyle("Fusion")
+    palette = QPalette()
+    # Window / base light bg
+    palette.setColor(QPalette.Window, QColor("#f5f7fb"))
+    palette.setColor(QPalette.WindowText, QColor("#172033"))
+    palette.setColor(QPalette.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.AlternateBase, QColor("#f8fafc"))
+    palette.setColor(QPalette.Text, QColor("#172033"))
+    palette.setColor(QPalette.Button, QColor("#ffffff"))
+    palette.setColor(QPalette.ButtonText, QColor("#172033"))
+    palette.setColor(QPalette.Highlight, QColor("#0f766e"))
+    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipText, QColor("#172033"))
+    # Disabled
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor("#98a2b3"))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor("#98a2b3"))
+    app.setPalette(palette)
     backend.initialize()
     window = MainWindow(backend)
     window.show()

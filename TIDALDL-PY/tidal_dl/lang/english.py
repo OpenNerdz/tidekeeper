@@ -44,6 +44,7 @@ class LangEnglish(object):
     SETTING_APIKEY = "APIKey support"
     SETTING_ADD_TYPE_FOLDER = "Add Type-Folder"
     SETTING_DOWNLOAD_DELAY = "Use Download Delay"
+    SETTING_DOWNLOAD_DELAY_SEC = "Request delay seconds (between audio requests)"
 
     CHOICE = "CHOICE"
     FUNCTION = "FUNCTION"
@@ -95,6 +96,7 @@ class LangEnglish(object):
     CHANGE_ADD_TYPE_FOLDER = "Add Type-Folder,eg Album/Video/Playlist('0'-No,'1'-Yes):"
     CHANGE_MULITHREAD_DOWNLOAD = "Multi thread download('0'-No,'1'-Yes):"
     CHANGE_USE_DOWNLOAD_DELAY = "Use Download Delay('0'-No,'1'-Yes):"
+    CHANGE_DOWNLOAD_DELAY_SEC = "Request delay seconds (0.5-60 recommended; 0=off) (current {0}):"
 
     # {} are required in these strings
     AUTH_START_LOGIN = "Starting login process..."

@@ -5,6 +5,25 @@ APP_STYLESHEET = """
     letter-spacing: 0px;
 }
 
+/* Force light theme colors even if system (Win11 dark) tries to override */
+QWidget, QMainWindow, QFrame {
+    background-color: #f5f7fb;
+    color: #172033;
+}
+QWidget#Root, QMainWindow {
+    background: #f5f7fb;
+    color: #172033;
+}
+QMenu, QMenuBar {
+    background: #ffffff;
+    color: #172033;
+    border: 1px solid #e4e7ec;
+}
+QMenu::item:selected {
+    background: #dff3ec;
+    color: #0f172a;
+}
+
 QMainWindow, QWidget#Root {
     background: #f5f7fb;
     color: #172033;

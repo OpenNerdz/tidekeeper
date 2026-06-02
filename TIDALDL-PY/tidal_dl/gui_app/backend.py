@@ -318,6 +318,11 @@ class TidekeeperBackend:
         SETTINGS.downloadVideos = values["downloadVideos"]
         SETTINGS.multiThread = values["multiThread"]
         SETTINGS.downloadDelay = values["downloadDelay"]
+        if "downloadDelaySec" in values:
+            try:
+                SETTINGS.downloadDelaySec = float(values["downloadDelaySec"])
+            except Exception:
+                pass
         SETTINGS.usePlaylistFolder = values["usePlaylistFolder"]
         SETTINGS.showProgress = values["showProgress"]
         SETTINGS.showTrackInfo = values["showTrackInfo"]
@@ -405,6 +410,7 @@ class DemoBackend(TidekeeperBackend):
         SETTINGS.downloadVideos = False
         SETTINGS.multiThread = False
         SETTINGS.downloadDelay = True
+        SETTINGS.downloadDelaySec = 1.0
         SETTINGS.usePlaylistFolder = True
 
     def auth_status(self) -> AuthStatus:

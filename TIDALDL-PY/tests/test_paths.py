@@ -6,14 +6,14 @@ from tidal_dl.paths import __getExtension__, getConfigDirectory, getPathSummary,
 
 
 class PathTests(unittest.TestCase):
-    def test_dash_flac_in_mp4_container_uses_m4a_extension(self):
+    def test_flac_codec_uses_flac_extension_even_for_dash_container(self):
         stream = StreamUrl()
         stream.url = "https://example.invalid/init.mp4"
         stream.codec = "flac"
         stream.manifestMimeType = "application/dash+xml"
         stream.container = "mp4"
 
-        self.assertEqual(__getExtension__(stream), ".m4a")
+        self.assertEqual(__getExtension__(stream), ".flac")
 
     def test_native_flac_url_uses_flac_extension(self):
         stream = StreamUrl()

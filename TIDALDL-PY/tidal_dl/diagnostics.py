@@ -2,6 +2,7 @@
 # -*- encoding: utf-8 -*-
 import os
 import shutil
+import sys
 
 import aigpy
 
@@ -69,6 +70,8 @@ def __checkToken__():
 
 def runDoctor():
     print("Tidekeeper doctor")
+    if sys.platform.startswith("win"):
+        Printf.info("Platform: Windows - common download issues: path permissions, long paths (>260 chars), antivirus blocking, or need to run terminal as normal user (not over-protected dirs).")
     checks = [
         __checkDownloadPath__(),
         __checkApiKey__(),

@@ -198,6 +198,13 @@ def changeSettings():
     SETTINGS.multiThread = Printf.enterBool(LANG.select.CHANGE_MULITHREAD_DOWNLOAD)
     SETTINGS.usePlaylistFolder = Printf.enterBool(LANG.select.SETTING_USE_PLAYLIST_FOLDER + "('0'-No,'1'-Yes):")
     SETTINGS.downloadDelay = Printf.enterBool(LANG.select.CHANGE_USE_DOWNLOAD_DELAY)
+    try:
+        cur = getattr(SETTINGS, "downloadDelaySec", 1.0)
+        sec_str = Printf.enter((LANG.select.CHANGE_DOWNLOAD_DELAY_SEC or "Request delay seconds (e.g. 1 or 30):").format(cur))
+        sec = float(sec_str)
+        SETTINGS.downloadDelaySec = max(0.0, sec)
+    except Exception:
+        pass
     SETTINGS.language = Printf.enter(LANG.select.CHANGE_LANGUAGE + "(" + LANG.getLangChoicePrint() + "):")
     LANG.setLang(SETTINGS.language)
     SETTINGS.save()

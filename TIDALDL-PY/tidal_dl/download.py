@@ -12,6 +12,7 @@
 import logging
 import os
 import shutil
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock, local
@@ -364,6 +365,21 @@ def __isSkip__(finalpath, urls):
     return curSize >= netSize
 
 
+def __downloadErrorHint__(err: str) -> str:
+    e = (err or "").lower()
+    if any(x in e for x in ("403", "entitled", "not allowed", "client_not_entitled")):
+        return " (hint: quality not available for account/track; try lower --quality or set audioQualityPriority to fallback)"
+    if any(x in e for x in ("timeout", "connection", "network", "name or service not known")):
+        return " (hint: network/timeout; run 'tidekeeper --doctor', check internet/firewall/VPN/proxy)"
+    if any(x in e for x in ("permission", "denied", "access is denied", "readonly")):
+        return " (hint: download path permission issue on Windows; ensure folder writable, avoid protected dirs like C:\\, or try different downloadPath)"
+    if "disk" in e or "space" in e or "no space" in e:
+        return " (hint: disk full or quota)"
+    if "ffmpeg" in e and "video" in e:
+        return " (hint: video download may need ffmpeg installed)"
+    return ""
+
+
 def __encrypted__(stream, srcPath, descPath):
     if aigpy.string.isNull(stream.encryptionKey):
         os.replace(srcPath, descPath)
@@ -371,6 +387,47 @@ def __encrypted__(stream, srcPath, descPath):
         key, nonce = decrypt_security_token(stream.encryptionKey)
         decrypt_file(srcPath, descPath, key, nonce)
         os.remove(srcPath)
+
+
+def __isRawFlac__(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"fLaC"
+    except Exception:
+        return False
+
+
+def __remuxToFlac__(src: str, dst: str) -> bool:
+    """Remux audio (e.g. flac-in-mp4) to standalone .flac using ffmpeg -c copy."""
+    if not shutil.which("ffmpeg"):
+        return False
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        src,
+        "-c:a",
+        "copy",
+        "-f",
+        "flac",
+        dst,
+    ]
+    try:
+        subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=300,
+        )
+        return True
+    except Exception:
+        try:
+            if os.path.exists(dst):
+                os.remove(dst)
+        except Exception:
+            pass
+        return False
 
 
 def __lyricsText__(value):
@@ -768,11 +825,35 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         if not check:
             __removeFile__(partPath)
             __logFailedTrack__(track, album, playlist, err)
-            Printf.err(f"DL Track '{title}' failed: {str(err)}")
+            hint = __downloadErrorHint__(str(err))
+            Printf.err(f"DL Track '{title}' failed: {str(err)}{hint}")
             return False, str(err)
 
         # encrypted -> decrypt and remove encrypted file
         __encrypted__(stream, partPath, path)
+
+        # Ensure FLAC codec results in a proper .flac file (remux from mp4/dash
+        # container segments used by Tidal openapi lossless). Falls back to .m4a
+        # if ffmpeg not present (see doctor output).
+        final_path = path
+        try:
+            stream_codec = (getattr(stream, "codec", None) or "").lower()
+            if stream_codec in ("flac", "fLaC") and path.lower().endswith(".flac"):
+                if not __isRawFlac__(path):
+                    tmp = path + ".remux"
+                    if __remuxToFlac__(path, tmp):
+                        os.replace(tmp, path)
+                    else:
+                        m4a_path = path[:-5] + ".m4a"
+                        if os.path.exists(path):
+                            try:
+                                os.replace(path, m4a_path)
+                                final_path = m4a_path
+                                Printf.info("FLAC content saved as .m4a container (install ffmpeg for native .flac)")
+                            except Exception:
+                                pass
+        except Exception:
+            pass
 
         # contributors
         try:
@@ -780,12 +861,12 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         except:
             contributors = None
 
-        lyrics = __saveLyricsForTrack__(track, path)
+        lyrics = __saveLyricsForTrack__(track, final_path)
 
         try:
-            __setMetaData__(track, album, path, contributors, lyrics)
+            __setMetaData__(track, album, final_path, contributors, lyrics)
         except Exception as e:
-            logging.warning("Unable to write metadata for %s: %s", path, e)
+            logging.warning("Unable to write metadata for %s: %s", final_path, e)
             Printf.info(f"Downloaded '{title}', but metadata tagging was skipped: {str(e)}")
         Printf.success(title)
 
@@ -793,7 +874,8 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
     except Exception as e:
         __removeFile__(locals().get('partPath', ''))
         __logFailedTrack__(track, album, playlist, e)
-        Printf.err(f"DL Track '{title}' failed: {str(e)}")
+        hint = __downloadErrorHint__(str(e))
+        Printf.err(f"DL Track '{title}' failed: {str(e)}{hint}")
         return False, str(e)
 
 
