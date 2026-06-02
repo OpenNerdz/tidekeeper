@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2026.6.2.0 - 2026-06-02
+
+- Fixed the desktop GUI on Windows 11 dark mode so menus, search results, and settings are readable instead of blank or all white.
+- Added an optional **Save FLAC as .flac files** setting (GUI and CLI); uses ffmpeg when available and keeps `.m4a` if conversion is not possible.
+- Added a configurable **request interval** between TIDAL playback requests (GUI and CLI) to help with rate limiting.
+- Improved download handling when TIDAL says a track is not ready yet, with automatic retries and clearer error hints.
 - Added video-only artist downloads in the terminal and desktop GUI.
 - Improved download reliability with resumable single-file downloads, safer final-file replacement, pooled HTTP sessions, token refresh retry on expired API calls, and reduced duplicate album/cover lookups.
 - Added a README GUI gallery with Search, Queue, Settings, and Account screenshots.
