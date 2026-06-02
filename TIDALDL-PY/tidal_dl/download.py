@@ -365,6 +365,21 @@ def __isSkip__(finalpath, urls):
     return curSize >= netSize
 
 
+def __downloadErrorHint__(err):
+    text = str(err or "").lower()
+    if any(item in text for item in ("429", "too many requests", "rate limit")):
+        return " (hint: raise the request interval in settings and retry)"
+    if any(item in text for item in ("403", "entitled", "not allowed", "client_not_entitled")):
+        return " (hint: stream may be unavailable for this account or quality; try a lower quality/fallback order)"
+    if any(item in text for item in ("timeout", "connection", "network", "name or service not known")):
+        return " (hint: check network/VPN/proxy/firewall, or run tidekeeper --doctor)"
+    if any(item in text for item in ("permission", "denied", "access is denied", "readonly")):
+        return " (hint: choose a writable download folder outside protected system directories)"
+    if "disk" in text or "space" in text or "no space" in text:
+        return " (hint: check available disk space)"
+    return ""
+
+
 def __encrypted__(stream, srcPath, descPath):
     if aigpy.string.isNull(stream.encryptionKey):
         os.replace(srcPath, descPath)
@@ -832,7 +847,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         if not check:
             __removeFile__(partPath)
             __logFailedTrack__(track, album, playlist, err)
-            Printf.err(f"DL Track '{title}' failed: {str(err)}")
+            Printf.err(f"DL Track '{title}' failed: {str(err)}{__downloadErrorHint__(err)}")
             return False, str(err)
 
         # encrypted -> decrypt and remove encrypted file
@@ -858,7 +873,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
     except Exception as e:
         __removeFile__(locals().get('partPath', ''))
         __logFailedTrack__(track, album, playlist, e)
-        Printf.err(f"DL Track '{title}' failed: {str(e)}")
+        Printf.err(f"DL Track '{title}' failed: {str(e)}{__downloadErrorHint__(e)}")
         return False, str(e)
 
 
