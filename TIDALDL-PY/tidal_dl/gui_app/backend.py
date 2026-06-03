@@ -397,8 +397,10 @@ class TidekeeperBackend:
 class DemoBackend(TidekeeperBackend):
     def initialize(self):
         SETTINGS.downloadPath = "/Music/Tidekeeper"
+        from ..settings import getDefaultAudioQualityPriority
+
         SETTINGS.audioQuality = AudioQuality.Max
-        SETTINGS.audioQualityPriority = [AudioQuality.Max, AudioQuality.HiFi, AudioQuality.High]
+        SETTINGS.audioQualityPriority = getDefaultAudioQualityPriority()
         SETTINGS.videoQuality = VideoQuality.P1080
         SETTINGS.checkExist = True
         SETTINGS.includeEP = True

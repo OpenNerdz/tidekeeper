@@ -18,6 +18,15 @@ from .enums import *
 from .environment import getDefaultDownloadPath
 
 
+def getDefaultAudioQualityPriority():
+    return [
+        AudioQuality.Max,
+        AudioQuality.HiFi,
+        AudioQuality.High,
+        AudioQuality.Normal,
+    ]
+
+
 class Settings(aigpy.model.ModelBase):
     checkExist = True
     includeEP = True
@@ -35,7 +44,7 @@ class Settings(aigpy.model.ModelBase):
     saveAsFlac = False
 
     downloadPath = "./download/"
-    audioQuality = AudioQuality.Normal
+    audioQuality = AudioQuality.Max
     audioQualityPriority = []
     videoQuality = VideoQuality.P360
     usePlaylistFolder = True
@@ -85,7 +94,7 @@ class Settings(aigpy.model.ModelBase):
         return None
 
     def getAudioQuality(self, value):
-        return self.getAudioQualityOrNone(value) or AudioQuality.Normal
+        return self.getAudioQualityOrNone(value) or AudioQuality.Max
 
     def getAudioQualityPriority(self, value):
         if value is None:
@@ -147,6 +156,8 @@ class Settings(aigpy.model.ModelBase):
             self.saveAsFlac = False
         if not hasSavedSettings:
             self.downloadPath = getDefaultDownloadPath()
+            self.audioQuality = AudioQuality.Max
+            self.audioQualityPriority = getDefaultAudioQualityPriority()
 
         LANG.setLang(self.language)
         syncPlaybackRateLimiter()

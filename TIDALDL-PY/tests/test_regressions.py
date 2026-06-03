@@ -14,7 +14,18 @@ from tidal_dl.enums import AudioQuality, Type, VideoQuality
 from tidal_dl.gui_app.backend import TidekeeperBackend, SearchItem, with_video_only
 from tidal_dl.model import StreamUrl
 from tidal_dl.settings import Settings
-from tidal_dl.tidal import TidalAPI, TidalApiError
+from tidal_dl.tidal import API_BASE_PRIMARY, TidalAPI, TidalApiError
+
+
+def _playback_params(audioquality, prefetch=False):
+    params = {
+        "audioquality": audioquality,
+        "playbackmode": "STREAM",
+        "assetpresentation": "FULL",
+    }
+    if prefetch:
+        params["prefetch"] = "false"
+    return params
 
 
 class CliAuthPathRegressionTests(unittest.TestCase):
@@ -369,26 +380,33 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 text=json.dumps(payload),
                 headers={},
                 close=mock.Mock(),
+                json=mock.Mock(return_value=payload),
             )
 
-        with mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
-             mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
-             mock.patch.object(api.session, "get", side_effect=[
-                 fake_response(401, {"status": 401, "subStatus": 4005, "userMessage": "Asset is not ready for playback"}),
-                 fake_response(200, {
-                     "trackid": 123,
-                     "audioQuality": "LOSSLESS",
-                     "manifestMimeType": "application/vnd.tidal.bt",
-                     "manifest": manifest,
-                 }),
-             ]):
-            data = api.__get__(
-                "tracks/123/playbackinfopostpaywall",
-                {"audioquality": "LOSSLESS", "playbackmode": "STREAM", "assetpresentation": "FULL"},
-            )
+        old_delay = events.SETTINGS.downloadDelay
+        try:
+            events.SETTINGS.downloadDelay = False
+            with mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
+                 mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+                 mock.patch.object(api.session, "get", side_effect=[
+                     fake_response(401, {"status": 401, "subStatus": 4005, "userMessage": "Asset is not ready for playback"}),
+                     fake_response(200, {
+                         "trackid": 123,
+                         "audioQuality": "LOSSLESS",
+                         "manifestMimeType": "application/vnd.tidal.bt",
+                         "manifest": manifest,
+                     }),
+                 ]):
+                data = api.__getOnce__(
+                    "tracks/123/playbackinfopostpaywall/v4",
+                    _playback_params("LOSSLESS"),
+                    API_BASE_PRIMARY,
+                )
 
-        self.assertEqual(data["trackid"], 123)
-        sleep.assert_called_once()
+            self.assertEqual(data["trackid"], 123)
+            sleep.assert_called_once_with(5)
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
 
     def test_playback_api_requests_use_rate_limiter(self):
         api = TidalAPI()
@@ -398,13 +416,13 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             status_code=200,
             text=json.dumps({"ok": True}),
             headers={},
-            url="https://api.tidalhifi.com/v1/tracks/123/playbackinfopostpaywall",
+            url="https://api.tidal.com/v1/tracks/123/playbackinfopostpaywall/v4",
         )
         try:
             events.SETTINGS.downloadDelay = True
             api.playbackRateLimiter = limiter
             with mock.patch.object(api.session, "get", return_value=response):
-                self.assertEqual(api.__get__("tracks/123/playbackinfopostpaywall"), {"ok": True})
+                self.assertEqual(api.__get__("tracks/123/playbackinfopostpaywall/v4"), {"ok": True})
 
             limiter.wait.assert_called_once_with()
         finally:
@@ -738,20 +756,17 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             side_effect=Exception(
                 'Track manifest request failed: HTTP 403 {"errors":[{"code":"CLIENT_NOT_ENTITLED"}]}'
             ),
-        ), mock.patch.object(api, "__get__", return_value={
+        ), mock.patch.object(api, "__getPlaybackData__", return_value={
             "trackid": 456,
-            "audioQuality": "HI_RES_LOSSLESS",
+            "audioQuality": "HI_RES",
             "manifestMimeType": "application/vnd.tidal.bt",
             "manifest": manifest,
         }) as fallback_get:
             stream = api.getStreamUrl(456, AudioQuality.Atmos)
 
-        self.assertEqual(stream.soundQuality, "HI_RES_LOSSLESS")
+        self.assertEqual(stream.soundQuality, "HI_RES")
         self.assertEqual(stream.url, "https://example.invalid/fallback.flac")
-        fallback_get.assert_called_once_with(
-            "tracks/456/playbackinfopostpaywall",
-            {"audioquality": "HI_RES_LOSSLESS", "playbackmode": "STREAM", "assetpresentation": "FULL"},
-        )
+        fallback_get.assert_any_call(456, _playback_params("HI_RES"))
 
     def test_blocked_max_stream_falls_back_to_legacy_hi_res_stream(self):
         api = TidalAPI()
@@ -767,15 +782,16 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             ["CLIENT_NOT_ENTITLED"],
         )
 
-        with mock.patch.object(api, "__get__", side_effect=[
-            blocked,
-            {
-                "trackid": 456,
-                "audioQuality": "HI_RES",
-                "manifestMimeType": "application/vnd.tidal.bt",
-                "manifest": manifest,
-            },
-        ]) as get:
+        with mock.patch.object(api, "__getOpenApiTrackManifest__", side_effect=blocked), \
+             mock.patch.object(api, "__getPlaybackData__", side_effect=[
+                blocked,
+                {
+                    "trackid": 456,
+                    "audioQuality": "HI_RES",
+                    "manifestMimeType": "application/vnd.tidal.bt",
+                    "manifest": manifest,
+                },
+            ]) as get:
             stream = api.getStreamUrl(456, AudioQuality.Max)
 
         self.assertEqual(stream.soundQuality, "HI_RES")
@@ -787,14 +803,8 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         self.assertEqual(
             get.call_args_list,
             [
-                mock.call(
-                    "tracks/456/playbackinfopostpaywall",
-                    {"audioquality": "HI_RES_LOSSLESS", "playbackmode": "STREAM", "assetpresentation": "FULL"},
-                ),
-                mock.call(
-                    "tracks/456/playbackinfopostpaywall",
-                    {"audioquality": "HI_RES", "playbackmode": "STREAM", "assetpresentation": "FULL"},
-                ),
+                mock.call(456, _playback_params("HI_RES_LOSSLESS")),
+                mock.call(456, _playback_params("HI_RES")),
             ],
         )
 
@@ -858,7 +868,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             side_effect=Exception(
                 'Track manifest request failed: HTTP 403 {"errors":[{"code":"CLIENT_NOT_ENTITLED"}]}'
             ),
-        ), mock.patch.object(api, "__get__", return_value={
+        ), mock.patch.object(api, "__getPlaybackData__", return_value={
             "trackid": 456,
             "audioQuality": "HIGH",
             "manifestMimeType": "application/vnd.tidal.bt",
@@ -873,10 +883,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         self.assertEqual(stream.soundQuality, "HIGH")
         self.assertEqual(stream.url, "https://example.invalid/fallback.m4a")
-        fallback_get.assert_called_once_with(
-            "tracks/456/playbackinfopostpaywall",
-            {"audioquality": "HIGH", "playbackmode": "STREAM", "assetpresentation": "FULL"},
-        )
+        fallback_get.assert_any_call(456, _playback_params("HIGH"))
 
     def test_audio_quality_priority_rejects_lower_actual_quality_and_keeps_trying(self):
         api = TidalAPI()
@@ -901,7 +908,13 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                     "uri": lossless_uri,
                 },
             ],
-        ), mock.patch.object(api, "__get__", side_effect=[
+        ), mock.patch.object(api, "__getPlaybackData__", side_effect=[
+            {
+                "trackid": 456,
+                "audioQuality": "LOW",
+                "manifestMimeType": "application/vnd.tidal.bt",
+                "manifest": low_manifest,
+            },
             {
                 "trackid": 456,
                 "audioQuality": "LOW",
@@ -920,10 +933,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         self.assertEqual(stream.url, "https://example.invalid/init.mp4")
         self.assertEqual(stream.requestedQuality, "Dolby Atmos")
         self.assertEqual(stream.fallbackQuality, "HiFi")
-        fallback_get.assert_called_once_with(
-            "tracks/456/playbackinfopostpaywall",
-            {"audioquality": "HIGH", "playbackmode": "STREAM", "assetpresentation": "FULL"},
-        )
+        fallback_get.assert_any_call(456, _playback_params("HIGH"))
 
     def test_hifi_stream_uses_openapi_flac_manifest(self):
         api = TidalAPI()
@@ -934,7 +944,11 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         with mock.patch.object(api, "__getOpenApiTrackManifest__", return_value={
             "formats": ["FLAC"],
             "uri": uri,
-        }) as openapi_get, mock.patch.object(api, "__get__") as legacy_get:
+        }) as openapi_get, mock.patch.object(
+            api,
+            "__getPlaybackData__",
+            side_effect=Exception("Get operation err!Asset is not ready for playback"),
+        ) as playback_get:
             stream = api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
 
         self.assertEqual(stream.soundQuality, "LOSSLESS")
@@ -946,8 +960,8 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             "https://example.invalid/1.mp4",
             "https://example.invalid/2.mp4",
         ])
+        playback_get.assert_called_once_with(456, _playback_params("LOSSLESS"))
         openapi_get.assert_called_once_with(456, ["FLAC"])
-        legacy_get.assert_not_called()
 
     def test_download_track_uses_configured_audio_quality_priority(self):
         old_priority = download.SETTINGS.audioQualityPriority
@@ -1032,6 +1046,46 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             sys.argv = old_argv
             tidal_dl.SETTINGS.audioQuality = old_quality
             tidal_dl.SETTINGS.audioQualityPriority = old_priority
+
+    def test_get_playback_data_tries_v4_before_legacy(self):
+        api = TidalAPI()
+        manifest = {
+            "trackid": 123,
+            "audioQuality": "HIGH",
+            "manifestMimeType": "application/vnd.tidal.bt",
+            "manifest": base64.b64encode(json.dumps({
+                "codecs": "aac",
+                "urls": ["https://example.invalid/track.m4a"],
+                "mimeType": "audio/mp4",
+            }).encode("utf-8")).decode("utf-8"),
+        }
+        calls = []
+
+        def fake_get_once(path, params, base):
+            calls.append((base, path))
+            if path.endswith("/v4"):
+                raise Exception("v4 unavailable")
+            return manifest
+
+        with mock.patch.object(api, "__getOnce__", side_effect=fake_get_once):
+            data = api.__getPlaybackData__(123, _playback_params("HIGH", prefetch=True))
+
+        self.assertEqual(data["trackid"], 123)
+        self.assertEqual(calls[0][1], "tracks/123/playbackinfopostpaywall/v4")
+        self.assertEqual(calls[1][1], "tracks/123/playbackinfopostpaywall")
+
+    def test_download_rejects_track_not_stream_ready(self):
+        track = self._track()
+        track.streamReady = False
+        with mock.patch.object(download, "__getTrackStream__") as get_stream:
+            ok, err = download.downloadTrack(track)
+        get_stream.assert_not_called()
+        self.assertFalse(ok)
+        self.assertIn("not ready for streaming", err)
+
+    def test_download_error_hint_for_asset_not_ready(self):
+        hint = download.__downloadErrorHint__(Exception("Asset is not ready for playback"))
+        self.assertIn("retry later", hint)
 
     def test_tidal_url_parser_ignores_query_strings_and_fragments(self):
         api = TidalAPI()

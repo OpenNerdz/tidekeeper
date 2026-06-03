@@ -47,6 +47,7 @@ QUALITY_ORDER = [
     AudioQuality.Normal,
 ]
 PRIORITY_PRESETS = [
+    ("Max > HiFi > High > Normal (default)", ["Max", "HiFi", "High", "Normal"]),
     ("Selected quality only", []),
     ("Selected quality, then lower", "__selected__"),
     ("Atmos > Max > Master > HiFi > High > Normal", [item.name for item in QUALITY_ORDER]),
@@ -319,7 +320,7 @@ class MainWindow(QMainWindow):
         path_layout.addWidget(browse)
 
         self.audio_quality = QComboBox()
-        for item in AudioQuality:
+        for item in QUALITY_ORDER:
             self.audio_quality.addItem(item.name, item.name)
         self.video_quality = QComboBox()
         for item in VideoQuality:
@@ -932,6 +933,10 @@ class MainWindow(QMainWindow):
     def set_priority_preset(self, order: List[str]):
         self.remove_custom_priority_preset()
         if not order:
+            for index in range(self.priority_preset.count()):
+                if self.priority_preset.itemData(index) == []:
+                    self.priority_preset.setCurrentIndex(index)
+                    return
             self.priority_preset.setCurrentIndex(0)
             return
 

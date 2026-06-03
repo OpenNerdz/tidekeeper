@@ -65,7 +65,7 @@ class AtmosTests(unittest.TestCase):
             api,
             "__getOpenApiTrackManifest__",
             return_value={"formats": ["AACLC"], "uri": data_uri(ATMOS_MPD)},
-        ), mock.patch.object(api, "__get__", return_value={
+        ), mock.patch.object(api, "__getPlaybackData__", return_value={
             "trackid": 560060,
             "audioQuality": "HI_RES_LOSSLESS",
             "manifestMimeType": "application/vnd.tidal.bt",

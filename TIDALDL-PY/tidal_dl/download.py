@@ -377,6 +377,8 @@ def __downloadErrorHint__(err):
         return " (hint: choose a writable download folder outside protected system directories)"
     if "disk" in text or "space" in text or "no space" in text:
         return " (hint: check available disk space)"
+    if any(item in text for item in ("not ready for streaming", "not ready for playback", "asset is not ready")):
+        return " (hint: retry later, raise the request interval in settings, or try a lower quality)"
     return ""
 
 
@@ -809,9 +811,17 @@ def __getTrackStream__(track_id):
     return TIDAL_API.getStreamUrlByPriority(track_id, priority)
 
 
+def __ensureTrackStreamable__(track):
+    if getattr(track, 'allowStreaming', None) is False:
+        raise Exception("Track is not available for streaming on this account.")
+    if getattr(track, 'streamReady', None) is False:
+        raise Exception("Track is not ready for streaming yet. Try again later.")
+
+
 def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, partSize=DEFAULT_PART_SIZE):
     title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
     try:
+        __ensureTrackStreamable__(track)
         stream = __getTrackStream__(track.id)
         path = getTrackPath(track, stream, album, playlist)
         partPath = path + '.part'

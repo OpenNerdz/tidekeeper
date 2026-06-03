@@ -91,8 +91,8 @@ class Printf(object):
                 ("--video-only", "Download videos only for URL/ID/file"),
                 ("-l, --link URL", "Download URL/ID/file"),
                 ("-o, --output PATH", "Set save folder"),
-                ("-q, --quality NAME", "Normal, High, HiFi, Master, Max, Atmos"),
-                ("--quality-priority LIST", "Fallback order, e.g. Atmos,High,Lossless,Low"),
+                ("-q, --quality NAME", "Max (default), Atmos, Master, HiFi, High, Normal"),
+                ("--quality-priority LIST", "Fallback order, e.g. Max,HiFi,High,Normal"),
                 ("-r, --resolution NAME", "P1080, P720, P480, P360"),
             ]
             for option, description in rows:
@@ -112,8 +112,8 @@ class Printf(object):
             ["--video-only", "Download only videos for a Tidal URL, ID, or text file"],
             ["-l, --link", "Download a Tidal URL, ID, or text file"],
             ["-o, --output", "Set download path"],
-            ["-q, --quality", "Set one audio quality: Normal, High, HiFi, Master, Max, Atmos"],
-            ["--quality-priority", "Set fallback order, e.g. Atmos,High,Lossless,Low"],
+            ["-q, --quality", "Set one audio quality: Max (default), Atmos, Master, HiFi, High, Normal"],
+            ["--quality-priority", "Set fallback order, e.g. Max,HiFi,High,Normal"],
             ["-r, --resolution", "Set video quality: P1080, P720, P480, P360"]
         ])
         tb.set_style(prettytable.PLAIN_COLUMNS)

@@ -27,6 +27,9 @@ from .settings import *
 # Retry number
 requests.adapters.DEFAULT_RETRIES = 5
 REQUEST_TIMEOUT = (5, 60)
+API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
+API_BASE_LEGACY = 'https://api.tidalhifi.com/v1/'
+PLAYBACK_ASSET_NOT_READY_ATTEMPTS = 6
 
 
 class RequestRateLimiter:
@@ -86,10 +89,21 @@ class TidalAPI(object):
         if response is None or response.status_code != 401:
             return False
         body = self.__responseBody__(response)
-        if body.get('subStatus') == 4005:
+        sub_status = body.get('subStatus', body.get('sub_status'))
+        if sub_status == 4005 or str(sub_status) == '4005':
             return True
         message = str(body.get('userMessage', '')).lower()
-        return 'not ready for playback' in message
+        return 'not ready for playback' in message or 'asset is not ready' in message
+
+    def __isPlaybackPath__(self, path):
+        return 'playbackinfo' in (path or '')
+
+    def __shouldTryLegacyApiHost__(self, path, error):
+        if self.__isPlaybackPath__(path):
+            return False
+        if isinstance(error, TidalApiError):
+            return error.statusCode in (404, 500, 502, 503, 504)
+        return True
 
     def __responseErrorCodes__(self, response):
         try:
@@ -147,15 +161,25 @@ class TidalAPI(object):
                 pass
         return min(5 * (attempt + 1), 20)
 
-    def __get__(self, path, params=None, urlpre='https://api.tidalhifi.com/v1/'):
+    def __get__(self, path, params=None, urlpre=None):
+        if urlpre is not None:
+            return self.__getOnce__(path, params, urlpre)
+        try:
+            return self.__getOnce__(path, params, API_BASE_PRIMARY)
+        except Exception as e:
+            if self.__shouldTryLegacyApiHost__(path, e):
+                return self.__getOnce__(path, params, API_BASE_LEGACY)
+            raise
+
+    def __getOnce__(self, path, params=None, urlpre=API_BASE_PRIMARY):
         params = {} if params is None else dict(params)
         params['countryCode'] = self.key.countryCode
         errmsg = "Get operation err!"
         respond = None
         refreshedToken = False
         url = urlpre + path
-        playbackRequest = "playbackinfopostpaywall" in url
-        maxAttempts = 6 if playbackRequest else 3
+        playbackRequest = self.__isPlaybackPath__(path)
+        maxAttempts = PLAYBACK_ASSET_NOT_READY_ATTEMPTS if playbackRequest else 3
         for index in range(0, maxAttempts):
             try:
                 header = {'authorization': f'Bearer {self.key.accessToken}'}
@@ -199,7 +223,29 @@ class TidalAPI(object):
                 if index >= maxAttempts - 1 and respond is not None:
                     errmsg += respond.text
 
+        if respond is not None and self.__isAssetNotReady__(respond):
+            body = self.__responseBody__(respond)
+            message = body.get('userMessage') or 'Asset is not ready for playback'
+            raise Exception(f"{errmsg}{message}")
         raise Exception(errmsg)
+
+    def __getPlaybackData__(self, item_id, params, media='tracks'):
+        params = dict(params or {})
+        params['prefetch'] = 'false'
+        endpoints = [
+            (API_BASE_PRIMARY, f'{media}/{item_id}/playbackinfopostpaywall/v4'),
+            (API_BASE_PRIMARY, f'{media}/{item_id}/playbackinfopostpaywall'),
+            (API_BASE_LEGACY, f'{media}/{item_id}/playbackinfopostpaywall/v4'),
+            (API_BASE_LEGACY, f'{media}/{item_id}/playbackinfopostpaywall'),
+        ]
+        last_error = None
+        for base, path in endpoints:
+            try:
+                return self.__getOnce__(path, params, base)
+            except Exception as e:
+                last_error = e
+                logging.debug("Playback request failed for %s%s: %s", base, path, e)
+        raise last_error
 
     def __getItems__(self, path, params=None):
         params = {} if params is None else dict(params)
@@ -523,7 +569,8 @@ class TidalAPI(object):
             params.append(('formats', item))
 
         response = None
-        for attempt in range(2):
+        refreshedToken = False
+        for attempt in range(PLAYBACK_ASSET_NOT_READY_ATTEMPTS):
             response = self.session.get(
                 f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
                 headers={
@@ -533,12 +580,29 @@ class TidalAPI(object):
                 params=params,
                 timeout=REQUEST_TIMEOUT,
             )
-            if response.status_code == 401 and attempt == 0 and self.__refreshSavedAccessToken__():
+
+            if response.status_code == 429:
+                delay = self.__retryAfter__(response, attempt)
+                print(f"Too many requests, waiting {delay:g} seconds before retry.")
+                response.close()
+                time.sleep(delay)
+                continue
+
+            if response.status_code == 401 and self.__isAssetNotReady__(response):
+                delay = min(5 * (attempt + 1), 30)
+                print(f"Asset not ready for playback, waiting {delay:g} seconds before retry.")
+                response.close()
+                time.sleep(delay)
+                continue
+
+            if response.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():
+                refreshedToken = True
                 response.close()
                 continue
+
             break
 
-        if response.status_code != 200:
+        if response is None or response.status_code != 200:
             raise self.__httpError__("Track manifest request", response)
 
         data = response.json()
@@ -591,11 +655,20 @@ class TidalAPI(object):
         return ret
 
     def __getAudioStreamUrlForQuality__(self, id, quality: AudioQuality):
+        chain = []
         if quality == AudioQuality.Atmos:
-            return self.__getAtmosStreamUrl__(id)
-        if quality == AudioQuality.HiFi:
-            return self.__getOpenApiFlacStreamUrl__(id)
-        return self.__getStandardStreamUrl__(id, quality)
+            chain.append(lambda: self.__getAtmosStreamUrl__(id))
+        chain.append(lambda: self.__getStandardStreamUrl__(id, quality))
+        if quality in (AudioQuality.HiFi, AudioQuality.Max, AudioQuality.Master):
+            chain.append(lambda: self.__getOpenApiFlacStreamUrl__(id))
+
+        last_error = None
+        for getter in chain:
+            try:
+                return getter()
+            except Exception as e:
+                last_error = e
+        raise last_error
 
     def __audioQualityParam__(self, quality: AudioQuality):
         if quality == AudioQuality.Normal:
@@ -684,6 +757,17 @@ class TidalAPI(object):
         message = str(error)
         return "CLIENT_NOT_ENTITLED" in message or "HTTP 403" in message
 
+    def __isManifestFallbackError__(self, error):
+        if self.__isStreamFallbackError__(error):
+            return True
+        text = str(error or "").lower()
+        return any(token in text for token in (
+            "get operation err",
+            "not ready for playback",
+            "asset is not ready",
+            "can't get the streamurl",
+        ))
+
     def __normalizeAudioQuality__(self, quality):
         if isinstance(quality, AudioQuality):
             return quality
@@ -695,7 +779,7 @@ class TidalAPI(object):
             "playbackmode": "STREAM",
             "assetpresentation": "FULL",
         }
-        data = self.__get__(f'tracks/{str(id)}/playbackinfopostpaywall', paras)
+        data = self.__getPlaybackData__(id, paras)
         resp = aigpy.model.dictToModel(data, StreamRespond())
 
         if "vnd.tidal.bt" in resp.manifestMimeType:
@@ -749,7 +833,7 @@ class TidalAPI(object):
                 return self.__annotateStreamFallback__(stream, requestedQuality, item, lastError)
             except Exception as e:
                 lastError = e
-                if index == len(priority) - 1 or not self.__isStreamFallbackError__(e):
+                if index == len(priority) - 1 or not self.__isManifestFallbackError__(e):
                     raise
         raise lastError
 
@@ -768,13 +852,13 @@ class TidalAPI(object):
                 return self.__annotateStreamFallback__(stream, quality, item, lastError)
             except Exception as e:
                 lastError = e
-                if index == len(qualities) - 1 or not self.__isStreamFallbackError__(e):
+                if index == len(qualities) - 1 or not self.__isManifestFallbackError__(e):
                     raise
         raise lastError
 
     def getVideoStreamUrl(self, id, quality: VideoQuality):
         paras = {"videoquality": "HIGH", "playbackmode": "STREAM", "assetpresentation": "FULL"}
-        data = self.__get__(f'videos/{str(id)}/playbackinfopostpaywall', paras)
+        data = self.__getPlaybackData__(id, paras, media='videos')
         resp = aigpy.model.dictToModel(data, StreamRespond())
 
         if "vnd.tidal.emu" in resp.manifestMimeType:
