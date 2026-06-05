@@ -428,6 +428,112 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         finally:
             events.SETTINGS.downloadDelay = old_delay
 
+    def test_openapi_manifest_requests_use_rate_limiter(self):
+        api = TidalAPI()
+        old_delay = events.SETTINGS.downloadDelay
+        limiter = SimpleNamespace(wait=mock.Mock())
+        payload = {"data": {"attributes": {"formats": ["FLAC"], "uri": "data:x,eyJ0ZXN0In0="}}}
+        response = SimpleNamespace(
+            status_code=200,
+            text=json.dumps(payload),
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value=payload),
+        )
+        try:
+            events.SETTINGS.downloadDelay = True
+            api.playbackRateLimiter = limiter
+            with mock.patch.object(api.session, "get", return_value=response):
+                attrs = api.__getOpenApiTrackManifest__(456, ["FLAC"])
+
+            self.assertEqual(attrs["formats"], ["FLAC"])
+            limiter.wait.assert_called_once_with()
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
+    def test_playback_rate_limit_skips_openapi_manifest(self):
+        api = TidalAPI()
+
+        with mock.patch.object(
+            api,
+            "__getPlaybackData__",
+            side_effect=TidalApiError("Get operation failed: HTTP 429", statusCode=429),
+        ) as playback_get, mock.patch.object(
+            api,
+            "__getOpenApiTrackManifest__",
+        ) as openapi_get:
+            with self.assertRaises(TidalApiError) as ctx:
+                api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
+
+        self.assertIn("429", str(ctx.exception))
+        playback_get.assert_called_once()
+        openapi_get.assert_not_called()
+
+    def test_playback_403_does_not_retry(self):
+        api = TidalAPI()
+        old_delay = events.SETTINGS.downloadDelay
+        response = SimpleNamespace(
+            status_code=403,
+            text='{"errors":[{"code":"CLIENT_NOT_ENTITLED"}]}',
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={"errors": [{"code": "CLIENT_NOT_ENTITLED"}]}),
+        )
+        try:
+            events.SETTINGS.downloadDelay = False
+            with mock.patch.object(api.session, "get", return_value=response) as get_mock:
+                with self.assertRaises(TidalApiError) as ctx:
+                    api.__getOnce__(
+                        "tracks/456/playbackinfopostpaywall/v4",
+                        _playback_params("LOSSLESS"),
+                        API_BASE_PRIMARY,
+                    )
+
+            self.assertEqual(ctx.exception.statusCode, 403)
+            self.assertEqual(get_mock.call_count, 1)
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
+    def test_blocked_playback_param_skips_repeat_probe(self):
+        api = TidalAPI()
+        api._playbackBlockedParams.add("LOSSLESS")
+        uri = "data:application/dash+xml;base64," + base64.b64encode(
+            self._dash_manifest("flac").encode("utf-8")
+        ).decode("utf-8")
+
+        with mock.patch.object(api, "__getPlaybackData__") as playback_get, mock.patch.object(
+            api,
+            "__getOpenApiTrackManifest__",
+            return_value={"formats": ["FLAC"], "uri": uri},
+        ):
+            stream = api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
+
+        playback_get.assert_not_called()
+        self.assertEqual(stream.soundQuality, "LOSSLESS")
+
+    def test_manifest_rate_limit_fails_after_max_attempts(self):
+        api = TidalAPI()
+        old_delay = events.SETTINGS.downloadDelay
+        try:
+            events.SETTINGS.downloadDelay = False
+            response = SimpleNamespace(
+                status_code=429,
+                text='{"errors":[{"status":"429"}]}',
+                headers={},
+                close=mock.Mock(),
+                json=mock.Mock(return_value={"errors": [{"status": "429"}]}),
+            )
+            with mock.patch.object(api.session, "get", return_value=response) as get_mock, \
+                 mock.patch("tidal_dl.tidal.time.sleep"), \
+                 mock.patch("builtins.print"):
+                with self.assertRaises(TidalApiError) as ctx:
+                    api.__getOpenApiTrackManifest__(456, ["FLAC"])
+
+            self.assertEqual(ctx.exception.statusCode, 429)
+            self.assertEqual(get_mock.call_count, 3)
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
     def test_gui_backend_syncs_saved_country_code_before_search(self):
         old_values = {
             "userid": events.TOKEN.userid,
@@ -962,6 +1068,42 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         ])
         playback_get.assert_called_once_with(456, _playback_params("LOSSLESS"))
         openapi_get.assert_called_once_with(456, ["FLAC"])
+
+    def test_max_openapi_fallback_requests_flac_hires(self):
+        api = TidalAPI()
+        uri = "data:application/dash+xml;base64," + base64.b64encode(
+            self._dash_manifest("flac").encode("utf-8")
+        ).decode("utf-8")
+
+        with mock.patch.object(api, "__getOpenApiTrackManifest__", return_value={
+            "formats": ["FLAC_HIRES", "FLAC"],
+            "uri": uri,
+        }) as openapi_get, mock.patch.object(
+            api,
+            "__getPlaybackData__",
+            side_effect=Exception("Get operation err!Asset is not ready for playback"),
+        ):
+            stream = api.getStreamUrlByPriority(456, [AudioQuality.Max])
+
+        self.assertEqual(stream.soundQuality, "HI_RES_LOSSLESS")
+        openapi_get.assert_called_once_with(456, ["FLAC_HIRES", "FLAC"])
+
+    def test_openapi_manifest_falls_back_from_download_to_playback_usage(self):
+        api = TidalAPI()
+        payload = {"data": {"attributes": {"formats": ["FLAC"], "uri": "data:x,eyJ0ZXN0In0="}}}
+
+        def fake_once(track_id, formats, usage):
+            if usage == "DOWNLOAD":
+                raise TidalApiError("Track manifest request failed: HTTP 403", statusCode=403)
+            return payload["data"]["attributes"]
+
+        with mock.patch.object(api, "__getOpenApiTrackManifestOnce__", side_effect=fake_once) as once_get:
+            attrs = api.__getOpenApiTrackManifest__(456, ["FLAC"])
+
+        self.assertEqual(attrs["formats"], ["FLAC"])
+        self.assertEqual(once_get.call_count, 2)
+        once_get.assert_any_call(456, ["FLAC"], "DOWNLOAD")
+        once_get.assert_any_call(456, ["FLAC"], "PLAYBACK")
 
     def test_download_track_uses_configured_audio_quality_priority(self):
         old_priority = download.SETTINGS.audioQualityPriority

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Apply the stream request delay to OpenAPI track manifest calls (not only legacy playback endpoints), stop OpenAPI fallback when playback is rate limited, and cap 429 retries to avoid retry storms during bulk downloads.
+- Default `requestIntervalSeconds` is now 3 (raise to 30–60 in settings if TIDAL still returns HTTP 429).
+- OpenAPI lossless manifests now request `FLAC_HIRES` for Max/Master, try `usage=DOWNLOAD` before `PLAYBACK`, and map hi-res responses to the correct stream quality label.
+- Playback 403/entitlement errors no longer retry six times with full request delays; blocked lossless playback skips straight to OpenAPI for the rest of the session.
+
 ## 2026.6.2.0 - 2026-06-02
 
 - Fixed the desktop GUI on Windows 11 dark mode so menus, search results, and settings are readable instead of blank or all white.

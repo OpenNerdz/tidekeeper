@@ -30,6 +30,7 @@ REQUEST_TIMEOUT = (5, 60)
 API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
 API_BASE_LEGACY = 'https://api.tidalhifi.com/v1/'
 PLAYBACK_ASSET_NOT_READY_ATTEMPTS = 6
+RATE_LIMIT_MAX_ATTEMPTS = 3
 
 
 class RequestRateLimiter:
@@ -78,6 +79,7 @@ class TidalAPI(object):
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         self.playbackRateLimiter = PLAYBACK_RATE_LIMITER
+        self._playbackBlockedParams = set()
 
     def __responseBody__(self, response):
         try:
@@ -152,14 +154,72 @@ class TidalAPI(object):
             logging.info("Unable to refresh saved access token: %s", e)
             return False
 
+    def __requestIntervalSeconds__(self):
+        if SETTINGS.downloadDelay is False:
+            return 0.0
+        return max(0.0, float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0.0))
+
+    def __waitForStreamRequestQuota__(self, *, light=False):
+        if SETTINGS.downloadDelay is False:
+            return
+        syncPlaybackRateLimiter()
+        if light:
+            interval = self.playbackRateLimiter.minInterval
+            try:
+                self.playbackRateLimiter.minInterval = min(1.0, interval)
+                self.playbackRateLimiter.wait()
+            finally:
+                self.playbackRateLimiter.minInterval = interval
+            return
+        self.playbackRateLimiter.wait()
+
+    def __isPlaybackBlockedError__(self, error):
+        if not isinstance(error, TidalApiError):
+            return False
+        if error.statusCode in (403, 404, 405):
+            return True
+        if 'CLIENT_NOT_ENTITLED' in error.errorCodes:
+            return True
+        return False
+
+    def __isNonRetryableTidalApiError__(self, error, playbackRequest=False):
+        if not isinstance(error, TidalApiError):
+            return False
+        if error.statusCode == 429:
+            return False
+        if self.__isPlaybackBlockedError__(error):
+            return True
+        if playbackRequest and error.statusCode == 401:
+            return True
+        return error.statusCode in (400, 404, 405, 406, 410, 422)
+
+    def __markPlaybackParamBlocked__(self, audio_param, error):
+        if audio_param and self.__isPlaybackBlockedError__(error):
+            self._playbackBlockedParams.add(audio_param)
+
+    def __isRateLimitError__(self, error):
+        if isinstance(error, TidalApiError) and error.statusCode == 429:
+            return True
+        text = str(error or "").lower()
+        return any(token in text for token in ("429", "too many requests", "rate limit"))
+
+    def __shouldSkipOpenApiFallback__(self, error):
+        return self.__isRateLimitError__(error)
+
     def __retryAfter__(self, response, attempt):
         retryAfter = getattr(response, 'headers', {}).get('Retry-After') if response is not None else None
+        delay = None
         if retryAfter:
             try:
-                return min(float(retryAfter), 60)
+                delay = min(float(retryAfter), 300)
             except ValueError:
                 pass
-        return min(5 * (attempt + 1), 20)
+        if delay is None:
+            delay = min(5 * (attempt + 1), 30)
+        minimum = self.__requestIntervalSeconds__()
+        if minimum > 0:
+            delay = max(delay, minimum)
+        return delay
 
     def __get__(self, path, params=None, urlpre=None):
         if urlpre is not None:
@@ -183,15 +243,17 @@ class TidalAPI(object):
         for index in range(0, maxAttempts):
             try:
                 header = {'authorization': f'Bearer {self.key.accessToken}'}
-                if playbackRequest and SETTINGS.downloadDelay is not False:
-                    syncPlaybackRateLimiter()
-                    self.playbackRateLimiter.wait()
+                if playbackRequest:
+                    self.__waitForStreamRequestQuota__()
 
                 respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT)
 
                 if respond.status_code == 429:
+                    if index >= RATE_LIMIT_MAX_ATTEMPTS - 1:
+                        raise self.__httpError__("Get operation", respond)
                     delay = self.__retryAfter__(respond, index)
                     print(f"Too many requests, waiting {delay:g} seconds before retry.")
+                    respond.close()
                     time.sleep(delay)
                     continue
 
@@ -217,7 +279,7 @@ class TidalAPI(object):
                     errmsg += result['userMessage']
                 break
             except TidalApiError as e:
-                if index >= maxAttempts - 1:
+                if self.__isNonRetryableTidalApiError__(e, playbackRequest) or index >= maxAttempts - 1:
                     raise e
             except Exception as e:
                 if index >= maxAttempts - 1 and respond is not None:
@@ -245,6 +307,8 @@ class TidalAPI(object):
             except Exception as e:
                 last_error = e
                 logging.debug("Playback request failed for %s%s: %s", base, path, e)
+                if self.__isPlaybackBlockedError__(e):
+                    break
         raise last_error
 
     def __getItems__(self, path, params=None):
@@ -558,11 +622,40 @@ class TidalAPI(object):
                     tracks.append(track_urls)
         return tracks
 
-    def __getOpenApiTrackManifest__(self, id, formats):
+    def __openApiFormatsForQuality__(self, quality: AudioQuality):
+        if quality == AudioQuality.Max:
+            return ['FLAC_HIRES', 'FLAC']
+        if quality == AudioQuality.Master:
+            return ['FLAC_HIRES', 'FLAC']
+        if quality == AudioQuality.HiFi:
+            return ['FLAC']
+        return ['FLAC']
+
+    def __openApiManifestUsages__(self):
+        return ('DOWNLOAD', 'PLAYBACK')
+
+    def __getOpenApiTrackManifest__(self, id, formats, usages=None):
+        last_error = None
+        for usage in usages or self.__openApiManifestUsages__():
+            try:
+                return self.__getOpenApiTrackManifestOnce__(id, formats, usage)
+            except TidalApiError as e:
+                last_error = e
+                if e.statusCode in (403, 404, 405) and usage != self.__openApiManifestUsages__()[-1]:
+                    logging.debug(
+                        "Track manifest usage=%s unavailable, trying next usage: %s",
+                        usage,
+                        e,
+                    )
+                    continue
+                raise
+        raise last_error
+
+    def __getOpenApiTrackManifestOnce__(self, id, formats, usage):
         params = [
             ('manifestType', 'MPEG_DASH'),
             ('uriScheme', 'DATA'),
-            ('usage', 'PLAYBACK'),
+            ('usage', usage),
             ('adaptive', 'false'),
         ]
         for item in formats:
@@ -570,7 +663,10 @@ class TidalAPI(object):
 
         response = None
         refreshedToken = False
+        rateLimitAttempts = 0
+        light_quota = bool(self._playbackBlockedParams)
         for attempt in range(PLAYBACK_ASSET_NOT_READY_ATTEMPTS):
+            self.__waitForStreamRequestQuota__(light=light_quota)
             response = self.session.get(
                 f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
                 headers={
@@ -582,7 +678,10 @@ class TidalAPI(object):
             )
 
             if response.status_code == 429:
-                delay = self.__retryAfter__(response, attempt)
+                rateLimitAttempts += 1
+                if rateLimitAttempts >= RATE_LIMIT_MAX_ATTEMPTS:
+                    raise self.__httpError__("Track manifest request", response)
+                delay = self.__retryAfter__(response, rateLimitAttempts - 1)
                 print(f"Too many requests, waiting {delay:g} seconds before retry.")
                 response.close()
                 time.sleep(delay)
@@ -608,6 +707,14 @@ class TidalAPI(object):
         data = response.json()
         return data.get('data', {}).get('attributes', {})
 
+    def __openApiFlacSoundQuality__(self, formats):
+        available = set(formats or [])
+        if 'FLAC_HIRES' in available:
+            return 'HI_RES_LOSSLESS'
+        if 'FLAC' in available:
+            return 'LOSSLESS'
+        return None
+
     def __getAtmosStreamUrl__(self, id):
         attrs = self.__getOpenApiTrackManifest__(id, ['EAC3_JOC'])
         formats = attrs.get('formats') or []
@@ -631,10 +738,12 @@ class TidalAPI(object):
             ret.url = ret.urls[0]
         return ret
 
-    def __getOpenApiFlacStreamUrl__(self, id):
-        attrs = self.__getOpenApiTrackManifest__(id, ['FLAC'])
+    def __getOpenApiFlacStreamUrl__(self, id, quality: AudioQuality):
+        requested_formats = self.__openApiFormatsForQuality__(quality)
+        attrs = self.__getOpenApiTrackManifest__(id, requested_formats)
         formats = attrs.get('formats') or []
-        if 'FLAC' not in formats:
+        sound_quality = self.__openApiFlacSoundQuality__(formats)
+        if sound_quality is None:
             raise TidalStreamUnavailable("Lossless FLAC stream is not available for this track.")
 
         uri = attrs.get('uri') or ''
@@ -644,7 +753,7 @@ class TidalAPI(object):
         xmldata = base64.b64decode(uri.split(',', 1)[1]).decode('utf-8')
         ret = StreamUrl()
         ret.trackid = id
-        ret.soundQuality = 'LOSSLESS'
+        ret.soundQuality = sound_quality
         ret.manifestMimeType = 'application/dash+xml'
         ret.codec = aigpy.string.getSub(xmldata, 'codecs="', '"')
         ret.encryptionKey = ''
@@ -660,14 +769,16 @@ class TidalAPI(object):
             chain.append(lambda: self.__getAtmosStreamUrl__(id))
         chain.append(lambda: self.__getStandardStreamUrl__(id, quality))
         if quality in (AudioQuality.HiFi, AudioQuality.Max, AudioQuality.Master):
-            chain.append(lambda: self.__getOpenApiFlacStreamUrl__(id))
+            chain.append(lambda q=quality: self.__getOpenApiFlacStreamUrl__(id, q))
 
         last_error = None
-        for getter in chain:
+        for index, getter in enumerate(chain):
             try:
                 return getter()
             except Exception as e:
                 last_error = e
+                if index < len(chain) - 1 and self.__shouldSkipOpenApiFallback__(e):
+                    break
         raise last_error
 
     def __audioQualityParam__(self, quality: AudioQuality):
@@ -758,6 +869,8 @@ class TidalAPI(object):
         return "CLIENT_NOT_ENTITLED" in message or "HTTP 403" in message
 
     def __isManifestFallbackError__(self, error):
+        if self.__isRateLimitError__(error):
+            return False
         if self.__isStreamFallbackError__(error):
             return True
         text = str(error or "").lower()
@@ -774,12 +887,22 @@ class TidalAPI(object):
         return Settings().getAudioQualityOrNone(quality)
 
     def __getStandardStreamUrl__(self, id, quality: AudioQuality):
+        audio_param = self.__audioQualityParam__(quality)
+        if audio_param in self._playbackBlockedParams:
+            raise TidalStreamUnavailable(
+                f"Playback API is unavailable for {audio_param}; using OpenAPI manifest."
+            )
+
         paras = {
-            "audioquality": self.__audioQualityParam__(quality),
+            "audioquality": audio_param,
             "playbackmode": "STREAM",
             "assetpresentation": "FULL",
         }
-        data = self.__getPlaybackData__(id, paras)
+        try:
+            data = self.__getPlaybackData__(id, paras)
+        except Exception as e:
+            self.__markPlaybackParamBlocked__(audio_param, e)
+            raise
         resp = aigpy.model.dictToModel(data, StreamRespond())
 
         if "vnd.tidal.bt" in resp.manifestMimeType:

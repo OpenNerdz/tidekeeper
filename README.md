@@ -130,6 +130,14 @@ available for a track, Tidekeeper falls back through lower audio qualities so
 the download can continue when another entitled format is available. Track
 output shows the requested quality and the fallback quality when this happens.
 
+Bulk lossless downloads use TIDAL playback and OpenAPI manifest endpoints, which
+are rate limited more aggressively than normal app playback. Enable **Use request
+delay** in settings (on by default) and set **Request delay seconds** to `30` or
+`60` if you see `HTTP 429` errors. The delay applies to both playback and
+manifest requests. When playback returns entitlement errors (HTTP 403), Tidekeeper
+stops retrying that quality tier and uses OpenAPI manifests instead, which keeps
+bulk downloads fast without hammering the API.
+
 If a track download fails, Tidekeeper appends it to `failed-tracks.txt` in the
 download folder. The file keeps comments with the title and reason, followed by
 a plain TIDAL track URL. Retry those tracks later with:

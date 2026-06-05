@@ -40,7 +40,7 @@ class Settings(aigpy.model.ModelBase):
     downloadVideos = True
     multiThread = False
     downloadDelay = True
-    requestIntervalSeconds = 1.0
+    requestIntervalSeconds = 3.0
     saveAsFlac = False
 
     downloadPath = "./download/"
@@ -149,7 +149,7 @@ class Settings(aigpy.model.ModelBase):
         if self.apiKeyIndex is None:
             self.apiKeyIndex = 0
         if getattr(self, 'requestIntervalSeconds', None) is None:
-            self.requestIntervalSeconds = 1.0
+            self.requestIntervalSeconds = 3.0
         else:
             self.requestIntervalSeconds = max(0.0, float(self.requestIntervalSeconds))
         if getattr(self, 'saveAsFlac', None) is None:
