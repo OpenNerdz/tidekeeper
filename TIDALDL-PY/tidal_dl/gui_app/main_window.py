@@ -100,6 +100,8 @@ class MainWindow(QMainWindow):
         self.login_poll_inflight = False
         self.search_in_progress = False
         self.download_in_progress = False
+        self.download_worker = None
+        self._cancel_requested = False
 
         self.setWindowTitle("Tidekeeper")
         self.setMinimumSize(1040, 680)
@@ -285,15 +287,19 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.queue_status, 1)
         self.remove_queue_button = _button("Remove")
         self.clear_queue_button = _button("Clear")
+        self.cancel_queue_button = _button("Cancel", danger=True)
         self.start_queue_button = _button("Start Queue", primary=True)
         self.remove_queue_button.setToolTip("Remove selected queue rows.")
         self.clear_queue_button.setToolTip("Clear the queue and output log.")
+        self.cancel_queue_button.setToolTip("Stop after the current item finishes.")
         self.start_queue_button.setToolTip("Download every queued item.")
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_items)
         self.clear_queue_button.clicked.connect(self.clear_queue)
+        self.cancel_queue_button.clicked.connect(self.cancel_downloads)
         self.start_queue_button.clicked.connect(self.start_queue_download)
         action_layout.addWidget(self.remove_queue_button)
         action_layout.addWidget(self.clear_queue_button)
+        action_layout.addWidget(self.cancel_queue_button)
         action_layout.addWidget(self.start_queue_button)
         layout.addLayout(action_layout)
 
@@ -822,9 +828,11 @@ class MainWindow(QMainWindow):
             self.queue_status.setText("A download is already running.")
             return
         self.download_in_progress = True
+        self._cancel_requested = False
         self.update_action_states()
         self.download_log.append("Starting downloads")
         worker = DownloadWorker(self.backend, items)
+        self.download_worker = worker
         worker.signals.log.connect(self.append_download_log)
         worker.signals.item_status.connect(self._set_queue_item_status)
         worker.signals.result.connect(lambda _: self.queue_status.setText("Downloads finished."))
@@ -834,7 +842,19 @@ class MainWindow(QMainWindow):
 
     def _download_finished(self):
         self.download_in_progress = False
+        self.download_worker = None
+        if self._cancel_requested:
+            self._cancel_requested = False
+            self.queue_status.setText("Downloads cancelled.")
         self.update_action_states()
+
+    def cancel_downloads(self):
+        if self.download_worker is None:
+            return
+        self._cancel_requested = True
+        self.download_worker.cancel()
+        self.cancel_queue_button.setEnabled(False)
+        self.queue_status.setText("Cancelling after the current item...")
 
     def _set_queue_item_status(self, item, status: str):
         for row in range(self.queue_table.rowCount()):
@@ -877,6 +897,7 @@ class MainWindow(QMainWindow):
         has_selection = bool(self.queue_table.selectionModel().selectedRows())
         self.remove_queue_button.setEnabled(has_selection and not self.download_in_progress)
         self.clear_queue_button.setEnabled(has_queue and not self.download_in_progress)
+        self.cancel_queue_button.setEnabled(self.download_in_progress and not self._cancel_requested)
         self.start_queue_button.setEnabled(has_queue and not self.download_in_progress)
 
     def append_download_log(self, text: str):

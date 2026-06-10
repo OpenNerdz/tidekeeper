@@ -113,6 +113,12 @@ def start(string, videoOnly=False):
         Printf.err('Please enter something.')
         return
 
+    # Treat the whole input as a single token first so file paths that
+    # contain spaces are not split apart.
+    if os.path.exists(string.strip()):
+        start_file(string.strip(), videoOnly)
+        return
+
     strings = string.split(" ")
     for item in strings:
         if aigpy.string.isNull(item):
@@ -317,7 +323,7 @@ def loginByConfig():
             return True
 
         Printf.info(LANG.select.MSG_INVALID_ACCESSTOKEN)
-        if TIDAL_API.refreshAccessToken(TOKEN.refreshToken):
+        if not aigpy.string.isNull(TOKEN.refreshToken) and TIDAL_API.refreshAccessToken(TOKEN.refreshToken):
             Printf.success(LANG.select.MSG_VALID_ACCESSTOKEN.format(
                 __displayTime__(int(TIDAL_API.key.expiresIn))))
 
