@@ -369,6 +369,10 @@ def __downloadErrorHint__(err):
     text = str(err or "").lower()
     if any(item in text for item in ("429", "too many requests", "rate limit")):
         return " (hint: raise the request interval in settings and retry)"
+    if any(item in text for item in ("4022", "client referenced", "log in again")):
+        return " (hint: your saved login session is stale; log out, log in again, then retry)"
+    if "prerequisite" in text:
+        return " (hint: this quality may be unavailable to this app for your account; set a fallback order, e.g. --quality-priority Max,HiFi,High,Normal)"
     if any(item in text for item in ("403", "entitled", "not allowed", "client_not_entitled")):
         return " (hint: stream may be unavailable for this account or quality; try a lower quality/fallback order)"
     if any(item in text for item in ("timeout", "connection", "network", "name or service not known")):

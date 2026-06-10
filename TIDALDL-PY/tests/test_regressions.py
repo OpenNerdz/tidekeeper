@@ -1258,6 +1258,131 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         self.assertEqual(mode, 0o600)
 
+    def test_api_get_recovers_stale_client_404_by_refreshing_token(self):
+        api = TidalAPI()
+        api.key.accessToken = "stale-access"
+        api.key.countryCode = "GB"
+
+        stale_body = {
+            "status": 404,
+            "subStatus": 4022,
+            "userMessage": "Client referenced in the request does not seem to exist.",
+        }
+
+        def fake_response(status, body):
+            return SimpleNamespace(
+                status_code=status,
+                text=json.dumps(body),
+                headers={},
+                close=mock.Mock(),
+                json=mock.Mock(return_value=body),
+            )
+
+        def fake_refresh():
+            api.key.accessToken = "fresh-access"
+            return True
+
+        with mock.patch.object(api, "__refreshSavedAccessToken__", side_effect=fake_refresh), \
+             mock.patch.object(api.session, "get", side_effect=[
+                 fake_response(404, stale_body),
+                 fake_response(200, {"id": 123, "title": "Album"}),
+             ]) as get:
+            data = api.__get__("albums/123")
+
+        self.assertEqual(data["title"], "Album")
+        self.assertEqual(get.call_args_list[0].kwargs["headers"]["authorization"], "Bearer stale-access")
+        self.assertEqual(get.call_args_list[1].kwargs["headers"]["authorization"], "Bearer fresh-access")
+
+    def test_api_get_stale_client_404_raises_relogin_error_when_refresh_fails(self):
+        api = TidalAPI()
+        api.key.accessToken = "stale-access"
+        api.key.countryCode = "GB"
+
+        stale_body = {
+            "status": 404,
+            "subStatus": 4022,
+            "userMessage": "Client referenced in the request does not seem to exist.",
+        }
+        response = SimpleNamespace(
+            status_code=404,
+            text=json.dumps(stale_body),
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value=stale_body),
+        )
+
+        old_delay = events.SETTINGS.downloadDelay
+        try:
+            events.SETTINGS.downloadDelay = False
+            with mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
+                 mock.patch.object(api.session, "get", return_value=response) as get_mock:
+                with self.assertRaises(TidalApiError) as ctx:
+                    api.__getOnce__(
+                        "tracks/456/playbackinfopostpaywall/v4",
+                        _playback_params("LOSSLESS"),
+                        API_BASE_PRIMARY,
+                    )
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
+        self.assertIn("log in again", str(ctx.exception))
+        self.assertIn("4022", ctx.exception.errorCodes)
+        self.assertEqual(get_mock.call_count, 1)
+
+    def test_openapi_manifest_prerequisite_missing_retries_with_base_format(self):
+        api = TidalAPI()
+        payload = {"formats": ["FLAC"], "uri": "data:x,eyJ0ZXN0In0="}
+
+        def fake_once(track_id, formats, usage):
+            if "FLAC_HIRES" in formats:
+                raise TidalApiError(
+                    'Track manifest request failed: HTTP 403 '
+                    '{"errors":[{"status":"403","code":"PREREQUISITE_MISSING"}]}',
+                    403,
+                    ["PREREQUISITE_MISSING"],
+                )
+            return payload
+
+        with mock.patch.object(api, "__getOpenApiTrackManifestOnce__", side_effect=fake_once) as once_get:
+            attrs = api.__getOpenApiTrackManifest__(456, ["FLAC_HIRES", "FLAC"])
+
+        self.assertEqual(attrs["formats"], ["FLAC"])
+        once_get.assert_any_call(456, ["FLAC_HIRES", "FLAC"], "DOWNLOAD")
+        once_get.assert_any_call(456, ["FLAC"], "DOWNLOAD")
+
+    def test_track_specific_403_does_not_block_playback_api_for_session(self):
+        api = TidalAPI()
+
+        prerequisite_error = TidalApiError(
+            "Get operation failed: HTTP 403", 403, ["PREREQUISITE_MISSING"]
+        )
+        api.__markPlaybackParamBlocked__("HI_RES_LOSSLESS", prerequisite_error)
+        self.assertNotIn("HI_RES_LOSSLESS", api._playbackBlockedParams)
+
+        stale_error = TidalApiError("Get operation failed: HTTP 404", 404, ["4022"])
+        api.__markPlaybackParamBlocked__("LOW", stale_error)
+        self.assertNotIn("LOW", api._playbackBlockedParams)
+
+        entitlement_error = TidalApiError(
+            "Get operation failed: HTTP 403", 403, ["CLIENT_NOT_ENTITLED"]
+        )
+        api.__markPlaybackParamBlocked__("HI_RES_LOSSLESS", entitlement_error)
+        self.assertIn("HI_RES_LOSSLESS", api._playbackBlockedParams)
+
+    def test_download_error_hint_for_stale_session(self):
+        hint = download.__downloadErrorHint__(Exception(
+            'Get operation failed: HTTP 404 {"status":404,"subStatus":4022,'
+            '"userMessage":"Client referenced in the request does not seem to exist."}'
+        ))
+        self.assertIn("log in again", hint)
+
+    def test_download_error_hint_for_prerequisite_missing(self):
+        hint = download.__downloadErrorHint__(Exception(
+            'Track manifest request failed: HTTP 403 '
+            '{"errors":[{"status":"403","code":"PREREQUISITE_MISSING"}]}'
+        ))
+        self.assertIn("quality-priority", hint)
+
 
 if __name__ == "__main__":
     unittest.main()

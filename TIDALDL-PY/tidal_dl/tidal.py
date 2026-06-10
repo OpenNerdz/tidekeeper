@@ -123,8 +123,9 @@ class TidalAPI(object):
                 ]
             if data.get('code'):
                 codes.append(data.get('code'))
-            if data.get('sub_status'):
-                codes.append(str(data.get('sub_status')))
+            for key in ('sub_status', 'subStatus'):
+                if data.get(key):
+                    codes.append(str(data.get(key)))
         return codes
 
     def __httpError__(self, action, response):
@@ -193,8 +194,30 @@ class TidalAPI(object):
             return True
         return error.statusCode in (400, 404, 405, 406, 410, 422)
 
+    def __isStaleClientError__(self, error):
+        if isinstance(error, TidalApiError) and any(str(code) == '4022' for code in error.errorCodes):
+            return True
+        text = str(error or "").lower()
+        return 'client referenced in the request' in text or 'substatus 4022' in text
+
+    def __isStaleClientResponse__(self, response):
+        if response is None or response.status_code != 404:
+            return False
+        body = self.__responseBody__(response)
+        if str(body.get('subStatus', body.get('sub_status', ''))) == '4022':
+            return True
+        return 'client referenced in the request' in str(body.get('userMessage', '')).lower()
+
     def __markPlaybackParamBlocked__(self, audio_param, error):
-        if audio_param and self.__isPlaybackBlockedError__(error):
+        if not audio_param or not isinstance(error, TidalApiError):
+            return
+        if self.__isStaleClientError__(error):
+            # A stale login session is an auth problem, not a capability block.
+            return
+        # Only cache client-level capability blocks. A track-specific 403
+        # (for example PREREQUISITE_MISSING) must not disable the playback
+        # API for every other track in this session.
+        if 'CLIENT_NOT_ENTITLED' in error.errorCodes or error.statusCode in (404, 405):
             self._playbackBlockedParams.add(audio_param)
 
     def __isRateLimitError__(self, error):
@@ -204,7 +227,7 @@ class TidalAPI(object):
         return any(token in text for token in ("429", "too many requests", "rate limit"))
 
     def __shouldSkipOpenApiFallback__(self, error):
-        return self.__isRateLimitError__(error)
+        return self.__isRateLimitError__(error) or self.__isStaleClientError__(error)
 
     def __retryAfter__(self, response, attempt):
         retryAfter = getattr(response, 'headers', {}).get('Retry-After') if response is not None else None
@@ -267,6 +290,19 @@ class TidalAPI(object):
                 if respond.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():
                     refreshedToken = True
                     continue
+
+                if respond.status_code == 404 and self.__isStaleClientResponse__(respond):
+                    if not refreshedToken and self.__refreshSavedAccessToken__():
+                        refreshedToken = True
+                        continue
+                    error = self.__httpError__("Get operation", respond)
+                    raise TidalApiError(
+                        "Get operation failed: the saved login session references an API client "
+                        "that no longer exists (HTTP 404, subStatus 4022). "
+                        "Please log out and log in again.",
+                        404,
+                        error.errorCodes,
+                    )
 
                 if respond.status_code != 200:
                     raise self.__httpError__("Get operation", respond)
@@ -634,21 +670,36 @@ class TidalAPI(object):
     def __openApiManifestUsages__(self):
         return ('DOWNLOAD', 'PLAYBACK')
 
+    def __isRetryableManifestError__(self, error):
+        if not isinstance(error, TidalApiError):
+            return False
+        if 'PREREQUISITE_MISSING' in error.errorCodes:
+            return True
+        return error.statusCode in (403, 404, 405)
+
     def __getOpenApiTrackManifest__(self, id, formats, usages=None):
+        formats = list(formats)
+        formatAttempts = [formats]
+        if len(formats) > 1:
+            # HTTP 403 PREREQUISITE_MISSING can be triggered by the hi-res
+            # format alone; retry with only the base format before giving up.
+            formatAttempts.append(formats[-1:])
+
         last_error = None
         for usage in usages or self.__openApiManifestUsages__():
-            try:
-                return self.__getOpenApiTrackManifestOnce__(id, formats, usage)
-            except TidalApiError as e:
-                last_error = e
-                if e.statusCode in (403, 404, 405) and usage != self.__openApiManifestUsages__()[-1]:
+            for attemptFormats in formatAttempts:
+                try:
+                    return self.__getOpenApiTrackManifestOnce__(id, attemptFormats, usage)
+                except TidalApiError as e:
+                    last_error = e
+                    if not self.__isRetryableManifestError__(e):
+                        raise
                     logging.debug(
-                        "Track manifest usage=%s unavailable, trying next usage: %s",
+                        "Track manifest usage=%s formats=%s unavailable, trying next option: %s",
                         usage,
+                        attemptFormats,
                         e,
                     )
-                    continue
-                raise
         raise last_error
 
     def __getOpenApiTrackManifestOnce__(self, id, formats, usage):
@@ -844,6 +895,8 @@ class TidalAPI(object):
         if isinstance(error, TidalApiError):
             if 'CLIENT_NOT_ENTITLED' in error.errorCodes:
                 return "requested format is not allowed for this account or track"
+            if 'PREREQUISITE_MISSING' in error.errorCodes:
+                return "requested format prerequisites are missing for this account"
             if error.statusCode == 403:
                 return "requested format was blocked"
         return "requested format failed"
@@ -869,7 +922,7 @@ class TidalAPI(object):
         return "CLIENT_NOT_ENTITLED" in message or "HTTP 403" in message
 
     def __isManifestFallbackError__(self, error):
-        if self.__isRateLimitError__(error):
+        if self.__isRateLimitError__(error) or self.__isStaleClientError__(error):
             return False
         if self.__isStreamFallbackError__(error):
             return True
