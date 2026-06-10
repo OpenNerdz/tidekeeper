@@ -194,8 +194,30 @@ class TidalAPI(object):
             return True
         return error.statusCode in (400, 404, 405, 406, 410, 422)
 
+    def __isStaleClientError__(self, error):
+        if isinstance(error, TidalApiError) and any(str(code) == '4022' for code in error.errorCodes):
+            return True
+        text = str(error or "").lower()
+        return 'client referenced in the request' in text or 'substatus 4022' in text
+
+    def __isStaleClientResponse__(self, response):
+        if response is None or response.status_code != 404:
+            return False
+        body = self.__responseBody__(response)
+        if str(body.get('subStatus', body.get('sub_status', ''))) == '4022':
+            return True
+        return 'client referenced in the request' in str(body.get('userMessage', '')).lower()
+
     def __markPlaybackParamBlocked__(self, audio_param, error):
-        if audio_param and self.__isPlaybackBlockedError__(error):
+        if not audio_param or not isinstance(error, TidalApiError):
+            return
+        if self.__isStaleClientError__(error):
+            # A stale login session is an auth problem, not a capability block.
+            return
+        # Only cache client-level capability blocks. A track-specific 403
+        # (for example PREREQUISITE_MISSING) must not disable the playback
+        # API for every other track in this session.
+        if 'CLIENT_NOT_ENTITLED' in error.errorCodes or error.statusCode in (404, 405):
             self._playbackBlockedParams.add(audio_param)
 
     def __isRateLimitError__(self, error):
@@ -205,7 +227,7 @@ class TidalAPI(object):
         return any(token in text for token in ("429", "too many requests", "rate limit"))
 
     def __shouldSkipOpenApiFallback__(self, error):
-        return self.__isRateLimitError__(error)
+        return self.__isRateLimitError__(error) or self.__isStaleClientError__(error)
 
     def __retryAfter__(self, response, attempt):
         retryAfter = getattr(response, 'headers', {}).get('Retry-After') if response is not None else None
