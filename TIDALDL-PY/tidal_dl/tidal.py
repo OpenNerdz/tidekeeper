@@ -892,7 +892,7 @@ class TidalAPI(object):
         return "CLIENT_NOT_ENTITLED" in message or "HTTP 403" in message
 
     def __isManifestFallbackError__(self, error):
-        if self.__isRateLimitError__(error):
+        if self.__isRateLimitError__(error) or self.__isStaleClientError__(error):
             return False
         if self.__isStreamFallbackError__(error):
             return True
