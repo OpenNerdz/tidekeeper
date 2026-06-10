@@ -100,6 +100,8 @@ class MainWindow(QMainWindow):
         self.login_poll_inflight = False
         self.search_in_progress = False
         self.download_in_progress = False
+        self.download_worker = None
+        self._cancel_requested = False
 
         self.setWindowTitle("Tidekeeper")
         self.setMinimumSize(1040, 680)
@@ -285,15 +287,19 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.queue_status, 1)
         self.remove_queue_button = _button("Remove")
         self.clear_queue_button = _button("Clear")
+        self.cancel_queue_button = _button("Cancel", danger=True)
         self.start_queue_button = _button("Start Queue", primary=True)
         self.remove_queue_button.setToolTip("Remove selected queue rows.")
         self.clear_queue_button.setToolTip("Clear the queue and output log.")
+        self.cancel_queue_button.setToolTip("Stop after the current item finishes.")
         self.start_queue_button.setToolTip("Download every queued item.")
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_items)
         self.clear_queue_button.clicked.connect(self.clear_queue)
+        self.cancel_queue_button.clicked.connect(self.cancel_downloads)
         self.start_queue_button.clicked.connect(self.start_queue_download)
         action_layout.addWidget(self.remove_queue_button)
         action_layout.addWidget(self.clear_queue_button)
+        action_layout.addWidget(self.cancel_queue_button)
         action_layout.addWidget(self.start_queue_button)
         layout.addLayout(action_layout)
 
@@ -822,10 +828,13 @@ class MainWindow(QMainWindow):
             self.queue_status.setText("A download is already running.")
             return
         self.download_in_progress = True
+        self._cancel_requested = False
         self.update_action_states()
         self.download_log.append("Starting downloads")
         worker = DownloadWorker(self.backend, items)
+        self.download_worker = worker
         worker.signals.log.connect(self.append_download_log)
+        worker.signals.item_status.connect(self._set_queue_item_status)
         worker.signals.result.connect(lambda _: self.queue_status.setText("Downloads finished."))
         worker.signals.error.connect(self.show_download_error)
         worker.signals.finished.connect(self._download_finished)
@@ -833,7 +842,27 @@ class MainWindow(QMainWindow):
 
     def _download_finished(self):
         self.download_in_progress = False
+        self.download_worker = None
+        if self._cancel_requested:
+            self._cancel_requested = False
+            self.queue_status.setText("Downloads cancelled.")
         self.update_action_states()
+
+    def cancel_downloads(self):
+        if self.download_worker is None:
+            return
+        self._cancel_requested = True
+        self.download_worker.cancel()
+        self.cancel_queue_button.setEnabled(False)
+        self.queue_status.setText("Cancelling after the current item...")
+
+    def _set_queue_item_status(self, item, status: str):
+        for row in range(self.queue_table.rowCount()):
+            if self._row_item(self.queue_table, row) is item:
+                cell = self.queue_table.item(row, 4)
+                if cell is not None:
+                    cell.setText(status)
+                break
 
     def update_action_states(self):
         self.update_search_action()
@@ -868,6 +897,7 @@ class MainWindow(QMainWindow):
         has_selection = bool(self.queue_table.selectionModel().selectedRows())
         self.remove_queue_button.setEnabled(has_selection and not self.download_in_progress)
         self.clear_queue_button.setEnabled(has_queue and not self.download_in_progress)
+        self.cancel_queue_button.setEnabled(self.download_in_progress and not self._cancel_requested)
         self.start_queue_button.setEnabled(has_queue and not self.download_in_progress)
 
     def append_download_log(self, text: str):
@@ -1040,14 +1070,20 @@ class MainWindow(QMainWindow):
         self.account_log.append("Logged out.")
 
     def login_with_token(self):
+        access_token = self.access_token.text().strip()
+        if not access_token:
+            self.account_log.append("Enter an access token first.")
+            return
+        self.token_login_button.setEnabled(False)
         self.account_log.append("Saving manual token...")
         worker = TaskWorker(
             self.backend.login_by_access_token,
-            self.access_token.text(),
+            access_token,
             self.refresh_token.text(),
         )
         worker.signals.result.connect(lambda status: (self.refresh_auth_status(), self.account_log.append(status.label)))
         worker.signals.error.connect(lambda message: self.account_log.append(message))
+        worker.signals.finished.connect(lambda: self.token_login_button.setEnabled(True))
         self.start_worker(worker)
 
     def run_doctor(self):

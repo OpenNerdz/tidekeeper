@@ -674,12 +674,8 @@ def __parseContributors__(roleType, Contributors):
     if Contributors is None:
         return None
     try:
-        ret = []
-        for item in Contributors['items']:
-            if item['role'] == roleType:
-                ret.append(item['name'])
-        return ret
-    except:
+        return [item['name'] for item in Contributors['items'] if item['role'] == roleType]
+    except (KeyError, TypeError):
         return None
 
 
@@ -704,16 +700,16 @@ def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
     obj.album = track.album.title
     obj.title = track.title
     if not aigpy.string.isNull(track.version):
-        obj.title += ' (' + track.version + ')'
+        obj.title += f' ({track.version})'
 
-    obj.artist = list(map(lambda artist: artist.name, track.artists))
+    obj.artist = [artist.name for artist in track.artists]
     obj.copyright = track.copyRight
     obj.tracknumber = track.trackNumber
     obj.discnumber = track.volumeNumber
     obj.composer = __parseContributors__('Composer', contributors)
     obj.isrc = track.isrc
 
-    obj.albumartist = list(map(lambda artist: artist.name, album.artists))
+    obj.albumartist = [artist.name for artist in album.artists]
     obj.date = album.releaseDate
     obj.totaldisc = album.numberOfVolumes
     obj.lyrics = lyrics
@@ -750,28 +746,29 @@ def downloadAlbumInfo(album, tracks):
     aigpy.path.mkdirs(path)
 
     path += '/AlbumInfo.txt'
-    infos = ""
-    infos += "[ID]          %s\n" % (str(album.id))
-    infos += "[Title]       %s\n" % (str(album.title))
-    infos += "[Artists]     %s\n" % (TIDAL_API.getArtistsName(album.artists))
-    infos += "[ReleaseDate] %s\n" % (str(album.releaseDate))
-    infos += "[SongNum]     %s\n" % (str(album.numberOfTracks))
-    infos += "[Duration]    %s\n" % (str(album.duration))
-    infos += '\n'
+    infos = (
+        f"[ID]          {album.id}\n"
+        f"[Title]       {album.title}\n"
+        f"[Artists]     {TIDAL_API.getArtistsName(album.artists)}\n"
+        f"[ReleaseDate] {album.releaseDate}\n"
+        f"[SongNum]     {album.numberOfTracks}\n"
+        f"[Duration]    {album.duration}\n"
+        "\n"
+    )
 
-    for index in range(0, album.numberOfVolumes):
+    for index in range(album.numberOfVolumes):
         volumeNumber = index + 1
         infos += f"===========CD {volumeNumber}=============\n"
         for item in tracks:
             if item.volumeNumber != volumeNumber:
                 continue
-            infos += '{:<8}'.format("[%d]" % item.trackNumber)
-            infos += "%s\n" % item.title
+            infos += f"{f'[{item.trackNumber}]':<8}{item.title}\n"
     aigpy.file.write(path, infos, "w+")
 
 
 def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None):
     title = getattr(video, 'title', None) or str(getattr(video, 'id', 'unknown'))
+    partPath = ''
     try:
         stream = TIDAL_API.getVideoStreamUrl(video.id, SETTINGS.videoQuality)
         path = getVideoPath(video, album, playlist)
@@ -813,7 +810,7 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None):
             Printf.err(f"DL Video[{title}] failed.{msg}")
             return False, msg
     except Exception as e:
-        __removeFile__(locals().get('partPath', ''))
+        __removeFile__(partPath)
         Printf.err(f"DL Video[{title}] failed.{str(e)}")
         return False, str(e)
 
@@ -832,6 +829,7 @@ def __ensureTrackStreamable__(track):
 
 def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, partSize=DEFAULT_PART_SIZE):
     title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
+    partPath = ''
     try:
         __ensureTrackStreamable__(track)
         stream = __getTrackStream__(track.id)
@@ -879,7 +877,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         # contributors
         try:
             contributors = TIDAL_API.getTrackContributors(track.id)
-        except:
+        except Exception:
             contributors = None
 
         lyrics = __saveLyricsForTrack__(track, path)
@@ -893,7 +891,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         return True, ''
     except Exception as e:
-        __removeFile__(locals().get('partPath', ''))
+        __removeFile__(partPath)
         __logFailedTrack__(track, album, playlist, e)
         Printf.err(f"DL Track '{title}' failed: {str(e)}{__downloadErrorHint__(e)}")
         return False, str(e)

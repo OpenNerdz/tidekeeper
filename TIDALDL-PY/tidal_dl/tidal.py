@@ -450,8 +450,12 @@ class TidalAPI(object):
         return True
 
     def verifyAccessToken(self, accessToken) -> bool:
-        header = {'authorization': 'Bearer {}'.format(accessToken)}
-        result = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT).json()
+        header = {'authorization': f'Bearer {accessToken}'}
+        try:
+            response = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT)
+            result = response.json()
+        except (requests.RequestException, ValueError):
+            return False
 
         if 'status' in result and result['status'] != 200:
             return False
@@ -479,8 +483,12 @@ class TidalAPI(object):
         return True
 
     def loginByAccessToken(self, accessToken, userid=None):
-        header = {'authorization': 'Bearer {}'.format(accessToken)}
-        result = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT).json()
+        header = {'authorization': f'Bearer {accessToken}'}
+        response = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT)
+        try:
+            result = response.json()
+        except ValueError:
+            raise Exception(f"Login failed: unexpected HTTP {response.status_code} response from TIDAL.")
         if 'status' in result and result['status'] != 200:
             raise Exception("Login failed!")
 
@@ -1063,7 +1071,7 @@ class TidalAPI(object):
         url = self.getCoverUrl(sid, width, height)
         try:
             return self.session.get(url, timeout=REQUEST_TIMEOUT).content
-        except:
+        except requests.RequestException:
             return ''
 
     def getArtistsName(self, artists=[]):
@@ -1123,7 +1131,11 @@ class TidalAPI(object):
             try:
                 obj = self.getTypeData(sid, item)
                 return item, obj
-            except:
+            except Exception as e:
+                # Surface session and throttling problems instead of
+                # masking them as a generic "No result." while probing types.
+                if self.__isRateLimitError__(e) or self.__isStaleClientError__(e):
+                    raise
                 continue
 
         raise Exception("No result.")
