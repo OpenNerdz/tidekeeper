@@ -419,7 +419,7 @@ class TidalAPI(object):
         self.key.verificationUrl = result['verificationUri']
         self.key.authCheckTimeout = result['expiresIn']
         self.key.authCheckInterval = result['interval']
-        return "http://" + self.key.verificationUrl + "/" + self.key.userCode
+        return "https://" + self.key.verificationUrl + "/" + self.key.userCode
 
     def checkAuthStatus(self) -> bool:
         data = {
