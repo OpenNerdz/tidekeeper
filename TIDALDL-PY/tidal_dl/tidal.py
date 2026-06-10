@@ -24,8 +24,6 @@ import requests
 from .model import *
 from .settings import *
 
-# Retry number
-requests.adapters.DEFAULT_RETRIES = 5
 REQUEST_TIMEOUT = (5, 60)
 API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
 API_BASE_LEGACY = 'https://api.tidalhifi.com/v1/'
@@ -75,7 +73,9 @@ class TidalAPI(object):
         self.apiKey = {'clientId': 'fX2JxdmntZWK0ixT',
                        'clientSecret': '1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg='}
         self.session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16)
+        # Retry transient connection failures at the transport level; HTTP
+        # status handling (401/404/429) stays in the request helpers.
+        adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=3)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         self.playbackRateLimiter = PLAYBACK_RATE_LIMITER
@@ -419,7 +419,7 @@ class TidalAPI(object):
         self.key.verificationUrl = result['verificationUri']
         self.key.authCheckTimeout = result['expiresIn']
         self.key.authCheckInterval = result['interval']
-        return "http://" + self.key.verificationUrl + "/" + self.key.userCode
+        return "https://" + self.key.verificationUrl + "/" + self.key.userCode
 
     def checkAuthStatus(self) -> bool:
         data = {
