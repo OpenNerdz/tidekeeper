@@ -670,21 +670,36 @@ class TidalAPI(object):
     def __openApiManifestUsages__(self):
         return ('DOWNLOAD', 'PLAYBACK')
 
+    def __isRetryableManifestError__(self, error):
+        if not isinstance(error, TidalApiError):
+            return False
+        if 'PREREQUISITE_MISSING' in error.errorCodes:
+            return True
+        return error.statusCode in (403, 404, 405)
+
     def __getOpenApiTrackManifest__(self, id, formats, usages=None):
+        formats = list(formats)
+        formatAttempts = [formats]
+        if len(formats) > 1:
+            # HTTP 403 PREREQUISITE_MISSING can be triggered by the hi-res
+            # format alone; retry with only the base format before giving up.
+            formatAttempts.append(formats[-1:])
+
         last_error = None
         for usage in usages or self.__openApiManifestUsages__():
-            try:
-                return self.__getOpenApiTrackManifestOnce__(id, formats, usage)
-            except TidalApiError as e:
-                last_error = e
-                if e.statusCode in (403, 404, 405) and usage != self.__openApiManifestUsages__()[-1]:
+            for attemptFormats in formatAttempts:
+                try:
+                    return self.__getOpenApiTrackManifestOnce__(id, attemptFormats, usage)
+                except TidalApiError as e:
+                    last_error = e
+                    if not self.__isRetryableManifestError__(e):
+                        raise
                     logging.debug(
-                        "Track manifest usage=%s unavailable, trying next usage: %s",
+                        "Track manifest usage=%s formats=%s unavailable, trying next option: %s",
                         usage,
+                        attemptFormats,
                         e,
                     )
-                    continue
-                raise
         raise last_error
 
     def __getOpenApiTrackManifestOnce__(self, id, formats, usage):
