@@ -71,7 +71,8 @@ def start_mix(obj: Mix, videoOnly=False):
     Printf.mix(obj)
     if not videoOnly:
         downloadTracks(obj.tracks, None, None)
-    downloadVideos(obj.videos, None, None)
+    if videoOnly or SETTINGS.downloadVideos:
+        downloadVideos(obj.videos, None, None)
 
 
 def start_file(string, videoOnly=False):
