@@ -895,6 +895,8 @@ class TidalAPI(object):
         if isinstance(error, TidalApiError):
             if 'CLIENT_NOT_ENTITLED' in error.errorCodes:
                 return "requested format is not allowed for this account or track"
+            if 'PREREQUISITE_MISSING' in error.errorCodes:
+                return "requested format prerequisites are missing for this account"
             if error.statusCode == 403:
                 return "requested format was blocked"
         return "requested format failed"
