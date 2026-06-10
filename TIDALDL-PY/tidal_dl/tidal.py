@@ -75,7 +75,9 @@ class TidalAPI(object):
         self.apiKey = {'clientId': 'fX2JxdmntZWK0ixT',
                        'clientSecret': '1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg='}
         self.session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16)
+        # Retry transient connection failures at the transport level; HTTP
+        # status handling (401/404/429) stays in the request helpers.
+        adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=3)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         self.playbackRateLimiter = PLAYBACK_RATE_LIMITER

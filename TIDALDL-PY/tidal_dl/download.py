@@ -42,7 +42,7 @@ def __httpSession__():
     if session is None:
         session = requests.Session()
         pool_size = max(TRACK_THREAD_COUNT, VIDEO_THREAD_COUNT) + 2
-        adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=3)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         download_session_state.session = session
