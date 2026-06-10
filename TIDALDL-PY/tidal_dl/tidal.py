@@ -291,6 +291,19 @@ class TidalAPI(object):
                     refreshedToken = True
                     continue
 
+                if respond.status_code == 404 and self.__isStaleClientResponse__(respond):
+                    if not refreshedToken and self.__refreshSavedAccessToken__():
+                        refreshedToken = True
+                        continue
+                    error = self.__httpError__("Get operation", respond)
+                    raise TidalApiError(
+                        "Get operation failed: the saved login session references an API client "
+                        "that no longer exists (HTTP 404, subStatus 4022). "
+                        "Please log out and log in again.",
+                        404,
+                        error.errorCodes,
+                    )
+
                 if respond.status_code != 200:
                     raise self.__httpError__("Get operation", respond)
 
