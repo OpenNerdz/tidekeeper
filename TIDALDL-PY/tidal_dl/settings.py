@@ -188,7 +188,7 @@ class TokenSettings(aigpy.model.ModelBase):
             sr = base64.b64decode(string)
             st = sr.decode()
             return st
-        except:
+        except (ValueError, UnicodeDecodeError):
             return string
 
     def read(self, path):

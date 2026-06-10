@@ -8,6 +8,7 @@ class WorkerSignals(QObject):
     error = Signal(str)
     finished = Signal()
     log = Signal(str)
+    item_status = Signal(object, str)
 
 
 class TaskWorker(QRunnable):
@@ -40,12 +41,28 @@ class DownloadWorker(QRunnable):
 
     @Slot()
     def run(self):
+        failed = []
         try:
             for item in self.items:
+                self.signals.item_status.emit(item, "Downloading")
                 self.signals.log.emit(f"Starting {item.title}\n")
-                self.backend.download(item, self.signals.log.emit)
+                try:
+                    self.backend.download(item, self.signals.log.emit)
+                except Exception as exc:
+                    failed.append(item.title)
+                    self.signals.item_status.emit(item, "Failed")
+                    self.signals.log.emit(f"Failed {item.title}: {exc}\n")
+                    continue
+                self.signals.item_status.emit(item, "Done")
                 self.signals.log.emit(f"Finished {item.title}\n")
-            self.signals.result.emit(self.items)
+            if failed:
+                shown = ", ".join(failed[:5])
+                more = f" (+{len(failed) - 5} more)" if len(failed) > 5 else ""
+                self.signals.error.emit(
+                    f"{len(failed)} download{'s' if len(failed) != 1 else ''} failed: {shown}{more}"
+                )
+            else:
+                self.signals.result.emit(self.items)
         except Exception as exc:
             self.signals.error.emit(str(exc))
         finally:

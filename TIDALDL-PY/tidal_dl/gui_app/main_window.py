@@ -826,6 +826,7 @@ class MainWindow(QMainWindow):
         self.download_log.append("Starting downloads")
         worker = DownloadWorker(self.backend, items)
         worker.signals.log.connect(self.append_download_log)
+        worker.signals.item_status.connect(self._set_queue_item_status)
         worker.signals.result.connect(lambda _: self.queue_status.setText("Downloads finished."))
         worker.signals.error.connect(self.show_download_error)
         worker.signals.finished.connect(self._download_finished)
@@ -834,6 +835,14 @@ class MainWindow(QMainWindow):
     def _download_finished(self):
         self.download_in_progress = False
         self.update_action_states()
+
+    def _set_queue_item_status(self, item, status: str):
+        for row in range(self.queue_table.rowCount()):
+            if self._row_item(self.queue_table, row) is item:
+                cell = self.queue_table.item(row, 4)
+                if cell is not None:
+                    cell.setText(status)
+                break
 
     def update_action_states(self):
         self.update_search_action()
@@ -1040,14 +1049,20 @@ class MainWindow(QMainWindow):
         self.account_log.append("Logged out.")
 
     def login_with_token(self):
+        access_token = self.access_token.text().strip()
+        if not access_token:
+            self.account_log.append("Enter an access token first.")
+            return
+        self.token_login_button.setEnabled(False)
         self.account_log.append("Saving manual token...")
         worker = TaskWorker(
             self.backend.login_by_access_token,
-            self.access_token.text(),
+            access_token,
             self.refresh_token.text(),
         )
         worker.signals.result.connect(lambda status: (self.refresh_auth_status(), self.account_log.append(status.label)))
         worker.signals.error.connect(lambda message: self.account_log.append(message))
+        worker.signals.finished.connect(lambda: self.token_login_button.setEnabled(True))
         self.start_worker(worker)
 
     def run_doctor(self):
