@@ -123,8 +123,9 @@ class TidalAPI(object):
                 ]
             if data.get('code'):
                 codes.append(data.get('code'))
-            if data.get('sub_status'):
-                codes.append(str(data.get('sub_status')))
+            for key in ('sub_status', 'subStatus'):
+                if data.get(key):
+                    codes.append(str(data.get(key)))
         return codes
 
     def __httpError__(self, action, response):
