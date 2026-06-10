@@ -162,13 +162,21 @@ def __contentLength__(url):
 def __remoteSize__(urls):
     if isinstance(urls, str):
         urls = [urls]
+    urls = list(urls or [])
+    if not urls:
+        return 0
+    if len(urls) == 1:
+        size = __contentLength__(urls[0])
+        return size if size > 0 else -1
 
+    # Probe segment sizes in parallel; serial HEAD requests dominated
+    # startup time for DASH tracks with many segments.
     total = 0
-    for url in urls or []:
-        size = __contentLength__(url)
-        if size <= 0:
-            return -1
-        total += size
+    with ThreadPoolExecutor(max_workers=min(8, len(urls))) as probe_pool:
+        for size in probe_pool.map(__contentLength__, urls):
+            if size <= 0:
+                return -1
+            total += size
     return total
 
 
