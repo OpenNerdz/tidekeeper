@@ -54,10 +54,10 @@ def decrypt_file(efile, dfile, key, nonce):
     counter = Counter.new(64, prefix=nonce, initial_value=0)
     decryptor = AES.new(key, AES.MODE_CTR, counter=counter)
 
-    # Open and decrypt
-    with open(efile, 'rb') as eflac:
-        flac = decryptor.decrypt(eflac.read())
-
-        # Replace with decrypted file
-        with open(dfile, 'wb') as dflac:
-            dflac.write(flac)
+    # Decrypt in chunks so large tracks are not loaded fully into memory
+    with open(efile, 'rb') as eflac, open(dfile, 'wb') as dflac:
+        while True:
+            chunk = eflac.read(1024 * 1024)
+            if not chunk:
+                break
+            dflac.write(decryptor.decrypt(chunk))
