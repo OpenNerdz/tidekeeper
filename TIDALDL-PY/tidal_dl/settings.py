@@ -167,7 +167,7 @@ class Settings(aigpy.model.ModelBase):
         data['audioQuality'] = self.audioQuality.name
         data['audioQualityPriority'] = [item.name for item in self.getAudioQualityPriority(self.audioQualityPriority)]
         data['videoQuality'] = self.videoQuality.name
-        txt = json.dumps(data)
+        txt = json.dumps(data, indent=2, sort_keys=True)
         aigpy.file.write(self._path_, txt, 'w+')
 
 

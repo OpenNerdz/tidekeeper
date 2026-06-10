@@ -24,8 +24,6 @@ import requests
 from .model import *
 from .settings import *
 
-# Retry number
-requests.adapters.DEFAULT_RETRIES = 5
 REQUEST_TIMEOUT = (5, 60)
 API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
 API_BASE_LEGACY = 'https://api.tidalhifi.com/v1/'
