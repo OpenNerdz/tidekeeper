@@ -259,6 +259,7 @@ class TidalAPI(object):
         params['countryCode'] = self.key.countryCode
         errmsg = "Get operation err!"
         respond = None
+        lastError = None
         refreshedToken = False
         url = urlpre + path
         playbackRequest = self.__isPlaybackPath__(path)
@@ -317,15 +318,19 @@ class TidalAPI(object):
             except TidalApiError as e:
                 if self.__isNonRetryableTidalApiError__(e, playbackRequest) or index >= maxAttempts - 1:
                     raise e
+                lastError = e
             except Exception as e:
+                lastError = e
                 if index >= maxAttempts - 1 and respond is not None:
                     errmsg += respond.text
 
         if respond is not None and self.__isAssetNotReady__(respond):
             body = self.__responseBody__(respond)
             message = body.get('userMessage') or 'Asset is not ready for playback'
-            raise Exception(f"{errmsg}{message}")
-        raise Exception(errmsg)
+            raise Exception(f"{errmsg}{message}") from lastError
+        if lastError is not None and aigpy.string.isNull(errmsg.replace("Get operation err!", "")):
+            raise Exception(f"{errmsg} {lastError}") from lastError
+        raise Exception(errmsg) from lastError
 
     def __getPlaybackData__(self, item_id, params, media='tracks'):
         params = dict(params or {})
