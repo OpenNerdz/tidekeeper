@@ -9,6 +9,8 @@
 @Desc    :
 """
 
+import logging
+
 from .download import *
 
 '''
@@ -339,6 +341,7 @@ def loginByConfig():
             logout()
             return False
     except Exception as e:
+        logging.warning("Unable to refresh access token: %s", e)
         return False
 
 

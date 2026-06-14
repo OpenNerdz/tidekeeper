@@ -260,7 +260,6 @@ class Printf(object):
 
     @staticmethod
     def err(string):
-        global print_mutex
         print_mutex.acquire()
         print(aigpy.cmd.red(LANG.select.PRINT_ERR + " ") + string)
         # logging.error(string)
@@ -268,14 +267,12 @@ class Printf(object):
 
     @staticmethod
     def info(string):
-        global print_mutex
         print_mutex.acquire()
         print(aigpy.cmd.blue(LANG.select.PRINT_INFO + " ") + string)
         print_mutex.release()
 
     @staticmethod
     def success(string):
-        global print_mutex
         print_mutex.acquire()
         print(aigpy.cmd.green(LANG.select.PRINT_SUCCESS + " ") + string)
         print_mutex.release()
