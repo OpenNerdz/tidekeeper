@@ -45,7 +45,7 @@ class LangEnglish(object):
     SETTING_ADD_TYPE_FOLDER = "Add Type-Folder"
     SETTING_DOWNLOAD_DELAY = "Use Download Delay"
     SETTING_REQUEST_INTERVAL_SECONDS = "Request delay seconds"
-    SETTING_SAVE_AS_FLAC = "Save FLAC as .flac files"
+    SETTING_SAVE_AS_FLAC = "Save FLAC streams as .flac files"
 
     CHOICE = "CHOICE"
     FUNCTION = "FUNCTION"
@@ -98,7 +98,7 @@ class LangEnglish(object):
     CHANGE_MULITHREAD_DOWNLOAD = "Multi thread download('0'-No,'1'-Yes):"
     CHANGE_USE_DOWNLOAD_DELAY = "Use Download Delay('0'-No,'1'-Yes):"
     CHANGE_REQUEST_INTERVAL_SECONDS = "Request delay seconds (0=off, 30 or 60 can help rate limits):"
-    CHANGE_SAVE_AS_FLAC = "Save FLAC streams as .flac files when ffmpeg can remux them('0'-No,'1'-Yes):"
+    CHANGE_SAVE_AS_FLAC = "Save FLAC streams as .flac files when the stream is FLAC and ffmpeg can remux it (High quality remains M4A)('0'-No,'1'-Yes):"
 
     # {} are required in these strings
     AUTH_START_LOGIN = "Starting login process..."
