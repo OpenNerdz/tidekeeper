@@ -914,6 +914,39 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             ],
         )
 
+    def test_standard_api_quality_mismatch_falls_through_to_openapi_flac(self):
+        """Issue #32: standard playback API returns HIGH when LOSSLESS was
+        requested.  The OpenAPI FLAC endpoint should be tried before giving up."""
+        api = TidalAPI()
+
+        # Standard playback API returns HIGH (wrong quality).
+        high_manifest = base64.b64encode(json.dumps({
+            "codecs": "aac",
+            "urls": ["https://example.invalid/high.m4a"],
+            "mimeType": "audio/mp4",
+        }).encode("utf-8")).decode("utf-8")
+
+        # OpenAPI FLAC endpoint returns LOSSLESS (correct quality).
+        flac_xml = self._dash_manifest("flac")
+        flac_uri = "data:application/dash+xml;base64," + base64.b64encode(
+            flac_xml.encode("utf-8")
+        ).decode("utf-8")
+
+        with mock.patch.object(api, "__getPlaybackData__", return_value={
+            "trackid": 456,
+            "audioQuality": "HIGH",
+            "manifestMimeType": "application/vnd.tidal.bt",
+            "manifest": high_manifest,
+        }), mock.patch.object(api, "__getOpenApiTrackManifest__", return_value={
+            "formats": ["FLAC"],
+            "uri": flac_uri,
+        }) as openapi_get:
+            stream = api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
+
+        self.assertEqual(stream.soundQuality, "LOSSLESS")
+        self.assertIn("flac", stream.codec.lower())
+        openapi_get.assert_called_once()
+
     def test_settings_read_parses_audio_quality_priority(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "settings.json"

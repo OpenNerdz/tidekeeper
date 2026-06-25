@@ -836,13 +836,22 @@ class TidalAPI(object):
             chain.append(lambda q=quality: self.__getOpenApiFlacStreamUrl__(id, q))
 
         last_error = None
+        last_stream = None
         for index, getter in enumerate(chain):
             try:
-                return getter()
+                stream = getter()
+                mismatch = self.__streamQualityMismatch__(stream, quality)
+                if mismatch is not None and index < len(chain) - 1:
+                    last_error = mismatch
+                    last_stream = stream
+                    continue
+                return stream
             except Exception as e:
                 last_error = e
                 if index < len(chain) - 1 and self.__shouldSkipOpenApiFallback__(e):
                     break
+        if last_stream is not None:
+            return last_stream
         raise last_error
 
     def __audioQualityParam__(self, quality: AudioQuality):
