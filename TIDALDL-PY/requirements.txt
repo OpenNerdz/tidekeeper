@@ -1,6 +1,6 @@
-requests>=2.22.0
+requests>=2.34.2
 prettytable
 pycryptodome
 aigpy>=2022.7.8.1
 pydub
-lxml>=4.9
+lxml>=6.1.1
