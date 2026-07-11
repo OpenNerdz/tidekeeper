@@ -240,7 +240,9 @@ class Printf(object):
         return ret
 
     @staticmethod
-    def enterLimit(string, errmsg, limit=[]):
+    def enterLimit(string, errmsg, limit=None):
+        if limit is None:
+            limit = []
         while True:
             ret = aigpy.cmd.inputLimit(aigpy.cmd.yellow(string), limit)
             if ret is None:

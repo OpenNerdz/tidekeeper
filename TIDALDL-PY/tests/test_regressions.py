@@ -172,6 +172,13 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
 
+    def test_album_path_replaces_artist_ids_for_multiple_artists(self):
+        album = self._album()
+        album.artists = [self._artist("Artist One", 123), self._artist("Artist Two", 456)]
+
+        with mock.patch.object(paths.SETTINGS, "albumFolderFormat", "{ArtistID}/{AlbumTitle}"):
+            self.assertTrue(paths.getAlbumPath(album).endswith("123, 456/Album"))
+
     def test_album_items_skip_unstreamable_tracks_instead_of_treating_them_as_videos(self):
         api = TidalAPI()
         api.__getItems__ = lambda path: [
