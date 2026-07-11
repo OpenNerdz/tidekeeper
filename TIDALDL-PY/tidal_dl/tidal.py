@@ -1088,6 +1088,10 @@ class TidalAPI(object):
         except requests.RequestException:
             return ''
 
+    def getArtistsID(self, artists=[]):
+        array = list(str(item.id) for item in artists)
+        return ", ".join(array)
+
     def getArtistsName(self, artists=[]):
         array = list(item.name for item in artists)
         return ", ".join(array)
