@@ -63,11 +63,21 @@ tidekeeper-gui
 ```
 
 The GUI provides login, search, queueing, downloads, settings, diagnostics, and
-updates. It is also available through `tidekeeper --gui`.
+updates. It is also available through `tidekeeper --gui`; update GUI installs
+with `tidekeeper --update-gui`.
 
 | Search | Queue |
 | --- | --- |
 | ![Search screen](docs/screenshots/search.png) | ![Queue screen](docs/screenshots/queue.png) |
+
+## Troubleshooting
+
+For repeated HTTP 429 errors, keep **Use request delay** enabled and raise
+**Request delay seconds** to `30` or `60` before retrying.
+
+If Termux reports `cannot locate symbol "x265_api_get_216"`, refresh its media
+packages with `pkg upgrade -y && pkg reinstall -y ffmpeg x265`. If that fails,
+change mirrors with `termux-change-repo` and retry.
 
 ## Development
 
