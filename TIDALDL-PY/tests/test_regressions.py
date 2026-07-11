@@ -29,8 +29,8 @@ def _playback_params(audioquality, prefetch=False):
 
 
 class CliAuthPathRegressionTests(unittest.TestCase):
-    def _artist(self, name="Artist"):
-        return SimpleNamespace(name=name)
+    def _artist(self, name="Artist", id=123):
+        return SimpleNamespace(name=name, id=id)
 
     def _album(self):
         artist = self._artist()
