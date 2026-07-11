@@ -36,6 +36,8 @@ This project does not aim to bypass access controls, subscription checks, or DRM
 
 ## Install
 
+Tidekeeper supports Python 3.10 or newer.
+
 ```bash
 python -m pip install "git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
 ```
