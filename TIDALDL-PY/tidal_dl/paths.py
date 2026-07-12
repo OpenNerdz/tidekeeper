@@ -216,41 +216,6 @@ def getVideoPath(video, album=None, playlist=None):
     retpath = retpath.strip()
     return f"{base}/{retpath}{extension}"
 
-
-def __getHomePath__():
-    if "XDG_CONFIG_HOME" in os.environ:
-        return os.environ['XDG_CONFIG_HOME']
-    elif "HOME" in os.environ:
-        return os.environ['HOME']
-    elif "HOMEDRIVE" in os.environ and "HOMEPATH" in os.environ:
-        return os.environ['HOMEDRIVE'] + os.environ['HOMEPATH']
-    else:
-        return os.path.abspath("./")
-
-def getLogPath():
-    return __getHomePath__() + '/.tidal-dl.log'
-
-def getTokenPath():
-    return __getHomePath__() + '/.tidal-dl.token.json'
-
-def getProfilePath():
-    return __getHomePath__() + '/.tidal-dl.json'
-
-
-def getConfigDirectory():
-    return os.path.dirname(getProfilePath()) or os.path.abspath("./")
-
-
-def getPathSummary():
-    return [
-        ("Download path", SETTINGS.downloadPath),
-        ("Config folder", getConfigDirectory()),
-        ("Settings file", getProfilePath()),
-        ("Token file", getTokenPath()),
-        ("Log file", getLogPath()),
-    ]
-
-
 def openPath(path):
     target = os.path.abspath(os.path.expanduser(path or SETTINGS.downloadPath))
     if os.path.isfile(target):
@@ -264,3 +229,48 @@ def openPath(path):
     else:
         subprocess.Popen(["xdg-open", target])
     return target
+
+class Paths(aigpy.model.ModelBase):
+    homePathOverride = None
+
+    def __getHomePath__(self):
+        if self.homePathOverride == None:
+            return self.__getDefaultHomePath__()
+        else:
+            return self.homePathOverride
+
+    def __getDefaultHomePath__(self):
+        if "XDG_CONFIG_HOME" in os.environ:
+            return os.environ['XDG_CONFIG_HOME']
+        elif "HOME" in os.environ:
+            return os.environ['HOME']
+        elif "HOMEDRIVE" in os.environ and "HOMEPATH" in os.environ:
+            return os.environ['HOMEDRIVE'] + os.environ['HOMEPATH']
+        else:
+            return os.path.abspath("./")
+
+    def getLogPath(self):
+        return self.__getHomePath__() + '/.tidal-dl.log'
+
+    def getTokenPath(self):
+        return self.__getHomePath__() + '/.tidal-dl.token.json'
+
+    def getProfilePath(self):
+        return self.__getHomePath__() + '/.tidal-dl.json'
+
+
+    def getConfigDirectory(self):
+        return os.path.dirname(self.getProfilePath()) or os.path.abspath("./")
+
+
+    def getPathSummary(self):
+        return [
+            ("Download path", SETTINGS.downloadPath),
+            ("Config folder", self.getConfigDirectory()),
+            ("Settings file", self.getProfilePath()),
+            ("Token file", self.getTokenPath()),
+            ("Log file", self.getLogPath()),
+        ]
+
+# Singleton
+PATHS = Paths()

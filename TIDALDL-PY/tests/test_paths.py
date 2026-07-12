@@ -2,7 +2,7 @@ import unittest
 from unittest import mock
 
 from tidal_dl.model import StreamUrl
-from tidal_dl.paths import __getExtension__, getConfigDirectory, getPathSummary, openPath
+from tidal_dl.paths import __getExtension__, PATHS, openPath
 
 
 class PathTests(unittest.TestCase):
@@ -45,7 +45,7 @@ class PathTests(unittest.TestCase):
         self.assertEqual(__getExtension__(stream), ".m4a")
 
     def test_path_summary_contains_user_visible_locations(self):
-        labels = [label for label, value in getPathSummary()]
+        labels = [label for label, value in PATHS.getPathSummary()]
 
         self.assertIn("Download path", labels)
         self.assertIn("Config folder", labels)
@@ -54,7 +54,7 @@ class PathTests(unittest.TestCase):
         self.assertIn("Log file", labels)
 
     def test_config_directory_matches_settings_parent(self):
-        self.assertTrue(getConfigDirectory())
+        self.assertTrue(PATHS.getConfigDirectory())
 
     def test_open_path_creates_folder_and_launches_file_manager(self):
         with mock.patch("tidal_dl.paths.sys.platform", "linux"):

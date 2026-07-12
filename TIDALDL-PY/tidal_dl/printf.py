@@ -94,6 +94,7 @@ class Printf(object):
                 ("-q, --quality NAME", "Max (default), Atmos, Master, HiFi, High, Normal"),
                 ("--quality-priority LIST", "Fallback order, e.g. Max,HiFi,High,Normal"),
                 ("-r, --resolution NAME", "P1080, P720, P480, P360"),
+                ("-c, --configPathOverride", "Use non-default base path for config/tokens/logs")
             ]
             for option, description in rows:
                 print(option)
@@ -114,14 +115,15 @@ class Printf(object):
             ["-o, --output", "Set download path"],
             ["-q, --quality", "Set one audio quality: Max (default), Atmos, Master, HiFi, High, Normal"],
             ["--quality-priority", "Set fallback order, e.g. Max,HiFi,High,Normal"],
-            ["-r, --resolution", "Set video quality: P1080, P720, P480, P360"]
+            ["-r, --resolution", "Set video quality: P1080, P720, P480, P360"],
+            ["-c, --configPathOverride", "Use non-default base path for config/tokens/logs"]
         ])
         tb.set_style(prettytable.PLAIN_COLUMNS)
         print(tb)
 
     @staticmethod
     def paths():
-        tb = Printf.__gettable__(["PATH", "VALUE"], getPathSummary())
+        tb = Printf.__gettable__(["PATH", "VALUE"], PATHS.getPathSummary())
         tb.set_style(prettytable.PLAIN_COLUMNS)
         print(tb)
 
@@ -138,7 +140,7 @@ class Printf(object):
         data = SETTINGS
         tb = Printf.__gettable__([LANG.select.SETTING, LANG.select.VALUE], [
             #settings - path and format
-            [LANG.select.SETTING_PATH, getProfilePath()],
+            [LANG.select.SETTING_PATH, PATHS.getProfilePath()],
             [LANG.select.SETTING_DOWNLOAD_PATH, data.downloadPath],
             [LANG.select.SETTING_ALBUM_FOLDER_FORMAT, data.albumFolderFormat],
             [LANG.select.SETTING_PLAYLIST_FOLDER_FORMAT, data.playlistFolderFormat],

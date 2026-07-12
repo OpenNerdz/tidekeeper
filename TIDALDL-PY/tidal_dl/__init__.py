@@ -9,13 +9,14 @@
 @Desc    :
 '''
 import sys
+import os
 import getopt
 import aigpy
 
 from .events import *
 from .settings import *
 from .diagnostics import runDoctor
-from .paths import getProfilePath, getTokenPath, openPath
+from .paths import PATHS, openPath
 from .printf import Printf
 from .updater import run_update
 
@@ -30,21 +31,35 @@ def startGui():
         return 1
     return gui_module.main()
 
+def preMainCommand():
+    preArgs = []
+    previousArg = ""
+    for arg in sys.argv[1:]:
+        if arg == "-c" or arg == "--configPathOverride" or previousArg == "-c" or previousArg == "--configPathOverride":
+            preArgs.append(arg)
+        previousArg = arg
+
+    opts, args = getopt.getopt(preArgs, "c:", ["configPathOverride="])
+    for opt, val in opts:
+        if opt in ('-c', '--configPathOverride'):
+            if os.path.isdir(val) == False:
+                raise ValueError("configPathOverride must be an existing directory")
+            PATHS.homePathOverride = val
 
 def mainCommand():
     try:
         opts, args = getopt.getopt(sys.argv[1:],
-                                   "hvgl:o:q:r:",
+                                   "hvgl:o:q:r:c:",
                                    [
                                        "help", "version", "gui", "doctor",
                                        "update", "update-gui",
                                        "paths", "open-output",
                                        "video-only", "videos-only",
-                                       "link=", "output=", "quality=", "quality-priority=", "resolution="
+                                       "link=", "output=", "quality=", "quality-priority=", "resolution=", "configPathOverride="
                                    ])
     except getopt.GetoptError as errmsg:
         Printf.err(vars(errmsg)['msg'] + ". Use 'tidekeeper -h' for usage.")
-        return
+        return True
 
     link = None
     showGui = False
@@ -58,10 +73,10 @@ def mainCommand():
     for opt, val in opts:
         if opt in ('-h', '--help'):
             Printf.usage()
-            return
+            return True
         if opt in ('-v', '--version'):
             Printf.logo()
-            return
+            return True
         if opt in ('-g', '--gui'):
             showGui = True
             continue
@@ -109,11 +124,11 @@ def mainCommand():
 
     if showDoctor:
         runDoctor()
-        return
+        return True
 
     if showPaths:
         Printf.paths()
-        return
+        return True
 
     if openOutput:
         try:
@@ -121,25 +136,26 @@ def mainCommand():
             Printf.success("Opened download folder: " + opened)
         except OSError as exc:
             Printf.err("Could not open download folder: " + str(exc))
-        return
+        return True
 
     if updateInstall:
         updateTidekeeper(updateGuiInstall)
-        return
+        return True
 
     if not aigpy.path.mkdirs(SETTINGS.downloadPath):
         Printf.err(LANG.select.MSG_PATH_ERR + SETTINGS.downloadPath)
-        return
+        return True
 
     if showGui:
         startGui()
-        return
+        return True
 
     if link is not None:
         if not loginByConfig() and not loginByWeb():
-            return
+            return True
         Printf.info(LANG.select.SETTING_DOWNLOAD_PATH + ':' + SETTINGS.downloadPath)
         start(link, videoOnly)
+    return False
 
 
 def normalizeChoice(choice):
@@ -196,16 +212,20 @@ def updateTidekeeper(include_gui=False):
 
 
 def main():
-    SETTINGS.read(getProfilePath())
-    TOKEN.read(getTokenPath())
+    if len(sys.argv) > 1:
+        preMainCommand()
+
+    SETTINGS.read(PATHS.getProfilePath())
+    TOKEN.read(PATHS.getTokenPath())
     if not apiKey.isItemValid(SETTINGS.apiKeyIndex):
         SETTINGS.apiKeyIndex = apiKey.getDefaultIndex()
         SETTINGS.save()
     TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
 
     if len(sys.argv) > 1:
-        mainCommand()
-        return
+        return_flag = mainCommand()
+        if return_flag:
+            return
 
     if not loginByConfig():
         loginByWeb()
@@ -247,8 +267,8 @@ def main():
 
 
 def test():
-    SETTINGS.read(getProfilePath())
-    TOKEN.read(getTokenPath())
+    SETTINGS.read(PATHS.getProfilePath())
+    TOKEN.read(PATHS.getTokenPath())
 
     if not loginByConfig():
         loginByWeb()
@@ -291,3 +311,6 @@ def test():
 if __name__ == '__main__':
     # test()
     main()
+
+
+
