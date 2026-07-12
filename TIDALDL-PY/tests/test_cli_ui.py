@@ -123,7 +123,7 @@ class CliUiTests(unittest.TestCase):
 
     def test_config_path_override_overrides_paths(self):
         with mock.patch("sys.argv", ["tidekeeper", "-c", "/home/user/tidekeeper/config"]):
-            with mock.patch("tidal_dl.__init__.os.path.isdir") as mock_isdir:
+            with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
                 mock_isdir.return_value = True
                 tidal_dl.preMainCommand()
         assert(PATHS.__getHomePath__() == "/home/user/tidekeeper/config")
@@ -135,14 +135,14 @@ class CliUiTests(unittest.TestCase):
 
     def test_sys_argvs_prevent_entering_while_loop(self):
         with mock.patch("sys.argv", ["tidekeeper", "--paths"]):
-            with mock.patch("tidal_dl.__init__.Printf.choices") as mock_choices:
+            with mock.patch("tidal_dl.Printf.choices") as mock_choices:
                 mock_choices.side_effect = KeyboardInterrupt
                 tidal_dl.main()
         mock_choices.assert_not_called()
 
     def test_sys_argvs_enable_entering_while_loop(self):
         with mock.patch("sys.argv", ["tidekeeper", "-c", "/home/user/tidekeeper/config"]):
-            with mock.patch("tidal_dl.__init__.os.path.isdir") as mock_isdir:
+            with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
                 mock_isdir.return_value = True
                 with mock.patch("tidal_dl.loginByWeb") as loginByWeb:
                     with mock.patch("tidal_dl.__init__.Printf.choices") as mock_choices:
