@@ -145,7 +145,7 @@ class CliUiTests(unittest.TestCase):
             with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
                 mock_isdir.return_value = True
                 with mock.patch("tidal_dl.loginByWeb") as loginByWeb:
-                    with mock.patch("tidal_dl.__init__.Printf.choices") as mock_choices:
+                    with mock.patch("tidal_dl.Printf.choices") as mock_choices:
                         mock_choices.side_effect = KeyboardInterrupt
                         with self.assertRaises(KeyboardInterrupt):
                             tidal_dl.main()
