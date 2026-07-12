@@ -44,9 +44,7 @@ tidekeeper -l "https://tidal.com/browse/track/70973230"
 tidekeeper --video-only -l "https://tidal.com/browse/artist/123456"
 ```
 
-Dolby Atmos downloads are opt-in with `tidekeeper -q Atmos`. Custom filename
-formats support tokens including `{ArtistName}`, `{ArtistID}`, `{StreamQuality}`,
-and `{Codec}`.
+Dolby Atmos downloads are opt-in with `tidekeeper -q Atmos`.
 
 Failed downloads are saved to `failed-tracks.txt` in the download folder and can
 be retried with:
@@ -54,6 +52,41 @@ be retried with:
 ```bash
 tidekeeper -l "/path/to/downloads/failed-tracks.txt"
 ```
+## Customizability
+Custom filename formats are supported:
+| Tokens  | Description  | Album | Track | Video | Playlist |
+| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
+| {ArtistID}  | Comma seperated list of each artists' ID for that media (i.e: ```123, 456```)  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {ArtistName}  | Comma seperated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {ArtistName}  | Primary artist's name for that media | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
+| {ArtistsName}  | Comma seperated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
+| {AlbumArtistID}  | Primary artist's ID for that media | :white_check_mark:  | :x:  | :x:  | :x: |
+| {AlbumArtistName}  | Primary artist's name for that media | :white_check_mark:  | :x:  | :x:  | :x: |
+| {Flag}  | TBC | :white_check_mark:  | :x:  | :x:  | :x: |
+| {AlbumID}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {AlbumYear}  |  | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
+| {AlbumTitle}  |  | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
+| {AudioQuality}  | TBC | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
+| {DurationSeconds}  |  | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
+| {Duration}  | TBC | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
+| {NumberOfTracks}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {NumberOfVideos}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {NumberOfVolumes}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {ReleaseDate}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {RecordType}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {TrackID}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
+| {TrackNumber}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
+| {TrackTitle}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
+| {ExplicitFlag}  |  | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
+| {TrackTitle}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
+| {StreamQuality}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
+| {Codec}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
+| {VideoID}  |  | :x:  | :x:  | :white_check_mark:  | :x: |
+| {VideoNumber}  |  | :x:  | :x:  | :white_check_mark:  | :x: |
+| {VideoTitle}  |  | :x:  | :x:  | :white_check_mark:  | :x: |
+| {VideoYear}  |  | :x:  | :x:  | :white_check_mark:  | :x: |
+| {PlaylistUUID}  |  | :x:  | :x:  | :x:  | :white_check_mark: |
+| {PlaylistName}  |  | :x:  | :x:  | :x:  | :white_check_mark: |
 
 ## Desktop GUI
 
