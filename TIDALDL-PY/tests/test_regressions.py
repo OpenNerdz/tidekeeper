@@ -172,6 +172,13 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
 
+    def test_album_path_replaces_album_artist_ids_for_singular_artist(self):
+        album = self._album()
+        album.artist = self._artist("Artist One", 123)
+
+        with mock.patch.object(paths.SETTINGS, "albumFolderFormat", "{AlbumArtistID}/{AlbumTitle}"):
+            self.assertTrue(paths.getAlbumPath(album).endswith("123/Album"))
+
     def test_album_path_replaces_artist_ids_for_multiple_artists(self):
         album = self._album()
         album.artists = [self._artist("Artist One", 123), self._artist("Artist Two", 456)]

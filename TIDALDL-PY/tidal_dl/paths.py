@@ -79,6 +79,7 @@ def __hasStreamIdentifierToken__(pathFormat: str):
 def getAlbumPath(album):
     artistID = __fixPath__(TIDAL_API.getArtistsID(album.artists))
     artistName = __fixPath__(TIDAL_API.getArtistsName(album.artists))
+    albumArtistID = __fixPath__(str(album.artist.id))if album.artist is not None else "0"
     albumArtistName = __fixPath__(album.artist.name) if album.artist is not None else ""
 
     # album folder pre: [ME]
@@ -98,6 +99,7 @@ def getAlbumPath(album):
         retpath = SETTINGS.getDefaultPathFormat(Type.Album)
     retpath = retpath.replace(R"{ArtistID}", artistID)
     retpath = retpath.replace(R"{ArtistName}", artistName)
+    retpath = retpath.replace(R"{AlbumArtistID}", albumArtistID)
     retpath = retpath.replace(R"{AlbumArtistName}", albumArtistName)
     retpath = retpath.replace(R"{Flag}", flag)
     retpath = retpath.replace(R"{AlbumID}", str(album.id))
