@@ -8,6 +8,7 @@
 @Contact :   yaronhuang@foxmail.com
 @Desc    :   tidal api
 '''
+import copy
 import random
 import re
 import time
@@ -29,6 +30,8 @@ API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
 API_BASE_LEGACY = 'https://api.tidalhifi.com/v1/'
 PLAYBACK_ASSET_NOT_READY_ATTEMPTS = 6
 RATE_LIMIT_MAX_ATTEMPTS = 3
+STREAM_CACHE_TTL_SECONDS = 600
+STREAM_CACHE_MAX_ITEMS = 256
 
 
 class RequestRateLimiter:
@@ -105,6 +108,8 @@ class TidalAPI(object):
         self.session.mount("https://", adapter)
         self.playbackRateLimiter = PLAYBACK_RATE_LIMITER
         self._playbackBlockedParams = set()
+        self._streamCache = {}
+        self._streamCacheLock = Lock()
 
     def __responseBody__(self, response):
         try:
@@ -1042,6 +1047,35 @@ class TidalAPI(object):
 
         raise Exception("Can't get the streamUrl, type is " + resp.manifestMimeType)
 
+    def __streamCacheKey__(self, id, qualities):
+        return str(id), tuple(quality.name for quality in qualities)
+
+    def __getCachedStream__(self, key):
+        now = time.monotonic()
+        with self._streamCacheLock:
+            cached = self._streamCache.get(key)
+            if cached is None:
+                return None
+            created, stream = cached
+            if now - created > STREAM_CACHE_TTL_SECONDS:
+                self._streamCache.pop(key, None)
+                return None
+            return copy.deepcopy(stream)
+
+    def __cacheStream__(self, key, stream):
+        now = time.monotonic()
+        with self._streamCacheLock:
+            expired = [
+                itemKey for itemKey, (created, _) in self._streamCache.items()
+                if now - created > STREAM_CACHE_TTL_SECONDS
+            ]
+            for itemKey in expired:
+                self._streamCache.pop(itemKey, None)
+            while len(self._streamCache) >= STREAM_CACHE_MAX_ITEMS:
+                oldest = min(self._streamCache, key=lambda itemKey: self._streamCache[itemKey][0])
+                self._streamCache.pop(oldest, None)
+            self._streamCache[key] = (now, copy.deepcopy(stream))
+
     def getStreamUrlByPriority(self, id, qualities):
         priority = []
         for quality in qualities or []:
@@ -1050,6 +1084,11 @@ class TidalAPI(object):
                 priority.append(normalized)
         if not priority:
             priority = [AudioQuality.Normal]
+
+        cacheKey = self.__streamCacheKey__(id, priority)
+        cached = self.__getCachedStream__(cacheKey)
+        if cached is not None:
+            return cached
 
         lastError = None
         requestedQuality = priority[0]
@@ -1062,7 +1101,9 @@ class TidalAPI(object):
                     if index == len(priority) - 1:
                         raise mismatch
                     continue
-                return self.__annotateStreamFallback__(stream, requestedQuality, item, lastError)
+                stream = self.__annotateStreamFallback__(stream, requestedQuality, item, lastError)
+                self.__cacheStream__(cacheKey, stream)
+                return stream
             except Exception as e:
                 lastError = e
                 if index == len(priority) - 1 or not self.__isManifestFallbackError__(e):
