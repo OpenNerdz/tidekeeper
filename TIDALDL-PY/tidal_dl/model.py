@@ -8,6 +8,7 @@
 @Contact :   yaronhuang@foxmail.com
 @Desc    :
 '''
+from typing import List
 import aigpy
 
 class StreamUrl(aigpy.model.ModelBase):
@@ -46,6 +47,8 @@ class Artist(aigpy.model.ModelBase):
 
 
 class Album(aigpy.model.ModelBase):
+    artists: List[Artist]
+
     def __init__(self) -> None:
         super().__init__()
         self.id = None

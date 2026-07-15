@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlparse
 
 import requests
 
+from . import aigpy_overrides
 from .model import *
 from .settings import *
 
@@ -547,7 +548,7 @@ class TidalAPI(object):
         return
 
     def getAlbum(self, id) -> Album:
-        return aigpy.model.dictToModel(self.__get__('albums/' + str(id)), Album())
+        return aigpy_overrides.dictToModel(self.__get__('albums/' + str(id)), Album())
 
     def getPlaylist(self, id) -> Playlist:
         return aigpy.model.dictToModel(self.__get__('playlists/' + str(id)), Playlist())
