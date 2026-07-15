@@ -19,6 +19,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
 python -m compileall -q tidal_dl
+python -m unittest discover -s tests
 python -m tidal_dl --help
 tidekeeper --help
 ```
@@ -34,7 +35,8 @@ Build outputs are written under `TIDALDL-PY/dist` and `TIDALDL-PY/exe`.
 ## Release checklist
 
 1. Update the version in `TIDALDL-PY/tidal_dl/printf.py`.
-2. Run the local development checks.
-3. Confirm GitHub Actions CI passes.
-4. Build artifacts with `./build.sh`.
-5. Upload distributions only after reviewing the generated files.
+2. Move `CHANGELOG.md` entries from Unreleased into a new version section.
+3. Run the local development checks and the test suite.
+4. Confirm GitHub Actions CI passes on `main`.
+5. Tag the release (`git tag vX.Y.Z.N && git push origin vX.Y.Z.N`); the Build
+   workflow builds the binaries and attaches them to the GitHub release.

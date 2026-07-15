@@ -103,6 +103,10 @@ with `tidekeeper --update-gui`.
 | --- | --- |
 | ![Search screen](docs/screenshots/search.png) | ![Queue screen](docs/screenshots/queue.png) |
 
+| Settings | Account |
+| --- | --- |
+| ![Settings screen](docs/screenshots/settings.png) | ![Account screen](docs/screenshots/account.png) |
+
 ## Troubleshooting
 
 For repeated HTTP 429 errors, keep **Use request delay** enabled and raise
