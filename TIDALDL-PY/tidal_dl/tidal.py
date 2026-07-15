@@ -35,18 +35,43 @@ class RequestRateLimiter:
     def __init__(self, minInterval=1.0, jitter=0.5):
         self.minInterval = minInterval
         self.jitter = jitter
+        self._adaptiveInterval = 0.0
+        self._successes = 0
         self._lock = Lock()
         self._nextAllowed = 0.0
 
+    def effectiveInterval(self):
+        return max(self.minInterval, self._adaptiveInterval)
+
+    def penalize(self, retryAfter=None):
+        with self._lock:
+            current = self.effectiveInterval()
+            target = float(retryAfter) if retryAfter is not None else max(5.0, current * 2.0)
+            self._adaptiveInterval = min(300.0, max(current, target))
+            self._successes = 0
+            self._nextAllowed = max(self._nextAllowed, time.monotonic() + self._adaptiveInterval)
+            return self._adaptiveInterval
+
+    def reward(self):
+        with self._lock:
+            if self._adaptiveInterval <= self.minInterval:
+                self._adaptiveInterval = 0.0
+                return self.effectiveInterval()
+            self._successes += 1
+            if self._successes >= 5:
+                self._adaptiveInterval = max(self.minInterval, self._adaptiveInterval * 0.8)
+                self._successes = 0
+            return self.effectiveInterval()
+
     def wait(self):
-        if self.minInterval <= 0:
+        if self.effectiveInterval() <= 0:
             return 0.0
 
         with self._lock:
             now = time.monotonic()
             delay = max(0.0, self._nextAllowed - now)
             base = now + delay
-            self._nextAllowed = base + self.minInterval + random.uniform(0, self.jitter)
+            self._nextAllowed = base + self.effectiveInterval() + random.uniform(0, self.jitter)
 
         if delay > 0:
             time.sleep(delay)
@@ -273,10 +298,12 @@ class TidalAPI(object):
                 respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT)
 
                 if respond.status_code == 429:
+                    delay = self.__retryAfter__(respond, index)
+                    if playbackRequest and getattr(SETTINGS, 'adaptiveRateLimit', True):
+                        delay = self.playbackRateLimiter.penalize(delay)
                     if index >= RATE_LIMIT_MAX_ATTEMPTS - 1:
                         raise self.__httpError__("Get operation", respond)
-                    delay = self.__retryAfter__(respond, index)
-                    print(f"Too many requests, waiting {delay:g} seconds before retry.")
+                    print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
                     respond.close()
                     time.sleep(delay)
                     continue
@@ -310,6 +337,10 @@ class TidalAPI(object):
 
                 result = json.loads(respond.text)
                 if 'status' not in result:
+                    if playbackRequest and getattr(SETTINGS, 'adaptiveRateLimit', True):
+                        reward = getattr(self.playbackRateLimiter, 'reward', None)
+                        if reward is not None:
+                            reward()
                     return result
 
                 if 'userMessage' in result and result['userMessage'] is not None:

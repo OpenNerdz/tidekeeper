@@ -26,9 +26,6 @@ def getTermuxDownloadPath(environ=None):
 
     candidates = []
     home = environ.get("HOME")
-    if home:
-        candidates.append(os.path.join(home, "storage", "downloads", "Tidekeeper"))
-
     external_storage = environ.get("EXTERNAL_STORAGE")
     if external_storage:
         candidates.append(os.path.join(external_storage, "Download", "Tidekeeper"))

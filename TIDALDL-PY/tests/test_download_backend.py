@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import requests
+
 from tidal_dl import download
 
 
@@ -110,6 +112,45 @@ class DownloadBackendTests(unittest.TestCase):
         self.assertEqual(output_file.read_bytes(), b"first-second")
         self.assertFalse(partial_file.exists())
         self.assertEqual(request.call_args.kwargs["headers"], {"Range": "bytes=6-"})
+
+    def test_single_url_download_resumes_after_stream_failure(self):
+        output_file = self.root / "retried.out"
+        payload = b"first-second"
+
+        class FakeResponse:
+            status_code = 200
+            headers = {}
+
+            def __init__(self, chunks, error=None, status_code=200, headers=None):
+                self.chunks = chunks
+                self.error = error
+                self.status_code = status_code
+                self.headers = headers or {}
+
+            def iter_content(self, chunk_size):
+                yield from self.chunks
+                if self.error:
+                    raise self.error
+
+            def close(self):
+                pass
+
+        responses = [
+            FakeResponse([b"first-"], requests.ConnectionError("connection dropped")),
+            FakeResponse([b"second"], status_code=206, headers={"Content-Range": "bytes 6-11/12"}),
+        ]
+        with mock.patch.object(download, "__httpRequest__", side_effect=responses) as request, \
+             mock.patch.object(download.time, "sleep"):
+            ok, msg = download.__downloadUrls__(
+                ["https://example.invalid/media.bin"],
+                str(output_file),
+                threadNum=1,
+                probeSize=False,
+            )
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(output_file.read_bytes(), payload)
+        self.assertEqual(request.call_args_list[1].kwargs["headers"], {"Range": "bytes=6-"})
 
     def test_flac_export_without_ffmpeg_falls_back_to_m4a_container(self):
         old_value = download.SETTINGS.saveAsFlac

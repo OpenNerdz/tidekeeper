@@ -319,6 +319,7 @@ class TidekeeperBackend:
         SETTINGS.multiThread = values["multiThread"]
         SETTINGS.downloadDelay = values["downloadDelay"]
         SETTINGS.requestIntervalSeconds = max(0.0, float(values.get("requestIntervalSeconds", 1.0) or 0.0))
+        SETTINGS.adaptiveRateLimit = values.get("adaptiveRateLimit", True)
         SETTINGS.saveAsFlac = values.get("saveAsFlac", False)
         SETTINGS.usePlaylistFolder = values["usePlaylistFolder"]
         SETTINGS.showProgress = values["showProgress"]

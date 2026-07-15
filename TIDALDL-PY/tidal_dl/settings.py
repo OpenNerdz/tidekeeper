@@ -41,6 +41,7 @@ class Settings(aigpy.model.ModelBase):
     multiThread = False
     downloadDelay = True
     requestIntervalSeconds = 3.0
+    adaptiveRateLimit = True
     saveAsFlac = False
 
     downloadPath = "./download/"
@@ -152,6 +153,8 @@ class Settings(aigpy.model.ModelBase):
             self.requestIntervalSeconds = 3.0
         else:
             self.requestIntervalSeconds = max(0.0, float(self.requestIntervalSeconds))
+        if getattr(self, 'adaptiveRateLimit', None) is None:
+            self.adaptiveRateLimit = True
         if getattr(self, 'saveAsFlac', None) is None:
             self.saveAsFlac = False
         if not hasSavedSettings:

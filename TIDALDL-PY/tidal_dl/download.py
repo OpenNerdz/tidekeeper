@@ -245,34 +245,47 @@ def __contentRangeStart__(response):
 
 def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chunkSize=DOWNLOAD_CHUNK_SIZE):
     tempOutputPath = outputPath + ".download"
-    resumeSize = aigpy.file.getSize(tempOutputPath)
-    headers = {}
-    if resumeSize > 0:
-        headers["Range"] = f"bytes={resumeSize}-"
+    progressInitialized = False
+    lastError = None
 
-    response = __httpRequest__("GET", url, stream=True, allow_redirects=True, headers=headers)
-    try:
-        mode = "wb"
-        if resumeSize > 0 and response.status_code == 206 and __contentRangeStart__(response) == resumeSize:
-            mode = "ab"
-            __addExistingProgress__(progress, userProgress, resumeSize)
-        elif resumeSize > 0:
-            __removeFile__(tempOutputPath)
-            resumeSize = 0
+    for attempt in range(DOWNLOAD_RETRIES):
+        resumeSize = aigpy.file.getSize(tempOutputPath)
+        headers = {"Range": f"bytes={resumeSize}-"} if resumeSize > 0 else {}
+        response = None
+        try:
+            response = __httpRequest__("GET", url, stream=True, allow_redirects=True, headers=headers)
+            mode = "wb"
+            if resumeSize > 0 and response.status_code == 206 and __contentRangeStart__(response) == resumeSize:
+                mode = "ab"
+                if not progressInitialized:
+                    __addExistingProgress__(progress, userProgress, resumeSize)
+                    progressInitialized = True
+            elif resumeSize > 0:
+                __removeFile__(tempOutputPath)
+                resumeSize = 0
 
-        with open(tempOutputPath, mode) as output:
-            for chunk in response.iter_content(chunk_size=chunkSize):
-                if not chunk:
-                    continue
-                output.write(chunk)
-                size = len(chunk)
-                if progress is not None:
-                    progress.addCurCount(size)
-                __addUserProgress__(userProgress, size)
+            with open(tempOutputPath, mode) as output:
+                for chunk in response.iter_content(chunk_size=chunkSize):
+                    if not chunk:
+                        continue
+                    output.write(chunk)
+                    size = len(chunk)
+                    if progress is not None:
+                        progress.addCurCount(size)
+                    __addUserProgress__(userProgress, size)
 
-        os.replace(tempOutputPath, outputPath)
-    finally:
-        response.close()
+            os.replace(tempOutputPath, outputPath)
+            return
+        except (requests.RequestException, OSError) as error:
+            lastError = error
+            if attempt >= DOWNLOAD_RETRIES - 1:
+                raise
+            time.sleep(__retryDelay__(response, attempt))
+        finally:
+            if response is not None:
+                response.close()
+
+    raise lastError
 
 
 def __downloadUrls__(

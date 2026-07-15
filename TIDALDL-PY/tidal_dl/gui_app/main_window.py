@@ -364,6 +364,7 @@ class MainWindow(QMainWindow):
             ("downloadVideos", "Download videos"),
             ("multiThread", "Parallel downloads"),
             ("downloadDelay", "Use request delay"),
+            ("adaptiveRateLimit", "Automatically adapt request delay"),
             ("saveAsFlac", "Save FLAC as .flac files"),
             ("usePlaylistFolder", "Use playlist folders"),
         ):

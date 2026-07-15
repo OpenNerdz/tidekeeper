@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tidal_dl import events
 from tidal_dl.download import downloadTrack
 from tidal_dl.enums import AudioQuality
-from tidal_dl.paths import getProfilePath, getTokenPath
+from tidal_dl.paths import PATHS
 from tidal_dl.settings import SETTINGS, TOKEN
 from tidal_dl.tidal import TIDAL_API
 
@@ -32,8 +32,8 @@ ISSUE_TRACKS = [
 
 
 def main():
-    SETTINGS.read(getProfilePath())
-    TOKEN.read(getTokenPath())
+    SETTINGS.read(PATHS.getProfilePath())
+    TOKEN.read(PATHS.getTokenPath())
     SETTINGS.downloadDelay = True
     SETTINGS.requestIntervalSeconds = 5
     SETTINGS.multiThread = False
