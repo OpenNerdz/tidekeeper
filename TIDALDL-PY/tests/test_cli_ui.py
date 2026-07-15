@@ -1,4 +1,5 @@
 import io
+import sys
 import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
@@ -107,6 +108,20 @@ class CliUiTests(unittest.TestCase):
 
         open_path.assert_called_once_with(tidal_dl.SETTINGS.downloadPath)
         success.assert_called_once()
+
+    def test_link_command_returns_after_download(self):
+        old_argv = sys.argv
+        sys.argv = ["tidekeeper", "--link", "123456"]
+        try:
+            with mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
+                 mock.patch.object(tidal_dl, "loginByConfig", return_value=True), \
+                 mock.patch.object(tidal_dl, "start") as start:
+                handled = tidal_dl.mainCommand()
+        finally:
+            sys.argv = old_argv
+
+        self.assertTrue(handled)
+        start.assert_called_once_with("123456", False)
 
     def test_video_only_flag_is_passed_to_link_download(self):
         with mock.patch("sys.argv", ["tidekeeper", "--video-only", "-l", "artist-id"]):
