@@ -185,19 +185,26 @@ class TidalAPI(object):
             return 0.0
         return max(0.0, float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0.0))
 
-    def __waitForStreamRequestQuota__(self, *, light=False):
+    def __waitForStreamRequestQuota__(self):
         if SETTINGS.downloadDelay is False:
             return
         syncPlaybackRateLimiter()
-        if light:
-            interval = self.playbackRateLimiter.minInterval
-            try:
-                self.playbackRateLimiter.minInterval = min(1.0, interval)
-                self.playbackRateLimiter.wait()
-            finally:
-                self.playbackRateLimiter.minInterval = interval
-            return
         self.playbackRateLimiter.wait()
+
+    def __applyRateLimitPenalty__(self, response, attempt):
+        delay = self.__retryAfter__(response, attempt)
+        if getattr(SETTINGS, 'adaptiveRateLimit', True):
+            penalize = getattr(self.playbackRateLimiter, 'penalize', None)
+            if penalize is not None:
+                delay = penalize(delay)
+        return delay
+
+    def __rewardStreamRequest__(self):
+        if not getattr(SETTINGS, 'adaptiveRateLimit', True):
+            return
+        reward = getattr(self.playbackRateLimiter, 'reward', None)
+        if reward is not None:
+            reward()
 
     def __isPlaybackBlockedError__(self, error):
         if not isinstance(error, TidalApiError):
@@ -298,9 +305,7 @@ class TidalAPI(object):
                 respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT)
 
                 if respond.status_code == 429:
-                    delay = self.__retryAfter__(respond, index)
-                    if playbackRequest and getattr(SETTINGS, 'adaptiveRateLimit', True):
-                        delay = self.playbackRateLimiter.penalize(delay)
+                    delay = self.__applyRateLimitPenalty__(respond, index) if playbackRequest else self.__retryAfter__(respond, index)
                     if index >= RATE_LIMIT_MAX_ATTEMPTS - 1:
                         raise self.__httpError__("Get operation", respond)
                     print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
@@ -337,10 +342,8 @@ class TidalAPI(object):
 
                 result = json.loads(respond.text)
                 if 'status' not in result:
-                    if playbackRequest and getattr(SETTINGS, 'adaptiveRateLimit', True):
-                        reward = getattr(self.playbackRateLimiter, 'reward', None)
-                        if reward is not None:
-                            reward()
+                    if playbackRequest:
+                        self.__rewardStreamRequest__()
                     return result
 
                 if 'userMessage' in result and result['userMessage'] is not None:
@@ -759,9 +762,8 @@ class TidalAPI(object):
         response = None
         refreshedToken = False
         rateLimitAttempts = 0
-        light_quota = bool(self._playbackBlockedParams)
         for attempt in range(PLAYBACK_ASSET_NOT_READY_ATTEMPTS):
-            self.__waitForStreamRequestQuota__(light=light_quota)
+            self.__waitForStreamRequestQuota__()
             response = self.session.get(
                 f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
                 headers={
@@ -774,10 +776,10 @@ class TidalAPI(object):
 
             if response.status_code == 429:
                 rateLimitAttempts += 1
+                delay = self.__applyRateLimitPenalty__(response, rateLimitAttempts - 1)
                 if rateLimitAttempts >= RATE_LIMIT_MAX_ATTEMPTS:
                     raise self.__httpError__("Track manifest request", response)
-                delay = self.__retryAfter__(response, rateLimitAttempts - 1)
-                print(f"Too many requests, waiting {delay:g} seconds before retry.")
+                print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
                 response.close()
                 time.sleep(delay)
                 continue
@@ -800,6 +802,7 @@ class TidalAPI(object):
             raise self.__httpError__("Track manifest request", response)
 
         data = response.json()
+        self.__rewardStreamRequest__()
         return data.get('data', {}).get('attributes', {})
 
     def __openApiFlacSoundQuality__(self, formats):

@@ -442,6 +442,40 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         finally:
             events.SETTINGS.downloadDelay = old_delay
 
+    def test_openapi_rate_limit_penalizes_shared_limiter(self):
+        api = TidalAPI()
+        limiter = SimpleNamespace(wait=mock.Mock(), penalize=mock.Mock(return_value=17.0), reward=mock.Mock())
+        rate_limited = SimpleNamespace(
+            status_code=429,
+            text="rate limited",
+            headers={"Retry-After": "17"},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={}),
+        )
+        success = SimpleNamespace(
+            status_code=200,
+            text='{"data":{"attributes":{"formats":["FLAC"]}}}',
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={"data": {"attributes": {"formats": ["FLAC"]}}}),
+        )
+        old_values = (events.SETTINGS.downloadDelay, events.SETTINGS.adaptiveRateLimit)
+        try:
+            events.SETTINGS.downloadDelay = True
+            events.SETTINGS.adaptiveRateLimit = True
+            api.playbackRateLimiter = limiter
+            with mock.patch.object(api.session, "get", side_effect=[rate_limited, success]), \
+                 mock.patch("tidal_dl.tidal.time.sleep") as sleep:
+                attrs = api.__getOpenApiTrackManifest__(456, ["FLAC"])
+
+            self.assertEqual(attrs["formats"], ["FLAC"])
+            limiter.penalize.assert_called_once_with(17.0)
+            self.assertEqual(limiter.wait.call_count, 2)
+            limiter.reward.assert_called_once_with()
+            sleep.assert_called_once_with(17.0)
+        finally:
+            events.SETTINGS.downloadDelay, events.SETTINGS.adaptiveRateLimit = old_values
+
     def test_openapi_manifest_requests_use_rate_limiter(self):
         api = TidalAPI()
         old_delay = events.SETTINGS.downloadDelay
