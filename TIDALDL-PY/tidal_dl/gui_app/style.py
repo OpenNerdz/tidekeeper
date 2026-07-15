@@ -89,7 +89,7 @@ QScrollArea#PageScroll, QWidget#ScrollContent {
     border: none;
 }
 
-QLineEdit, QComboBox, QTextEdit {
+QLineEdit, QComboBox, QTextEdit, QAbstractSpinBox {
     background: #ffffff;
     border: 1px solid #d0d5dd;
     border-radius: 6px;
@@ -97,6 +97,23 @@ QLineEdit, QComboBox, QTextEdit {
     placeholder-text-color: #667085;
     min-height: 34px;
     padding: 6px 9px;
+}
+
+QAbstractSpinBox:disabled {
+    background: #f2f4f7;
+    border-color: #e4e7ec;
+    color: #98a2b3;
+}
+
+QAbstractSpinBox {
+    padding-top: 0px;
+    padding-bottom: 0px;
+}
+
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
+    background: transparent;
+    border: none;
+    width: 18px;
 }
 
 QTextEdit {
@@ -108,7 +125,7 @@ QLineEdit:read-only {
     color: #344054;
 }
 
-QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QAbstractSpinBox:focus {
     border: 1px solid #0f766e;
 }
 

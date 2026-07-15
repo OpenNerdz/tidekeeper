@@ -108,6 +108,10 @@ class MainWindow(QMainWindow):
         self.resize(1180, 820)
         self.setStyleSheet(APP_STYLESHEET)
         self._build()
+        # Keep the interval spin box at its styled hint height even when the
+        # settings page is squeezed vertically inside its scroll area.
+        self.request_interval.ensurePolished()
+        self.request_interval.setMinimumHeight(self.request_interval.sizeHint().height())
         self.version_label.setText(f"v{self.backend.version()}")
         self.refresh_settings()
         self.refresh_auth_status()
@@ -345,8 +349,13 @@ class MainWindow(QMainWindow):
         for item in self.backend.api_clients():
             status = "OK" if item["valid"] else "old"
             self.api_client.addItem(
-                f'{item["index"]} {status} - {item["platform"]} ({item["formats"]})',
+                f'{item["index"]} {status} - {item["platform"]}',
                 item["index"],
+            )
+            self.api_client.setItemData(
+                self.api_client.count() - 1,
+                f'{item["index"]} {status} - {item["platform"]} ({item["formats"]})',
+                Qt.ToolTipRole,
             )
         self.api_client.setMinimumContentsLength(18)
         self.api_client.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -391,8 +400,8 @@ class MainWindow(QMainWindow):
 
         top_layout = QHBoxLayout()
         top_layout.setSpacing(10)
-        top_layout.addWidget(self._build_storage_settings_panel(path_layout), 3)
-        top_layout.addWidget(self._build_quality_settings_panel(), 2)
+        top_layout.addWidget(self._build_storage_settings_panel(path_layout), 5)
+        top_layout.addWidget(self._build_quality_settings_panel(), 4)
         content_layout.addLayout(top_layout)
         content_layout.addWidget(self._build_library_settings_panel())
         content_layout.addWidget(self._build_naming_settings_panel())
@@ -490,16 +499,23 @@ class MainWindow(QMainWindow):
     def _build_account_page(self) -> QWidget:
         page, layout = self._page("Account", "Session")
 
+        content = QWidget()
+        content.setObjectName("ScrollContent")
+        panels_layout = QVBoxLayout(content)
+        panels_layout.setContentsMargins(0, 0, 0, 0)
+        panels_layout.setSpacing(18)
+
         status_layout = QGridLayout()
         status_layout.setContentsMargins(16, 16, 16, 16)
         status_layout.setVerticalSpacing(12)
         self.auth_label = _label("Signed out", "StatusPill")
+        self.auth_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.country_label = _label("Country: unknown", "Muted")
         self.expiry_label = _label("Expires: unknown", "Muted")
         status_layout.addWidget(self.auth_label, 0, 0, 1, 2)
         status_layout.addWidget(self.country_label, 1, 0)
         status_layout.addWidget(self.expiry_label, 1, 1)
-        layout.addWidget(_panel(status_layout))
+        panels_layout.addWidget(_panel(status_layout))
 
         login_layout = QGridLayout()
         login_layout.setContentsMargins(16, 16, 16, 16)
@@ -525,7 +541,7 @@ class MainWindow(QMainWindow):
         login_layout.addWidget(self.open_login_button, 1, 1)
         login_layout.addWidget(self.refresh_login_button, 1, 2)
         login_layout.addWidget(self.logout_button, 1, 3)
-        layout.addWidget(_panel(login_layout))
+        panels_layout.addWidget(_panel(login_layout))
 
         token_layout = QGridLayout()
         token_layout.setContentsMargins(16, 16, 16, 16)
@@ -543,7 +559,7 @@ class MainWindow(QMainWindow):
         token_layout.addWidget(self.access_token, 0, 1)
         token_layout.addWidget(self.refresh_token, 1, 1)
         token_layout.addWidget(self.token_login_button, 1, 2)
-        layout.addWidget(_panel(token_layout))
+        panels_layout.addWidget(_panel(token_layout))
 
         maintenance_layout = QGridLayout()
         maintenance_layout.setContentsMargins(16, 16, 16, 16)
@@ -561,7 +577,15 @@ class MainWindow(QMainWindow):
         maintenance_layout.addWidget(self.doctor_button, 0, 1)
         maintenance_layout.addWidget(self.update_terminal_button, 0, 2)
         maintenance_layout.addWidget(self.update_gui_button, 0, 3)
-        layout.addWidget(_panel(maintenance_layout))
+        panels_layout.addWidget(_panel(maintenance_layout))
+
+        scroll = QScrollArea()
+        scroll.setObjectName("PageScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
 
         self.account_log = QTextEdit()
         self.account_log.setReadOnly(True)
