@@ -7,9 +7,13 @@ from unittest import mock
 import tidal_dl
 from tidal_dl import printf
 from tidal_dl.printf import Printf
+from tidal_dl.paths import PATHS
 
 
 class CliUiTests(unittest.TestCase):
+    def setUp(self):
+        PATHS.homePathOverride = None
+
     def test_compact_help_uses_one_option_per_line(self):
         output = io.StringIO()
 
@@ -113,6 +117,39 @@ class CliUiTests(unittest.TestCase):
                 tidal_dl.mainCommand()
 
         start.assert_called_once_with("artist-id", True)
+
+    def test_default_config_path(self):
+        assert(PATHS.__getHomePath__() == PATHS.__getDefaultHomePath__())
+
+    def test_config_path_override_overrides_paths(self):
+        with mock.patch("sys.argv", ["tidekeeper", "-c", "/home/user/tidekeeper/config"]):
+            with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
+                mock_isdir.return_value = True
+                tidal_dl.preMainCommand()
+        assert(PATHS.__getHomePath__() == "/home/user/tidekeeper/config")
+
+    def test_config_path_requires_existing_directory(self):
+        with mock.patch("sys.argv", ["tidekeeper", "-c", "/magic/config"]):
+            with self.assertRaises(ValueError):
+                tidal_dl.preMainCommand()
+
+    def test_sys_argvs_prevent_entering_while_loop(self):
+        with mock.patch("sys.argv", ["tidekeeper", "--paths"]):
+            with mock.patch("tidal_dl.Printf.choices") as mock_choices:
+                mock_choices.side_effect = KeyboardInterrupt
+                tidal_dl.main()
+        mock_choices.assert_not_called()
+
+    def test_sys_argvs_enable_entering_while_loop(self):
+        with mock.patch("sys.argv", ["tidekeeper", "-c", "/home/user/tidekeeper/config"]):
+            with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
+                mock_isdir.return_value = True
+                with mock.patch("tidal_dl.loginByWeb") as loginByWeb:
+                    with mock.patch("tidal_dl.Printf.choices") as mock_choices:
+                        mock_choices.side_effect = KeyboardInterrupt
+                        with self.assertRaises(KeyboardInterrupt):
+                            tidal_dl.main()
+        mock_choices.assert_called()
 
 
 if __name__ == "__main__":

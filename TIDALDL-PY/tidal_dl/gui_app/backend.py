@@ -15,7 +15,7 @@ from ..diagnostics import runDoctor
 from ..enums import AudioQuality, Type, VideoQuality
 from ..events import loginByConfig, logout, start, start_type
 from ..lang.language import LANG
-from ..paths import getProfilePath, getTokenPath, openPath
+from ..paths import PATHS, openPath
 from ..printf import VERSION
 from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter
 from ..tidal import TIDAL_API
@@ -142,8 +142,8 @@ def with_video_only(item: SearchItem, video_only: bool) -> SearchItem:
 
 class TidekeeperBackend:
     def initialize(self):
-        SETTINGS.read(getProfilePath())
-        TOKEN.read(getTokenPath())
+        SETTINGS.read(PATHS.getProfilePath())
+        TOKEN.read(PATHS.getTokenPath())
         if not apiKey.isItemValid(SETTINGS.apiKeyIndex):
             SETTINGS.apiKeyIndex = apiKey.getDefaultIndex()
             SETTINGS.save()
