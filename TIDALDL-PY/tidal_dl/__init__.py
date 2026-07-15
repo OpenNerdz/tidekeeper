@@ -155,6 +155,7 @@ def mainCommand():
             return True
         Printf.info(LANG.select.SETTING_DOWNLOAD_PATH + ':' + SETTINGS.downloadPath)
         start(link, videoOnly)
+        return True
     return False
 
 
