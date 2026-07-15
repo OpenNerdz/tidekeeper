@@ -172,6 +172,24 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
 
+    def test_get_album_converts_each_artist_to_model(self):
+        api = TidalAPI()
+        payload = {
+            "id": 123,
+            "title": "Album",
+            "artist": {"id": 123, "name": "Artist One"},
+            "artists": [
+                {"id": 123, "name": "Artist One"},
+                {"id": 456, "name": "Artist Two"},
+            ],
+        }
+
+        with mock.patch.object(api, "__get__", return_value=payload):
+            album = api.getAlbum(123)
+
+        self.assertEqual([artist.id for artist in album.artists], [123, 456])
+        self.assertEqual([artist.name for artist in album.artists], ["Artist One", "Artist Two"])
+
     def test_album_path_replaces_album_artist_ids_for_singular_artist(self):
         album = self._album()
         album.artist = self._artist("Artist One", 123)
