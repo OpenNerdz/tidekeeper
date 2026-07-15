@@ -62,7 +62,7 @@ class Album(aigpy.model.ModelBase):
         self.audioQuality = None
         self.audioModes = None
         self.artist = Artist()
-        self.artists = []
+        self.artists = Artist()
 
 
 class Playlist(aigpy.model.ModelBase):
