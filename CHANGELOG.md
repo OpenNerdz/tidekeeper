@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed `-l`/`--link` downloads so the CLI exits when finished instead of dropping into the interactive menu (#39, thanks @redraven2459).
+- Fixed album artist metadata conversion so album artist lists and `{ArtistName}`/`{ArtistID}` album tokens are populated correctly (#38, #41).
+- Reduced HTTP 429 rate-limit errors by pacing playback manifest requests and caching duplicate stream manifest lookups.
+- Added a `--configPathOverride` CLI argument for custom config locations (#37, thanks @redraven2459).
+- Added the `{AlbumArtistID}` album path token (#36, thanks @redraven2459).
+
 ## 2026.7.11.0 - 2026-07-11
 
 - Improved lossless and hi-res fallback behavior, request pacing, and handling of HTTP 403/429 responses.

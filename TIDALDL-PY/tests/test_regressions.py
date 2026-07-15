@@ -10,7 +10,7 @@ from unittest import mock
 
 import tidal_dl
 from tidal_dl import apiKey, download, events, paths
-from tidal_dl.enums import AudioQuality, Type, VideoQuality
+from tidal_dl.enums import AudioQuality, Type
 from tidal_dl.gui_app.backend import TidekeeperBackend, SearchItem, with_video_only
 from tidal_dl.model import StreamUrl
 from tidal_dl.settings import Settings

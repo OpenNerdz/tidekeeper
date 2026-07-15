@@ -52,23 +52,24 @@ be retried with:
 ```bash
 tidekeeper -l "/path/to/downloads/failed-tracks.txt"
 ```
+
 ## Customizability
 Custom filename formats are supported:
 | Tokens  | Description  | Album | Track | Video | Playlist |
 | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
-| {ArtistID}  | Comma seperated list of each artists' ID for that media (i.e: ```123, 456```)  | :white_check_mark:  | :x:  | :x:  | :x: |
-| {ArtistName}  | Comma seperated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {ArtistID}  | Comma separated list of each artists' ID for that media (i.e: ```123, 456```)  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {ArtistName}  | Comma separated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :white_check_mark:  | :x:  | :x:  | :x: |
 | {ArtistName}  | Primary artist's name for that media | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
-| {ArtistsName}  | Comma seperated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
+| {ArtistsName}  | Comma separated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
 | {AlbumArtistID}  | Primary artist's ID for that media | :white_check_mark:  | :x:  | :x:  | :x: |
 | {AlbumArtistName}  | Primary artist's name for that media | :white_check_mark:  | :x:  | :x:  | :x: |
-| {Flag}  | TBC | :white_check_mark:  | :x:  | :x:  | :x: |
+| {Flag}  | Quality/content flags: `M` (Master), `A` (Dolby Atmos), `E` (Explicit) | :white_check_mark:  | :x:  | :x:  | :x: |
 | {AlbumID}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
 | {AlbumYear}  |  | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
 | {AlbumTitle}  |  | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
-| {AudioQuality}  | TBC | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
+| {AudioQuality}  | Audio quality reported by TIDAL (e.g. `LOSSLESS`, `HI_RES`) | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
 | {DurationSeconds}  |  | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
-| {Duration}  | TBC | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
+| {Duration}  | Duration formatted as `MM:SS` (or `H:MM:SS`) | :white_check_mark:  | :white_check_mark:  | :x:  | :x: |
 | {NumberOfTracks}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
 | {NumberOfVideos}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
 | {NumberOfVolumes}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
@@ -78,7 +79,6 @@ Custom filename formats are supported:
 | {TrackNumber}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
 | {TrackTitle}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
 | {ExplicitFlag}  |  | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
-| {TrackTitle}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
 | {StreamQuality}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
 | {Codec}  |  | :x:  | :white_check_mark:  | :x:  | :x: |
 | {VideoID}  |  | :x:  | :x:  | :white_check_mark:  | :x: |
