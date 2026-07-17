@@ -45,7 +45,9 @@ class LangEnglish(object):
     SETTING_ADD_TYPE_FOLDER = "Add Type-Folder"
     SETTING_DOWNLOAD_DELAY = "Use Download Delay"
     SETTING_REQUEST_INTERVAL_SECONDS = "Request delay seconds"
+    SETTING_ADAPTIVE_RATE_LIMIT = "Automatically adapt request delay"
     SETTING_SAVE_AS_FLAC = "Save FLAC streams as .flac files"
+    CHANGE_ADAPTIVE_RATE_LIMIT = "Automatically adapt request delay after HTTP 429 rate limits('0'-No,'1'-Yes):"
 
     CHOICE = "CHOICE"
     FUNCTION = "FUNCTION"

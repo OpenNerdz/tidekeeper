@@ -7,6 +7,12 @@
 - Reduced HTTP 429 rate-limit errors by pacing playback manifest requests and caching duplicate stream manifest lookups.
 - Added a `--configPathOverride` CLI argument for custom config locations (#37, thanks @redraven2459).
 - Added the `{AlbumArtistID}` album path token (#36, thanks @redraven2459).
+- GUI now reports failed queue items as Failed instead of Done when downloads return errors.
+- CLI `-l`/`--link` exits with a non-zero status when downloads fail.
+- Lookup errors (401/403/network) are no longer masked as "No result." while probing media types.
+- Hardened path tokens, artist lists, and empty search results against missing/null API fields.
+- Shortened stream-manifest cache TTL so expired CDN URLs are less likely to be reused.
+- Exposed adaptive rate-limit toggle in GUI settings layout and CLI settings.
 
 ## 2026.7.11.0 - 2026-07-11
 

@@ -76,10 +76,16 @@ def __hasStreamIdentifierToken__(pathFormat: str):
     return '{StreamQuality}' in pathFormat or '{Codec}' in pathFormat
 
 
+def __tokenValue__(value):
+    if value is None:
+        return ""
+    return str(value)
+
+
 def getAlbumPath(album):
     artistID = __fixPath__(TIDAL_API.getArtistsID(album.artists))
     artistName = __fixPath__(TIDAL_API.getArtistsName(album.artists))
-    albumArtistID = __fixPath__(str(album.artist.id))if album.artist is not None else "0"
+    albumArtistID = __fixPath__(str(album.artist.id)) if album.artist is not None else "0"
     albumArtistName = __fixPath__(album.artist.name) if album.artist is not None else ""
 
     # album folder pre: [ME]
@@ -102,17 +108,17 @@ def getAlbumPath(album):
     retpath = retpath.replace(R"{AlbumArtistID}", albumArtistID)
     retpath = retpath.replace(R"{AlbumArtistName}", albumArtistName)
     retpath = retpath.replace(R"{Flag}", flag)
-    retpath = retpath.replace(R"{AlbumID}", str(album.id))
+    retpath = retpath.replace(R"{AlbumID}", __tokenValue__(album.id))
     retpath = retpath.replace(R"{AlbumYear}", year)
     retpath = retpath.replace(R"{AlbumTitle}", albumName)
-    retpath = retpath.replace(R"{AudioQuality}", album.audioQuality)
-    retpath = retpath.replace(R"{DurationSeconds}", str(album.duration))
-    retpath = retpath.replace(R"{Duration}", __getDurationStr__(album.duration))
-    retpath = retpath.replace(R"{NumberOfTracks}", str(album.numberOfTracks))
-    retpath = retpath.replace(R"{NumberOfVideos}", str(album.numberOfVideos))
-    retpath = retpath.replace(R"{NumberOfVolumes}", str(album.numberOfVolumes))
-    retpath = retpath.replace(R"{ReleaseDate}", str(album.releaseDate))
-    retpath = retpath.replace(R"{RecordType}", album.type)
+    retpath = retpath.replace(R"{AudioQuality}", __tokenValue__(album.audioQuality))
+    retpath = retpath.replace(R"{DurationSeconds}", __tokenValue__(album.duration or 0))
+    retpath = retpath.replace(R"{Duration}", __getDurationStr__(album.duration or 0))
+    retpath = retpath.replace(R"{NumberOfTracks}", __tokenValue__(album.numberOfTracks or 0))
+    retpath = retpath.replace(R"{NumberOfVideos}", __tokenValue__(album.numberOfVideos or 0))
+    retpath = retpath.replace(R"{NumberOfVolumes}", __tokenValue__(album.numberOfVolumes or 0))
+    retpath = retpath.replace(R"{ReleaseDate}", __tokenValue__(album.releaseDate))
+    retpath = retpath.replace(R"{RecordType}", __tokenValue__(album.type))
     retpath = retpath.replace(R"{None}", "")
     retpath = retpath.strip()
     return f"{SETTINGS.downloadPath}/{retpath}"
@@ -134,7 +140,7 @@ def getTrackPath(track, stream, album=None, playlist=None):
     number = str(track.trackNumber).rjust(2, '0')
     if album is not None:
         base = getAlbumPath(album)
-        if album.numberOfVolumes > 1:
+        if int(getattr(album, 'numberOfVolumes', 0) or 0) > 1:
             base += f'/CD{str(track.volumeNumber)}'
 
     if playlist is not None and SETTINGS.usePlaylistFolder:
@@ -171,12 +177,12 @@ def getTrackPath(track, stream, album=None, playlist=None):
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{AlbumYear}", year)
     retpath = retpath.replace(R"{AlbumTitle}", albumName)
-    retpath = retpath.replace(R"{AudioQuality}", track.audioQuality)
+    retpath = retpath.replace(R"{AudioQuality}", __tokenValue__(track.audioQuality))
     retpath = retpath.replace(R"{StreamQuality}", __fixPath__(__getStreamQuality__(stream)))
     retpath = retpath.replace(R"{Codec}", __fixPath__(stream.codec or ''))
-    retpath = retpath.replace(R"{DurationSeconds}", str(track.duration))
-    retpath = retpath.replace(R"{Duration}", __getDurationStr__(track.duration))
-    retpath = retpath.replace(R"{TrackID}", str(track.id))
+    retpath = retpath.replace(R"{DurationSeconds}", __tokenValue__(track.duration or 0))
+    retpath = retpath.replace(R"{Duration}", __getDurationStr__(track.duration or 0))
+    retpath = retpath.replace(R"{TrackID}", __tokenValue__(track.id))
     retpath = retpath.strip()
     if __isAtmosStream__(stream) and SETTINGS.audioQuality == AudioQuality.Atmos and not hasStreamIdentifier:
         retpath += " [Dolby Atmos]"

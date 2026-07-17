@@ -300,9 +300,11 @@ class TidekeeperBackend:
         writer = _CallbackWriter(callback)
         with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
             if item.kind == Type.Null:
-                start(str(item.source), item.video_only)
+                ok = start(str(item.source), item.video_only)
             else:
-                start_type(item.kind, item.source, item.video_only)
+                ok = start_type(item.kind, item.source, item.video_only)
+        if not ok:
+            raise RuntimeError(f"Download failed for {item.title}")
 
     def save_settings(self, values: dict):
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
@@ -412,6 +414,7 @@ class DemoBackend(TidekeeperBackend):
         SETTINGS.multiThread = False
         SETTINGS.downloadDelay = True
         SETTINGS.requestIntervalSeconds = 3.0
+        SETTINGS.adaptiveRateLimit = True
         SETTINGS.saveAsFlac = False
         SETTINGS.usePlaylistFolder = True
 

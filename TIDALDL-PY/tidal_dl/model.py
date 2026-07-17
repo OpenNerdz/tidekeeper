@@ -62,6 +62,7 @@ class Album(aigpy.model.ModelBase):
         self.audioQuality = None
         self.audioModes = None
         self.artist = Artist()
+        # Artist() is an aigpy list prototype so dict-lists convert to Artist models.
         self.artists = Artist()
 
 

@@ -190,6 +190,97 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         self.assertEqual([artist.id for artist in album.artists], [123, 456])
         self.assertEqual([artist.name for artist in album.artists], ["Artist One", "Artist Two"])
 
+    def test_get_track_converts_each_artist_to_model(self):
+        api = TidalAPI()
+        payload = {
+            "id": 456,
+            "title": "Track",
+            "artist": {"id": 123, "name": "Artist One"},
+            "artists": [
+                {"id": 123, "name": "Artist One"},
+                {"id": 456, "name": "Artist Two"},
+            ],
+            "album": {"id": 1, "title": "Album"},
+        }
+
+        with mock.patch.object(api, "__get__", return_value=payload):
+            track = api.getTrack(456)
+
+        self.assertEqual([artist.id for artist in track.artists], [123, 456])
+        self.assertEqual([artist.name for artist in track.artists], ["Artist One", "Artist Two"])
+
+    def test_artists_helpers_tolerate_none_and_missing_names(self):
+        api = TidalAPI()
+        self.assertEqual(api.getArtistsName(None), "")
+        self.assertEqual(api.getArtistsID(None), "")
+        self.assertEqual(api.getArtistsName([self._artist(None, 1), None]), "")
+        self.assertEqual(api.getArtistsID([self._artist("A", None), self._artist("B", 2)]), "2")
+
+    def test_search_result_items_default_to_empty_list(self):
+        api = TidalAPI()
+        result = SimpleNamespace(
+            tracks=SimpleNamespace(items=None),
+            videos=SimpleNamespace(items=None),
+            albums=SimpleNamespace(items=None),
+            artists=SimpleNamespace(items=None),
+            playlists=SimpleNamespace(items=None),
+        )
+        self.assertEqual(api.getSearchResultItems(result, Type.Track), [])
+        self.assertEqual(api.getSearchResultItems(None, Type.Album), [])
+
+    def test_get_by_string_surfaces_auth_errors(self):
+        api = TidalAPI()
+        with mock.patch.object(api, "getTypeData", side_effect=TidalApiError("auth failed", 401)):
+            with self.assertRaises(TidalApiError) as raised:
+                api.getByString("123456")
+        self.assertEqual(raised.exception.statusCode, 401)
+
+    def test_get_by_string_surfaces_forbidden_errors(self):
+        api = TidalAPI()
+        with mock.patch.object(api, "getTypeData", side_effect=TidalApiError("forbidden", 403)):
+            with self.assertRaises(TidalApiError) as raised:
+                api.getByString("123456")
+        self.assertEqual(raised.exception.statusCode, 403)
+
+    def test_get_by_string_surfaces_network_errors(self):
+        import requests
+
+        api = TidalAPI()
+        with mock.patch.object(api, "getTypeData", side_effect=requests.ConnectionError("offline")):
+            with self.assertRaises(requests.ConnectionError):
+                api.getByString("123456")
+
+    def test_album_path_tolerates_missing_optional_tokens(self):
+        album = self._album()
+        album.audioQuality = None
+        album.type = None
+        album.numberOfVolumes = None
+        album.releaseDate = None
+        album.duration = None
+        album.numberOfTracks = None
+        album.numberOfVideos = None
+
+        with mock.patch.object(
+            paths.SETTINGS,
+            "albumFolderFormat",
+            "{AlbumTitle}/{AudioQuality}/{RecordType}/{NumberOfVolumes}",
+        ), mock.patch.object(paths.SETTINGS, "downloadPath", "/tmp/tidekeeper"):
+            path = paths.getAlbumPath(album)
+
+        self.assertEqual(path, "/tmp/tidekeeper/Album///0")
+
+    def test_album_items_include_tracks_when_stream_ready_missing(self):
+        api = TidalAPI()
+        api.__getItems__ = lambda path: [
+            {"type": "track", "item": {"id": 1, "title": "Legacy Ready"}},
+            {"type": "track", "item": {"id": 2, "streamReady": False, "title": "Unavailable"}},
+        ]
+
+        tracks, videos = api.getItems("album-id", Type.Album)
+
+        self.assertEqual([track.id for track in tracks], [1])
+        self.assertEqual(videos, [])
+
     def test_album_path_replaces_album_artist_ids_for_singular_artist(self):
         album = self._album()
         album.artist = self._artist("Artist One", 123)

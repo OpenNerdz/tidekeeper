@@ -715,19 +715,23 @@ def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
     if not aigpy.string.isNull(track.version):
         obj.title += f' ({track.version})'
 
-    obj.artist = [artist.name for artist in track.artists]
+    obj.artist = __rawArtistNames__(getattr(track, 'artists', None))
+    if not obj.artist and getattr(track, 'artist', None) is not None and getattr(track.artist, 'name', None):
+        obj.artist = [str(track.artist.name)]
     obj.copyright = track.copyRight
     obj.tracknumber = track.trackNumber
     obj.discnumber = track.volumeNumber
     obj.composer = __parseContributors__('Composer', contributors)
     obj.isrc = track.isrc
 
-    obj.albumartist = [artist.name for artist in album.artists]
+    obj.albumartist = __rawArtistNames__(getattr(album, 'artists', None))
+    if not obj.albumartist and getattr(album, 'artist', None) is not None and getattr(album.artist, 'name', None):
+        obj.albumartist = [str(album.artist.name)]
     obj.date = album.releaseDate
-    obj.totaldisc = album.numberOfVolumes
+    obj.totaldisc = int(getattr(album, 'numberOfVolumes', 0) or 0)
     obj.lyrics = lyrics
     if obj.totaldisc <= 1:
-        obj.totaltrack = album.numberOfTracks
+        obj.totaltrack = int(getattr(album, 'numberOfTracks', 0) or 0)
     coverpath = TIDAL_API.getCoverUrl(album.cover, "1280", "1280")
     __ensureMetadataTags__(obj)
     error = __metadataSaveError__(obj.save(coverpath))

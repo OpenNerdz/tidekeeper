@@ -115,13 +115,41 @@ class CliUiTests(unittest.TestCase):
         try:
             with mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
                  mock.patch.object(tidal_dl, "loginByConfig", return_value=True), \
-                 mock.patch.object(tidal_dl, "start") as start:
+                 mock.patch.object(tidal_dl, "start", return_value=True) as start:
                 handled = tidal_dl.mainCommand()
         finally:
             sys.argv = old_argv
 
-        self.assertTrue(handled)
+        self.assertEqual(handled, 0)
         start.assert_called_once_with("123456", False)
+
+    def test_link_command_returns_nonzero_on_download_failure(self):
+        old_argv = sys.argv
+        sys.argv = ["tidekeeper", "--link", "123456"]
+        try:
+            with mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
+                 mock.patch.object(tidal_dl, "loginByConfig", return_value=True), \
+                 mock.patch.object(tidal_dl, "start", return_value=False):
+                code = tidal_dl.mainCommand()
+        finally:
+            sys.argv = old_argv
+
+        self.assertEqual(code, 1)
+
+    def test_link_command_returns_nonzero_when_login_fails(self):
+        old_argv = sys.argv
+        sys.argv = ["tidekeeper", "--link", "123456"]
+        try:
+            with mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
+                 mock.patch.object(tidal_dl, "loginByConfig", return_value=False), \
+                 mock.patch.object(tidal_dl, "loginByWeb", return_value=False), \
+                 mock.patch.object(tidal_dl, "start") as start:
+                code = tidal_dl.mainCommand()
+        finally:
+            sys.argv = old_argv
+
+        self.assertEqual(code, 1)
+        start.assert_not_called()
 
     def test_video_only_flag_is_passed_to_link_download(self):
         with mock.patch("sys.argv", ["tidekeeper", "--video-only", "-l", "artist-id"]):

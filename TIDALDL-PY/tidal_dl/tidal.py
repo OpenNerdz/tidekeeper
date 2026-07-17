@@ -30,7 +30,8 @@ API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
 API_BASE_LEGACY = 'https://api.tidalhifi.com/v1/'
 PLAYBACK_ASSET_NOT_READY_ATTEMPTS = 6
 RATE_LIMIT_MAX_ATTEMPTS = 3
-STREAM_CACHE_TTL_SECONDS = 600
+# Keep short: signed CDN URLs often expire well under 10 minutes.
+STREAM_CACHE_TTL_SECONDS = 90
 STREAM_CACHE_MAX_ITEMS = 256
 
 
@@ -602,17 +603,21 @@ class TidalAPI(object):
         return aigpy.model.dictToModel(self.__get__('search', params=params), SearchResult())
 
     def getSearchResultItems(self, result: SearchResult, type: Type):
+        if result is None:
+            return []
         if type == Type.Track:
-            return result.tracks.items
-        if type == Type.Video:
-            return result.videos.items
-        if type == Type.Album:
-            return result.albums.items
-        if type == Type.Artist:
-            return result.artists.items
-        if type == Type.Playlist:
-            return result.playlists.items
-        return []
+            items = getattr(result.tracks, 'items', None)
+        elif type == Type.Video:
+            items = getattr(result.videos, 'items', None)
+        elif type == Type.Album:
+            items = getattr(result.albums, 'items', None)
+        elif type == Type.Artist:
+            items = getattr(result.artists, 'items', None)
+        elif type == Type.Playlist:
+            items = getattr(result.playlists, 'items', None)
+        else:
+            return []
+        return items or []
 
     def getLyrics(self, id) -> Lyrics:
         data = self.__get__(f'tracks/{str(id)}/lyrics', urlpre='https://api.tidal.com/v1/')
@@ -631,10 +636,12 @@ class TidalAPI(object):
         tracks = []
         videos = []
         for item in data:
-            if item['type'] == 'track' and item['item']['streamReady']:
-                tracks.append(aigpy.model.dictToModel(item['item'], Track()))
-            elif item['type'] == 'video':
-                videos.append(aigpy.model.dictToModel(item['item'], Video()))
+            itemType = item.get('type')
+            payload = item.get('item') or {}
+            if itemType == 'track' and payload.get('streamReady', True):
+                tracks.append(aigpy.model.dictToModel(payload, Track()))
+            elif itemType == 'video':
+                videos.append(aigpy.model.dictToModel(payload, Video()))
         return tracks, videos
 
     def getArtistAlbums(self, id, includeEP=False):
@@ -1111,23 +1118,8 @@ class TidalAPI(object):
         raise lastError
 
     def getStreamUrl(self, id, quality: AudioQuality):
-        lastError = None
-        qualities = self.__qualityFallbacks__(quality)
-        for index, item in enumerate(qualities):
-            try:
-                stream = self.__getAudioStreamUrlForQuality__(id, item)
-                mismatch = self.__streamQualityMismatch__(stream, item)
-                if mismatch is not None:
-                    lastError = mismatch
-                    if index == len(qualities) - 1:
-                        raise mismatch
-                    continue
-                return self.__annotateStreamFallback__(stream, quality, item, lastError)
-            except Exception as e:
-                lastError = e
-                if index == len(qualities) - 1 or not self.__isManifestFallbackError__(e):
-                    raise
-        raise lastError
+        # Share stream-manifest cache with the priority path used by downloads.
+        return self.getStreamUrlByPriority(id, self.__qualityFallbacks__(quality))
 
     def getVideoStreamUrl(self, id, quality: VideoQuality):
         paras = {"videoquality": "HIGH", "playbackmode": "STREAM", "assetpresentation": "FULL"}
@@ -1163,13 +1155,30 @@ class TidalAPI(object):
         except requests.RequestException:
             return ''
 
+    def __normalizeArtists__(self, artists=None):
+        if artists is None:
+            return []
+        if not isinstance(artists, (list, tuple)):
+            artists = [artists]
+        return [item for item in artists if item is not None]
+
     def getArtistsID(self, artists=None):
-        artists = artists or []
-        return ", ".join(str(item.id) for item in artists)
+        values = []
+        for item in self.__normalizeArtists__(artists):
+            artist_id = getattr(item, 'id', None)
+            if artist_id is None or str(artist_id).strip() == "":
+                continue
+            values.append(str(artist_id))
+        return ", ".join(values)
 
     def getArtistsName(self, artists=None):
-        artists = artists or []
-        return ", ".join(item.name for item in artists)
+        values = []
+        for item in self.__normalizeArtists__(artists):
+            name = getattr(item, 'name', None)
+            if name is None or str(name).strip() == "":
+                continue
+            values.append(str(name))
+        return ", ".join(values)
 
     def getFlag(self, data, type: Type, short=True, separator=" / "):
         master = False
@@ -1210,12 +1219,34 @@ class TidalAPI(object):
                 return item, path_parts[index + 1]
         return Type.Null, url
 
+    def __isProbeableLookupError__(self, error):
+        """True when type probing should try the next media type."""
+        if self.__isRateLimitError__(error) or self.__isStaleClientError__(error):
+            return False
+        if isinstance(error, TidalApiError):
+            # Auth / entitlement / client errors must not look like "not found".
+            if error.statusCode in (401, 403):
+                return False
+            if error.statusCode in (400, 404, 405, 406, 410, 422):
+                return True
+            # Unexpected server / transport-ish API failures should surface.
+            return False
+        if isinstance(error, (requests.RequestException, OSError, TimeoutError)):
+            return False
+        text = str(error or "").lower()
+        # Common not-found / wrong-type probe noise.
+        if any(token in text for token in ("not found", "no result", "resource not found")):
+            return True
+        if "404" in text:
+            return True
+        return False
+
     def getByString(self, string):
         if aigpy.string.isNull(string):
             raise Exception("Please enter something.")
 
-        obj = None
         etype, sid = self.parseUrl(string)
+        lastError = None
         for index, item in enumerate(Type):
             if etype != Type.Null and etype != item:
                 continue
@@ -1225,12 +1256,15 @@ class TidalAPI(object):
                 obj = self.getTypeData(sid, item)
                 return item, obj
             except Exception as e:
-                # Surface session and throttling problems instead of
-                # masking them as a generic "No result." while probing types.
-                if self.__isRateLimitError__(e) or self.__isStaleClientError__(e):
+                lastError = e
+                # Surface auth, entitlement, throttling, and network problems
+                # instead of masking them as a generic "No result." while probing.
+                if not self.__isProbeableLookupError__(e):
                     raise
                 continue
 
+        if lastError is not None and not self.__isProbeableLookupError__(lastError):
+            raise lastError
         raise Exception("No result.")
 
 # Singleton

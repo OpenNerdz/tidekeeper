@@ -46,6 +46,20 @@ class StreamCacheTests(unittest.TestCase):
 
         self.assertEqual(resolve.call_count, 2)
 
+    def test_get_stream_url_shares_priority_cache(self):
+        api = TidalAPI()
+        stream = self._stream()
+        with mock.patch.object(api, "__getAudioStreamUrlForQuality__", return_value=stream) as resolve:
+            first = api.getStreamUrl(123, AudioQuality.HiFi)
+            second = api.getStreamUrlByPriority(123, api.__qualityFallbacks__(AudioQuality.HiFi))
+
+        self.assertEqual(resolve.call_count, 1)
+        self.assertEqual(second.urls, first.urls)
+
+    def test_stream_cache_ttl_is_short_lived(self):
+        # Signed CDN URLs often expire in minutes; keep the cache brief.
+        self.assertLessEqual(STREAM_CACHE_TTL_SECONDS, 120)
+
 
 if __name__ == "__main__":
     unittest.main()

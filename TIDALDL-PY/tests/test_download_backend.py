@@ -215,5 +215,32 @@ class DownloadBackendTests(unittest.TestCase):
                 setattr(download.SETTINGS, key, value)
 
 
+class GuiDownloadStatusTests(unittest.TestCase):
+    def test_backend_download_raises_when_start_fails(self):
+        from tidal_dl.enums import Type
+        from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend
+
+        backend = TidekeeperBackend()
+        item = SearchItem(Type.Null, "Track", "", "", "456", "", "456")
+        with mock.patch.object(backend, "_ensure_catalog_session"), \
+             mock.patch("tidal_dl.gui_app.backend.start", return_value=False):
+            with self.assertRaises(RuntimeError) as raised:
+                backend.download(item)
+
+        self.assertIn("Track", str(raised.exception))
+
+    def test_backend_download_succeeds_when_start_ok(self):
+        from tidal_dl.enums import Type
+        from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend
+
+        backend = TidekeeperBackend()
+        item = SearchItem(Type.Track, "Track", "", "", "456", "", SimpleNamespace(id=456))
+        with mock.patch.object(backend, "_ensure_catalog_session"), \
+             mock.patch("tidal_dl.gui_app.backend.start_type", return_value=True) as start_type:
+            backend.download(item)
+
+        start_type.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

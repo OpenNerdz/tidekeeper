@@ -47,6 +47,12 @@ def preMainCommand():
             PATHS.homePathOverride = val
 
 def mainCommand():
+    """Parse CLI flags.
+
+    Returns:
+        int exit code when the CLI handled the request and should exit
+        None when the interactive menu should start
+    """
     try:
         opts, args = getopt.getopt(sys.argv[1:],
                                    "hvgl:o:q:r:c:",
@@ -59,7 +65,7 @@ def mainCommand():
                                    ])
     except getopt.GetoptError as errmsg:
         Printf.err(vars(errmsg)['msg'] + ". Use 'tidekeeper -h' for usage.")
-        return True
+        return 1
 
     link = None
     showGui = False
@@ -73,10 +79,10 @@ def mainCommand():
     for opt, val in opts:
         if opt in ('-h', '--help'):
             Printf.usage()
-            return True
+            return 0
         if opt in ('-v', '--version'):
             Printf.logo()
-            return True
+            return 0
         if opt in ('-g', '--gui'):
             showGui = True
             continue
@@ -124,39 +130,38 @@ def mainCommand():
 
     if showDoctor:
         runDoctor()
-        return True
+        return 0
 
     if showPaths:
         Printf.paths()
-        return True
+        return 0
 
     if openOutput:
         try:
             opened = openPath(SETTINGS.downloadPath)
             Printf.success("Opened download folder: " + opened)
+            return 0
         except OSError as exc:
             Printf.err("Could not open download folder: " + str(exc))
-        return True
+            return 1
 
     if updateInstall:
-        updateTidekeeper(updateGuiInstall)
-        return True
+        return 0 if updateTidekeeper(updateGuiInstall) else 1
 
     if not aigpy.path.mkdirs(SETTINGS.downloadPath):
         Printf.err(LANG.select.MSG_PATH_ERR + SETTINGS.downloadPath)
-        return True
+        return 1
 
     if showGui:
         startGui()
-        return True
+        return 0
 
     if link is not None:
         if not loginByConfig() and not loginByWeb():
-            return True
+            return 1
         Printf.info(LANG.select.SETTING_DOWNLOAD_PATH + ':' + SETTINGS.downloadPath)
-        start(link, videoOnly)
-        return True
-    return False
+        return 0 if start(link, videoOnly) else 1
+    return None
 
 
 def normalizeChoice(choice):
@@ -224,9 +229,9 @@ def main():
     TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
 
     if len(sys.argv) > 1:
-        return_flag = mainCommand()
-        if return_flag:
-            return
+        exit_code = mainCommand()
+        if exit_code is not None:
+            return exit_code
 
     if not loginByConfig():
         loginByWeb()
@@ -242,7 +247,7 @@ def main():
             Printf.clearScreen()
             continue
         if choice == "0":
-            return
+            return 0
         elif choice == "1":
             if not loginByConfig():
                 loginByWeb()

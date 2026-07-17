@@ -465,7 +465,14 @@ class MainWindow(QMainWindow):
         groups = [
             ("Files", ["checkExist", "saveCovers", "lyricFile", "saveAlbumInfo", "usePlaylistFolder"]),
             ("Catalog", ["includeEP", "downloadVideos"]),
-            ("Run behavior", ["multiThread", "downloadDelay", "saveAsFlac", "showProgress", "showTrackInfo"]),
+            ("Run behavior", [
+                "multiThread",
+                "downloadDelay",
+                "adaptiveRateLimit",
+                "saveAsFlac",
+                "showProgress",
+                "showTrackInfo",
+            ]),
         ]
         for column, (title, keys) in enumerate(groups):
             grid.addWidget(_label(title, "SectionTitle"), 0, column)
