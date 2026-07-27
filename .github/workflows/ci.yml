@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     defaults:
       run:
@@ -97,3 +97,40 @@ jobs:
         with:
           name: gui-screenshots
           path: TIDALDL-PY/gui-screenshots/*.png
+
+  package:
+    name: Package metadata
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: TIDALDL-PY
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build --outdir dist .
+
+      - name: Validate metadata renders on PyPI
+        run: python -m twine check --strict dist/*
+
+      - name: Assert long description survived the sdist round trip
+        run: |
+          python - <<'EOF'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          archive = zipfile.ZipFile(wheel)
+          name = next(n for n in archive.namelist() if n.endswith("METADATA"))
+          metadata = archive.read(name).decode()
+          assert "unofficial maintained fork" in metadata, "README missing from wheel metadata"
+          print("long description OK", len(metadata), "bytes")
+          EOF

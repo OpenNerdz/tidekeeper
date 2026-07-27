@@ -38,3 +38,8 @@ TIDALDL-PY/usersettings.json
 .vscode/
 .idea/
 .DS_Store
+
+# Staged copies of root files for packaging (see setup.py)
+TIDALDL-PY/README.md
+TIDALDL-PY/LICENSE
+TIDALDL-PY/NOTICE

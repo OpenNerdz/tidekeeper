@@ -6,7 +6,11 @@ from setuptools import find_packages, setup
 
 ROOT = Path(__file__).parent
 VERSION_FILE = ROOT / "tidal_dl" / "printf.py"
-README_FILE = ROOT.parent / "README.md"
+REPO_ROOT = ROOT.parent
+README_FILE = ROOT / "README.md"
+RAW_BASE = "https://raw.githubusercontent.com/OpenNerdz/tidekeeper/main/"
+BLOB_BASE = "https://github.com/OpenNerdz/tidekeeper/blob/main/"
+STAGED_FILES = ("README.md", "LICENSE", "NOTICE")
 
 
 def get_version():
@@ -16,7 +20,42 @@ def get_version():
     return match.group(1)
 
 
+def absolutize_links(text):
+    """Point relative links at GitHub so they resolve on PyPI."""
+    pattern = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)")
+
+    def repl(match):
+        bang, label, target = match.groups()
+        if re.match(r"^(https?:|mailto:|#)", target):
+            return match.group(0)
+        base = RAW_BASE if bang else BLOB_BASE
+        return "{}[{}]({}{})".format(bang, label, base, target.lstrip("./"))
+
+    return pattern.sub(repl, text)
+
+
+def stage_repo_files():
+    """Copy shared repo files into the package dir so they reach the sdist.
+
+    The package lives in a subdirectory, so files at the repository root are
+    otherwise absent from the sdist, and any wheel built from that sdist loses
+    its long description. Building from an unpacked sdist is a no-op here
+    because the staged copies already exist.
+    """
+    for name in STAGED_FILES:
+        source = REPO_ROOT / name
+        if not source.exists():
+            continue
+        target = ROOT / name
+        content = source.read_text(encoding="utf-8")
+        if name == "README.md":
+            content = absolutize_links(content)
+        if not target.exists() or target.read_text(encoding="utf-8") != content:
+            target.write_text(content, encoding="utf-8")
+
+
 def get_long_description():
+    stage_repo_files()
     if README_FILE.exists():
         return README_FILE.read_text(encoding="utf-8")
     return "Maintained Tidal-Media-Downloader fork with terminal and desktop GUI workflows."
@@ -51,6 +90,7 @@ setup(
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
         "Topic :: Multimedia :: Sound/Audio",
     ],
     keywords="tidal music downloader cli gui",

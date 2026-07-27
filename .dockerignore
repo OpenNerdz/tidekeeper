@@ -1,0 +1,12 @@
+.git
+.github
+assets
+docs
+scripts
+build.sh
+install.sh
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+**/dist
+**/build
