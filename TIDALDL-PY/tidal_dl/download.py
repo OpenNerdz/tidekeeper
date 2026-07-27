@@ -528,10 +528,19 @@ def __normalizeLyricsMatchText__(value):
     return " ".join(str(value or "").casefold().split())
 
 
+def __iterArtists__(artists):
+    # TIDAL omits `artists` for some items (aigpy then stores None) and the
+    # models default to a single prototype instance, so the attribute is not
+    # always an iterable list of artists (issue #38).
+    if isinstance(artists, (list, tuple)):
+        return [artist for artist in artists if artist is not None]
+    return []
+
+
 def __rawArtistNames__(artists):
     return [
         str(getattr(artist, 'name', '')).strip()
-        for artist in (artists or [])
+        for artist in __iterArtists__(artists)
         if getattr(artist, 'name', None)
     ]
 
@@ -539,7 +548,7 @@ def __rawArtistNames__(artists):
 def __artistNames__(artists):
     return [
         __normalizeLyricsMatchText__(getattr(artist, 'name', ''))
-        for artist in (artists or [])
+        for artist in __iterArtists__(artists)
         if getattr(artist, 'name', None)
     ]
 
@@ -708,6 +717,16 @@ def __ensureMetadataTags__(tagTool):
         handle.add_tags()
 
 
+def __metadataArtistNames__(item):
+    """Return tag artist names, falling back to the item's primary artist."""
+    names = __rawArtistNames__(getattr(item, 'artists', None))
+    if names:
+        return names
+    artist = getattr(item, 'artist', None)
+    name = getattr(artist, 'name', None) if artist is not None else None
+    return [str(name).strip()] if name else []
+
+
 def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
     obj = aigpy.tag.TagTool(filepath)
     obj.album = track.album.title
@@ -715,18 +734,14 @@ def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
     if not aigpy.string.isNull(track.version):
         obj.title += f' ({track.version})'
 
-    obj.artist = __rawArtistNames__(getattr(track, 'artists', None))
-    if not obj.artist and getattr(track, 'artist', None) is not None and getattr(track.artist, 'name', None):
-        obj.artist = [str(track.artist.name)]
+    obj.artist = __metadataArtistNames__(track)
     obj.copyright = track.copyRight
     obj.tracknumber = track.trackNumber
     obj.discnumber = track.volumeNumber
     obj.composer = __parseContributors__('Composer', contributors)
     obj.isrc = track.isrc
 
-    obj.albumartist = __rawArtistNames__(getattr(album, 'artists', None))
-    if not obj.albumartist and getattr(album, 'artist', None) is not None and getattr(album.artist, 'name', None):
-        obj.albumartist = [str(album.artist.name)]
+    obj.albumartist = __metadataArtistNames__(album)
     obj.date = album.releaseDate
     obj.totaldisc = int(getattr(album, 'numberOfVolumes', 0) or 0)
     obj.lyrics = lyrics

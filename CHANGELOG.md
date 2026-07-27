@@ -4,6 +4,8 @@
 
 - Fixed `-l`/`--link` downloads so the CLI exits when finished instead of dropping into the interactive menu (#39, thanks @redraven2459).
 - Fixed album artist metadata conversion so album artist lists and `{ArtistName}`/`{ArtistID}` album tokens are populated correctly (#38, #41).
+- Fixed track/album tagging and path building when TIDAL omits the artist list, which previously raised `'NoneType' object is not iterable` (follow-up to #38).
+- Fixed the test suite reading and overwriting the real `~/.tidal-dl.json` profile, which caused false rate-limit test failures for contributors.
 - Reduced HTTP 429 rate-limit errors by pacing playback manifest requests and caching duplicate stream manifest lookups.
 - Added a `--configPathOverride` CLI argument for custom config locations (#37, thanks @redraven2459).
 - Added the `{AlbumArtistID}` album path token (#36, thanks @redraven2459).

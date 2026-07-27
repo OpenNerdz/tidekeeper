@@ -12,7 +12,7 @@ import tidal_dl
 from tidal_dl import apiKey, download, events, paths
 from tidal_dl.enums import AudioQuality, Type
 from tidal_dl.gui_app.backend import TidekeeperBackend, SearchItem, with_video_only
-from tidal_dl.model import StreamUrl
+from tidal_dl.model import Artist, StreamUrl
 from tidal_dl.settings import Settings
 from tidal_dl.tidal import API_BASE_PRIMARY, TidalAPI, TidalApiError
 
@@ -568,10 +568,15 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             close=mock.Mock(),
             json=mock.Mock(return_value={"data": {"attributes": {"formats": ["FLAC"]}}}),
         )
-        old_values = (events.SETTINGS.downloadDelay, events.SETTINGS.adaptiveRateLimit)
+        old_values = (
+            events.SETTINGS.downloadDelay,
+            events.SETTINGS.adaptiveRateLimit,
+            events.SETTINGS.requestIntervalSeconds,
+        )
         try:
             events.SETTINGS.downloadDelay = True
             events.SETTINGS.adaptiveRateLimit = True
+            events.SETTINGS.requestIntervalSeconds = 3.0
             api.playbackRateLimiter = limiter
             with mock.patch.object(api.session, "get", side_effect=[rate_limited, success]), \
                  mock.patch("tidal_dl.tidal.time.sleep") as sleep:
@@ -583,7 +588,11 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             limiter.reward.assert_called_once_with()
             sleep.assert_called_once_with(17.0)
         finally:
-            events.SETTINGS.downloadDelay, events.SETTINGS.adaptiveRateLimit = old_values
+            (
+                events.SETTINGS.downloadDelay,
+                events.SETTINGS.adaptiveRateLimit,
+                events.SETTINGS.requestIntervalSeconds,
+            ) = old_values
 
     def test_openapi_manifest_requests_use_rate_limiter(self):
         api = TidalAPI()
@@ -954,6 +963,62 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         finally:
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
+
+    def test_metadata_falls_back_when_artists_is_missing(self):
+        """Issue #38: TIDAL omits `artists`, so aigpy sets the attribute to None."""
+        track = self._track()
+        album = self._album()
+        track.album = album
+        track.artists = None
+        album.artists = None
+        track.copyRight = "Copyright"
+        track.isrc = "ISRC"
+        fake_tag = SimpleNamespace(save=mock.Mock(return_value=True))
+
+        with mock.patch.object(download.aigpy.tag, "TagTool", return_value=fake_tag), \
+             mock.patch.object(download.TIDAL_API, "getCoverUrl", return_value=""):
+            download.__setMetaData__(track, album, "/tmp/track.m4a", None, "")
+
+        self.assertEqual(fake_tag.artist, ["Artist"])
+        self.assertEqual(fake_tag.albumartist, ["Artist"])
+
+    def test_metadata_uses_every_artist_name(self):
+        track = self._track()
+        album = self._album()
+        track.album = album
+        track.artists = [self._artist("Artist One", 1), self._artist("Artist Two", 2)]
+        album.artists = [self._artist("Artist One", 1), self._artist("Artist Three", 3)]
+        track.copyRight = "Copyright"
+        track.isrc = "ISRC"
+        fake_tag = SimpleNamespace(save=mock.Mock(return_value=True))
+
+        with mock.patch.object(download.aigpy.tag, "TagTool", return_value=fake_tag), \
+             mock.patch.object(download.TIDAL_API, "getCoverUrl", return_value=""):
+            download.__setMetaData__(track, album, "/tmp/track.m4a", None, "")
+
+        self.assertEqual(fake_tag.artist, ["Artist One", "Artist Two"])
+        self.assertEqual(fake_tag.albumartist, ["Artist One", "Artist Three"])
+
+    def test_artist_helpers_tolerate_non_list_artists(self):
+        """Album/track models default to a prototype instance, not a list."""
+        api = TidalAPI()
+
+        for artists in (None, Artist(), "unexpected"):
+            self.assertEqual(api.getArtistsID(artists), "")
+            self.assertEqual(api.getArtistsName(artists), "")
+
+        self.assertEqual(api.getArtistsName([self._artist("Artist One", 1)]), "Artist One")
+        self.assertEqual(api.getArtistsID([self._artist("Artist One", 1)]), "1")
+
+    def test_album_path_handles_missing_artist_list(self):
+        album = self._album()
+        album.artists = None
+        old_format = paths.SETTINGS.albumFolderFormat
+        try:
+            paths.SETTINGS.albumFolderFormat = "{ArtistName}-{ArtistID}-{AlbumTitle}"
+            self.assertTrue(paths.getAlbumPath(album).endswith("--Album"))
+        finally:
+            paths.SETTINGS.albumFolderFormat = old_format
 
     def test_metadata_save_failure_is_reported(self):
         track = self._track()

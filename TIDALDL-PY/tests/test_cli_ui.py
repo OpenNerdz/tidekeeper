@@ -1,5 +1,6 @@
 import io
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
@@ -9,11 +10,35 @@ import tidal_dl
 from tidal_dl import printf
 from tidal_dl.printf import Printf
 from tidal_dl.paths import PATHS
+from tidal_dl.settings import SETTINGS, TOKEN
 
 
 class CliUiTests(unittest.TestCase):
     def setUp(self):
         PATHS.homePathOverride = None
+        self.addCleanup(setattr, PATHS, "homePathOverride", None)
+
+    def _isolateConfigHome(self):
+        """Point config/token lookups at a throwaway directory.
+
+        `main()` reads and can save the profile and token files, so tests must
+        never touch (or depend on) the real config of whoever runs the suite.
+        """
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        PATHS.homePathOverride = tmpdir.name
+        self._restoreGlobalSettings()
+        return tmpdir.name
+
+    def _restoreGlobalSettings(self):
+        for model in (SETTINGS, TOKEN):
+            snapshot = dict(vars(model))
+            self.addCleanup(self._applySnapshot, model, snapshot)
+
+    @staticmethod
+    def _applySnapshot(model, snapshot):
+        vars(model).clear()
+        vars(model).update(snapshot)
 
     def test_compact_help_uses_one_option_per_line(self):
         output = io.StringIO()
@@ -177,6 +202,7 @@ class CliUiTests(unittest.TestCase):
                 tidal_dl.preMainCommand()
 
     def test_sys_argvs_prevent_entering_while_loop(self):
+        self._isolateConfigHome()
         with mock.patch("sys.argv", ["tidekeeper", "--paths"]):
             with mock.patch("tidal_dl.Printf.choices") as mock_choices:
                 mock_choices.side_effect = KeyboardInterrupt
@@ -184,6 +210,7 @@ class CliUiTests(unittest.TestCase):
         mock_choices.assert_not_called()
 
     def test_sys_argvs_enable_entering_while_loop(self):
+        self._restoreGlobalSettings()
         with mock.patch("sys.argv", ["tidekeeper", "-c", "/home/user/tidekeeper/config"]):
             with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
                 mock_isdir.return_value = True

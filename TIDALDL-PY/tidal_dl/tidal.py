@@ -1155,30 +1155,16 @@ class TidalAPI(object):
         except requests.RequestException:
             return ''
 
-    def __normalizeArtists__(self, artists=None):
-        if artists is None:
-            return []
-        if not isinstance(artists, (list, tuple)):
-            artists = [artists]
-        return [item for item in artists if item is not None]
+    def __artistList__(self, artists):
+        if isinstance(artists, (list, tuple)):
+            return [item for item in artists if item is not None]
+        return []
 
     def getArtistsID(self, artists=None):
-        values = []
-        for item in self.__normalizeArtists__(artists):
-            artist_id = getattr(item, 'id', None)
-            if artist_id is None or str(artist_id).strip() == "":
-                continue
-            values.append(str(artist_id))
-        return ", ".join(values)
+        return ", ".join(str(item.id) for item in self.__artistList__(artists))
 
     def getArtistsName(self, artists=None):
-        values = []
-        for item in self.__normalizeArtists__(artists):
-            name = getattr(item, 'name', None)
-            if name is None or str(name).strip() == "":
-                continue
-            values.append(str(name))
-        return ", ".join(values)
+        return ", ".join(item.name for item in self.__artistList__(artists) if item.name)
 
     def getFlag(self, data, type: Type, short=True, separator=" / "):
         master = False
