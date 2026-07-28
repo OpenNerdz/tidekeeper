@@ -295,6 +295,20 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         with mock.patch.object(paths.SETTINGS, "albumFolderFormat", "{ArtistID}/{AlbumTitle}"):
             self.assertTrue(paths.getAlbumPath(album).endswith("123, 456/Album"))
 
+    def test_album_path_omits_missing_primary_artist_fields(self):
+        album = self._album()
+        album.artist = self._artist(None, None)
+
+        with mock.patch.object(
+            paths.SETTINGS,
+            "albumFolderFormat",
+            "{AlbumArtistID}/{AlbumArtistName}/{AlbumTitle}",
+        ):
+            path = paths.getAlbumPath(album)
+
+        self.assertTrue(path.endswith("///Album"))
+        self.assertNotIn("None", path)
+
     def test_album_items_skip_unstreamable_tracks_instead_of_treating_them_as_videos(self):
         api = TidalAPI()
         api.__getItems__ = lambda path: [

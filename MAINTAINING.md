@@ -30,7 +30,8 @@ tidekeeper --help
 ./build.sh
 ```
 
-Build outputs are written under `TIDALDL-PY/dist` and `TIDALDL-PY/exe`.
+Build outputs are written under `TIDALDL-PY/dist` (Python distributions and
+PyInstaller work) and `TIDALDL-PY/exe` (terminal and GUI executables).
 
 ## Release checklist
 
@@ -38,5 +39,11 @@ Build outputs are written under `TIDALDL-PY/dist` and `TIDALDL-PY/exe`.
 2. Move `CHANGELOG.md` entries from Unreleased into a new version section.
 3. Run the local development checks and the test suite.
 4. Confirm GitHub Actions CI passes on `main`.
-5. Tag the release (`git tag vX.Y.Z.N && git push origin vX.Y.Z.N`); the Build
-   workflow builds the binaries and attaches them to the GitHub release.
+5. Confirm the GitHub `pypi` environment exists and PyPI trusted publishing is
+   configured for repository `OpenNerdz/tidekeeper`, workflow
+   `.github/workflows/publish.yml`, environment `pypi`.
+6. Tag the release (`git tag vX.Y.Z.N && git push origin vX.Y.Z.N`). The Build
+   workflow creates the GitHub release and attaches terminal and GUI binaries.
+7. Confirm the release's Publish workflow succeeds and the package appears on
+   PyPI. Do not advertise `pip install tidekeeper` before the first successful
+   publication.

@@ -19,6 +19,9 @@
 - Added a release workflow that builds the sdist and wheel and publishes to PyPI with trusted publishing.
 - Added a Dockerfile that bundles ffmpeg and keeps config, tokens, and logs in `/config` with downloads in `/downloads`.
 - Added Python 3.14 to the CI matrix and a packaging job that verifies the PyPI long description survives the sdist round trip.
+- Fixed `{AlbumArtistID}` and `{AlbumArtistName}` rendering literal `None` when primary artist fields are absent.
+- Fixed the local build script deleting packaging metadata and omitting the GUI executable.
+- Documented container usage and the complete GitHub/PyPI release checklist.
 
 ## 2026.7.11.0 - 2026-07-11
 

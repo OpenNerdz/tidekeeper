@@ -85,8 +85,9 @@ def __tokenValue__(value):
 def getAlbumPath(album):
     artistID = __fixPath__(TIDAL_API.getArtistsID(album.artists))
     artistName = __fixPath__(TIDAL_API.getArtistsName(album.artists))
-    albumArtistID = __fixPath__(str(album.artist.id)) if album.artist is not None else "0"
-    albumArtistName = __fixPath__(album.artist.name) if album.artist is not None else ""
+    primary_artist = getattr(album, 'artist', None)
+    albumArtistID = __fixPath__(__tokenValue__(getattr(primary_artist, 'id', None)))
+    albumArtistName = __fixPath__(__tokenValue__(getattr(primary_artist, 'name', None)))
 
     # album folder pre: [ME]
     flag = TIDAL_API.getFlag(album, Type.Album, True, "")

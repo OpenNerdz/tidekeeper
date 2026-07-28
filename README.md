@@ -32,6 +32,26 @@ For Android shared storage, run `termux-setup-storage` and optionally set:
 export TIDEKEEPER_DOWNLOAD_PATH="/storage/emulated/0/Download/Tidekeeper"
 ```
 
+### Docker
+
+Build the image from the repository, then persist account configuration and
+downloads with bind mounts:
+
+```bash
+docker build -t tidekeeper .
+docker run --rm -it \
+  -v "$PWD/config:/config" \
+  -v "$PWD/downloads:/downloads" \
+  tidekeeper
+docker run --rm \
+  -v "$PWD/config:/config" \
+  -v "$PWD/downloads:/downloads" \
+  tidekeeper -l "https://tidal.com/browse/track/70973230"
+```
+
+The container runs as non-root UID `1000`. Ensure both host directories are
+writable by that user. A GUI is not included in the container image.
+
 ## Usage
 
 ```bash
