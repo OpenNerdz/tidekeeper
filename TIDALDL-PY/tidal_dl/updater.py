@@ -52,12 +52,15 @@ def run_update(include_gui: bool = False) -> UpdateResult:
     command = update_command(include_gui)
     env = os.environ.copy()
     env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
-    process = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        env=env,
-        check=False,
-    )
+    try:
+        process = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            check=False,
+        )
+    except OSError as exc:
+        return UpdateResult(False, command, str(exc))
     return UpdateResult(process.returncode == 0, command, process.stdout or "")

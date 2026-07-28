@@ -22,6 +22,8 @@
 - Fixed `{AlbumArtistID}` and `{AlbumArtistName}` rendering literal `None` when primary artist fields are absent.
 - Fixed the local build script deleting packaging metadata and omitting the GUI executable.
 - Documented container usage and the complete GitHub/PyPI release checklist.
+- Fixed `--doctor`, `--gui`, module execution, and standalone builds returning success after operational failures.
+- Invalid config paths and updater launch failures now produce clean errors instead of tracebacks.
 
 ## 2026.7.11.0 - 2026-07-11
 

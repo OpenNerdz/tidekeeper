@@ -32,6 +32,14 @@ class UpdaterTests(unittest.TestCase):
         self.assertIn(updater.RELEASES_URL, result.message)
         run.assert_not_called()
 
+    def test_run_update_reports_process_launch_failure(self):
+        with mock.patch.object(updater.subprocess, "run", side_effect=OSError("pip unavailable")):
+            result = updater.run_update(False)
+
+        self.assertFalse(result.ok)
+        self.assertIn("pip unavailable", result.output)
+        self.assertEqual(result.command, updater.update_command(False))
+
     def test_run_update_returns_pip_output(self):
         completed = mock.Mock(returncode=0, stdout="updated\n")
 

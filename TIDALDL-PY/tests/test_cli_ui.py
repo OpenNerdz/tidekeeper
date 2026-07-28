@@ -118,6 +118,21 @@ class CliUiTests(unittest.TestCase):
         self.assertEqual(tidal_dl.normalizeChoice("update"), "9")
         self.assertEqual(tidal_dl.normalizeChoice("upgrade"), "9")
 
+    def test_doctor_command_returns_nonzero_when_checks_fail(self):
+        with mock.patch("sys.argv", ["tidekeeper", "--doctor"]), \
+             mock.patch.object(tidal_dl, "runDoctor", return_value=False):
+            code = tidal_dl.mainCommand()
+
+        self.assertEqual(code, 1)
+
+    def test_gui_command_propagates_startup_failure(self):
+        with mock.patch("sys.argv", ["tidekeeper", "--gui"]), \
+             mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
+             mock.patch.object(tidal_dl, "startGui", return_value=1):
+            code = tidal_dl.mainCommand()
+
+        self.assertEqual(code, 1)
+
     def test_paths_flag_prints_paths_without_login(self):
         with mock.patch("sys.argv", ["tidekeeper", "--paths"]):
             with mock.patch.object(Printf, "paths") as paths:
@@ -200,6 +215,14 @@ class CliUiTests(unittest.TestCase):
         with mock.patch("sys.argv", ["tidekeeper", "-c", "/magic/config"]):
             with self.assertRaises(ValueError):
                 tidal_dl.preMainCommand()
+
+    def test_main_reports_invalid_config_path_without_traceback(self):
+        with mock.patch("sys.argv", ["tidekeeper", "-c", "/missing/config"]), \
+             mock.patch.object(Printf, "err") as error:
+            code = tidal_dl.main()
+
+        self.assertEqual(code, 1)
+        self.assertIn("existing directory", error.call_args.args[0])
 
     def test_sys_argvs_prevent_entering_while_loop(self):
         self._isolateConfigHome()

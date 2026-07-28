@@ -129,8 +129,7 @@ def mainCommand():
             continue
 
     if showDoctor:
-        runDoctor()
-        return 0
+        return 0 if runDoctor() else 1
 
     if showPaths:
         Printf.paths()
@@ -153,8 +152,8 @@ def mainCommand():
         return 1
 
     if showGui:
-        startGui()
-        return 0
+        result = startGui()
+        return result if isinstance(result, int) else 0
 
     if link is not None:
         if not loginByConfig() and not loginByWeb():
@@ -219,7 +218,11 @@ def updateTidekeeper(include_gui=False):
 
 def main():
     if len(sys.argv) > 1:
-        preMainCommand()
+        try:
+            preMainCommand()
+        except (getopt.GetoptError, ValueError) as exc:
+            Printf.err(str(exc) + ". Use 'tidekeeper -h' for usage.")
+            return 1
 
     SETTINGS.read(PATHS.getProfilePath())
     TOKEN.read(PATHS.getTokenPath())
