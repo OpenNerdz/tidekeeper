@@ -1161,10 +1161,18 @@ class TidalAPI(object):
         return []
 
     def getArtistsID(self, artists=None):
-        return ", ".join(str(item.id) for item in self.__artistList__(artists))
+        return ", ".join(
+            str(getattr(item, 'id', None))
+            for item in self.__artistList__(artists)
+            if getattr(item, 'id', None) is not None
+        )
 
     def getArtistsName(self, artists=None):
-        return ", ".join(item.name for item in self.__artistList__(artists) if item.name)
+        return ", ".join(
+            getattr(item, 'name', None)
+            for item in self.__artistList__(artists)
+            if getattr(item, 'name', None)
+        )
 
     def getFlag(self, data, type: Type, short=True, separator=" / "):
         master = False

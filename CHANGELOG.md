@@ -13,8 +13,12 @@
 - CLI `-l`/`--link` exits with a non-zero status when downloads fail.
 - Lookup errors (401/403/network) are no longer masked as "No result." while probing media types.
 - Hardened path tokens, artist lists, and empty search results against missing/null API fields.
+- Fixed `{ArtistID}`/`{AlbumArtistID}` album path tokens writing literal `None` when TIDAL omits an artist ID; those artists are now skipped.
 - Shortened stream-manifest cache TTL so expired CDN URLs are less likely to be reused.
 - Exposed adaptive rate-limit toggle in GUI settings layout and CLI settings.
+- Added a release workflow that builds the sdist and wheel and publishes to PyPI with trusted publishing.
+- Added a Dockerfile that bundles ffmpeg and keeps config, tokens, and logs in `/config` with downloads in `/downloads`.
+- Added Python 3.14 to the CI matrix and a packaging job that verifies the PyPI long description survives the sdist round trip.
 
 ## 2026.7.11.0 - 2026-07-11
 
