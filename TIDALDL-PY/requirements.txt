@@ -1,6 +1,7 @@
-requests>=2.34.2
-prettytable
-pycryptodome
+# Runtime dependencies — keep aligned with setup.py install_requires.
 aigpy>=2022.7.8.1
+requests>=2.34.2
+pycryptodome
 pydub
+prettytable>=3.10.0
 lxml>=6.1.1

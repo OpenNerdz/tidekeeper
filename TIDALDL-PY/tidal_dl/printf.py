@@ -23,10 +23,18 @@ from .environment import isTermux
 from .lang.language import *
 
 
-VERSION = '2026.7.11.0'
+VERSION = '2026.7.30.0'
 PROJECT_URL = 'https://github.com/OpenNerdz/tidekeeper'
 
 print_mutex = threading.Lock()
+
+
+def _plain_table_style():
+    """Return a non-deprecated plain column style for PrettyTable."""
+    table_style = getattr(prettytable, "TableStyle", None)
+    if table_style is not None:
+        return table_style.PLAIN_COLUMNS
+    return prettytable.PLAIN_COLUMNS
 
 
 class Printf(object):
@@ -118,13 +126,13 @@ class Printf(object):
             ["-r, --resolution", "Set video quality: P1080, P720, P480, P360"],
             ["-c, --configPathOverride", "Use non-default base path for config/tokens/logs"]
         ])
-        tb.set_style(prettytable.PLAIN_COLUMNS)
+        tb.set_style(_plain_table_style())
         print(tb)
 
     @staticmethod
     def paths():
         tb = Printf.__gettable__(["PATH", "VALUE"], PATHS.getPathSummary())
-        tb.set_style(prettytable.PLAIN_COLUMNS)
+        tb.set_style(_plain_table_style())
         print(tb)
 
     @staticmethod

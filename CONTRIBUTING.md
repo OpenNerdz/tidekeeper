@@ -19,6 +19,8 @@ python -m pip install -e .
 Run these before opening a pull request:
 
 ```bash
+python -m pip install -e ".[dev]"
+python -m ruff check tidal_dl tests
 python -m compileall -q tidal_dl
 python -m unittest discover -s tests
 python -m tidal_dl --help
@@ -32,6 +34,9 @@ For installer changes, also run:
 bash -n ../install.sh
 bash -n ../scripts/install-termux.sh
 ```
+
+Ruff is configured for a high-signal subset of rules (syntax errors, undefined
+names, bare `except`). Prefer fixing those over large style-only refactors.
 
 ## Pull Request Guidelines
 

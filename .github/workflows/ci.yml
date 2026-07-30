@@ -8,9 +8,38 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: TIDALDL-PY
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Ruff
+        run: python -m pip install --upgrade pip ruff
+
+      - name: Ruff (high-signal rules)
+        run: python -m ruff check tidal_dl tests
+
+      - name: Installer script syntax
+        run: |
+          bash -n ../install.sh
+          bash -n ../scripts/install-termux.sh
+
   test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    needs: lint
 
     strategy:
       fail-fast: false
@@ -30,7 +59,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: TIDALDL-PY/pyproject.toml
+          cache-dependency-path: |
+            TIDALDL-PY/pyproject.toml
+            TIDALDL-PY/requirements.txt
+            TIDALDL-PY/setup.py
 
       - name: Install package
         run: |
@@ -48,12 +80,6 @@ jobs:
           python -m tidal_dl --help
           tidekeeper --help
           tidal-dl --help
-
-      - name: Check Termux install script
-        run: bash -n ../scripts/install-termux.sh
-
-      - name: Check installer script
-        run: bash -n ../install.sh
 
   gui-smoke:
     name: GUI screenshot smoke

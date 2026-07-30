@@ -64,7 +64,7 @@ class Language(object):
     def __toInt__(self, str):
         try:
             return int(str)
-        except:
+        except (TypeError, ValueError):
             return 0
 
     def setLang(self, index):

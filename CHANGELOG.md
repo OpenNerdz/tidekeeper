@@ -2,28 +2,44 @@
 
 ## Unreleased
 
+## 2026.7.30.0 - 2026-07-30
+
+### Reliability and correctness
+
 - Fixed `-l`/`--link` downloads so the CLI exits when finished instead of dropping into the interactive menu (#39, thanks @redraven2459).
+- CLI `-l`/`--link` exits with a non-zero status when downloads fail.
+- Fixed `--doctor`, `--gui`, module execution, and standalone builds returning success after operational failures.
+- Invalid config paths and updater launch failures now produce clean errors instead of tracebacks.
+- GUI now reports failed queue items as Failed instead of Done when downloads return errors.
+- Lookup errors (401/403/network) are no longer masked as "No result." while probing media types.
+- Reduced HTTP 429 rate-limit errors by pacing playback manifest requests and caching duplicate stream manifest lookups.
+- Shortened stream-manifest cache TTL so expired CDN URLs are less likely to be reused.
+
+### Metadata and path tokens
+
 - Fixed album artist metadata conversion so album artist lists and `{ArtistName}`/`{ArtistID}` album tokens are populated correctly (#38, #41).
 - Fixed track/album tagging and path building when TIDAL omits the artist list, which previously raised `'NoneType' object is not iterable` (follow-up to #38).
-- Fixed the test suite reading and overwriting the real `~/.tidal-dl.json` profile, which caused false rate-limit test failures for contributors.
-- Reduced HTTP 429 rate-limit errors by pacing playback manifest requests and caching duplicate stream manifest lookups.
-- Added a `--configPathOverride` CLI argument for custom config locations (#37, thanks @redraven2459).
-- Added the `{AlbumArtistID}` album path token (#36, thanks @redraven2459).
-- GUI now reports failed queue items as Failed instead of Done when downloads return errors.
-- CLI `-l`/`--link` exits with a non-zero status when downloads fail.
-- Lookup errors (401/403/network) are no longer masked as "No result." while probing media types.
 - Hardened path tokens, artist lists, and empty search results against missing/null API fields.
 - Fixed `{ArtistID}`/`{AlbumArtistID}` album path tokens writing literal `None` when TIDAL omits an artist ID; those artists are now skipped.
-- Shortened stream-manifest cache TTL so expired CDN URLs are less likely to be reused.
-- Exposed adaptive rate-limit toggle in GUI settings layout and CLI settings.
+- Fixed `{AlbumArtistID}` and `{AlbumArtistName}` rendering literal `None` when primary artist fields are absent.
+- Added the `{AlbumArtistID}` album path token (#36, thanks @redraven2459).
+- Added a `--configPathOverride` CLI argument for custom config locations (#37, thanks @redraven2459).
+
+### Packaging, Docker, and release tooling
+
 - Added a release workflow that builds the sdist and wheel and publishes to PyPI with trusted publishing.
 - Added a Dockerfile that bundles ffmpeg and keeps config, tokens, and logs in `/config` with downloads in `/downloads`.
 - Added Python 3.14 to the CI matrix and a packaging job that verifies the PyPI long description survives the sdist round trip.
-- Fixed `{AlbumArtistID}` and `{AlbumArtistName}` rendering literal `None` when primary artist fields are absent.
 - Fixed the local build script deleting packaging metadata and omitting the GUI executable.
-- Documented container usage and the complete GitHub/PyPI release checklist.
-- Fixed `--doctor`, `--gui`, module execution, and standalone builds returning success after operational failures.
-- Invalid config paths and updater launch failures now produce clean errors instead of tracebacks.
+- Aligned runtime dependency pins between `setup.py` and `requirements.txt`.
+- Added a high-signal Ruff lint gate in CI (syntax and undefined-name defects).
+- Documented container usage, ffmpeg recommendation, and the complete GitHub/PyPI release checklist.
+
+### Contributor experience
+
+- Fixed the test suite reading and overwriting the real `~/.tidal-dl.json` profile, which caused false rate-limit test failures for contributors.
+- Exposed adaptive rate-limit toggle in GUI settings layout and CLI settings.
+- Replaced deprecated PrettyTable `PLAIN_COLUMNS` usage with `TableStyle`.
 
 ## 2026.7.11.0 - 2026-07-11
 

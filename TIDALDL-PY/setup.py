@@ -73,6 +73,8 @@ setup(
     url="https://github.com/OpenNerdz/tidekeeper",
     project_urls={
         "Source": "https://github.com/OpenNerdz/tidekeeper",
+        "Changelog": "https://github.com/OpenNerdz/tidekeeper/blob/main/CHANGELOG.md",
+        "Issues": "https://github.com/OpenNerdz/tidekeeper/issues",
         "Upstream": "https://github.com/yaronzz/Tidal-Media-Downloader",
     },
 
@@ -83,6 +85,8 @@ setup(
         "Development Status :: 5 - Production/Stable",
         "Environment :: Console",
         "Environment :: X11 Applications :: Qt",
+        "Intended Audience :: End Users/Desktop",
+        "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3 :: Only",
@@ -92,17 +96,22 @@ setup(
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
         "Topic :: Multimedia :: Sound/Audio",
+        "Topic :: Multimedia :: Video",
     ],
-    keywords="tidal music downloader cli gui",
+    keywords="tidal music downloader cli gui lossless atmos",
     python_requires=">=3.10",
-    install_requires=["aigpy>=2022.7.8.1",
-                      "requests>=2.22.0",
-                      "pycryptodome",
-                      "pydub",
-                      "prettytable",
-                      "lxml"],
+    # Keep pins aligned with requirements.txt (single source of intent).
+    install_requires=[
+        "aigpy>=2022.7.8.1",
+        "requests>=2.34.2",
+        "pycryptodome",
+        "pydub",
+        "prettytable>=3.10.0",
+        "lxml>=6.1.1",
+    ],
     extras_require={
         "gui": ["PySide6>=6.5"],
+        "dev": ["ruff>=0.8.0"],
     },
     entry_points={'console_scripts': [
         'tidekeeper = tidal_dl:main',

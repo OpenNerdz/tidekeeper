@@ -2,3 +2,31 @@
 requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# Packaging metadata lives in setup.py (version, entry points, long description).
+# Ruff is configured here for a small, high-signal CI gate — not a full style rewrite.
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["tidal_dl", "tests"]
+extend-exclude = [
+    "build",
+    "dist",
+    "exe",
+    "*.egg-info",
+    "gui-screenshots",
+]
+
+[tool.ruff.lint]
+# Fail CI on real defects only; broader cleanup can be adopted gradually.
+select = [
+    "E9",   # runtime syntax errors
+    "F63",  # invalid print/star-expression usage
+    "F7",   # syntax errors in statements
+    "F82",  # undefined names
+    "E722", # bare except
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = []
+

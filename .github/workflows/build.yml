@@ -29,7 +29,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: TIDALDL-PY/requirements.txt
+          cache-dependency-path: |
+            TIDALDL-PY/requirements.txt
+            TIDALDL-PY/setup.py
+            TIDALDL-PY/pyproject.toml
 
       - name: Install dependencies
         shell: bash

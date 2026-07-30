@@ -51,7 +51,11 @@ def __checkFfmpeg__():
     path = shutil.which("ffmpeg")
     if path:
         return "OK", "ffmpeg", path
-    return "WARN", "ffmpeg", "not found; video handling or tagging may be limited"
+    return (
+        "WARN",
+        "ffmpeg",
+        "not found; install ffmpeg for video downloads and optional FLAC remux",
+    )
 
 
 def __checkToken__():

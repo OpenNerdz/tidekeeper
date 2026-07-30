@@ -9,18 +9,32 @@ is `tidekeeper`; `tidal-dl` remains available for compatibility.
 
 [![CI](https://github.com/OpenNerdz/tidekeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenNerdz/tidekeeper/actions/workflows/ci.yml)
 [![Build](https://github.com/OpenNerdz/tidekeeper/actions/workflows/build.yml/badge.svg)](https://github.com/OpenNerdz/tidekeeper/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/OpenNerdz/tidekeeper?display_name=tag)](https://github.com/OpenNerdz/tidekeeper/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/downloads/)
 
 ## Install
 
-Tidekeeper requires Python 3.10 or newer.
+Tidekeeper requires **Python 3.10 or newer**.
+
+**ffmpeg is recommended** for video downloads and optional FLAC remux
+(`tidekeeper --doctor` reports whether it is available).
+
+### From Git (recommended)
 
 ```bash
-python -m pip install "git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
-tidekeeper
+python -m pip install -U "git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
+tidekeeper --help
 ```
 
-Linux and Termux users can use the installer:
+GUI extras:
+
+```bash
+python -m pip install -U "tidekeeper[gui] @ git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
+tidekeeper-gui
+```
+
+### One-line installer (Linux / Termux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OpenNerdz/tidekeeper/main/install.sh | bash
@@ -32,10 +46,15 @@ For Android shared storage, run `termux-setup-storage` and optionally set:
 export TIDEKEEPER_DOWNLOAD_PATH="/storage/emulated/0/Download/Tidekeeper"
 ```
 
+### Prebuilt binaries
+
+Terminal and desktop GUI executables for Windows, macOS, and Linux are attached
+to each [GitHub Release](https://github.com/OpenNerdz/tidekeeper/releases).
+
 ### Docker
 
 Build the image from the repository, then persist account configuration and
-downloads with bind mounts:
+downloads with bind mounts. The image includes **ffmpeg**.
 
 ```bash
 docker build -t tidekeeper .
@@ -110,14 +129,10 @@ Custom filename formats are supported:
 
 ## Desktop GUI
 
-```bash
-python -m pip install "tidekeeper[gui] @ git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
-tidekeeper-gui
-```
-
 The GUI provides login, search, queueing, downloads, settings, diagnostics, and
-updates. It is also available through `tidekeeper --gui`; update GUI installs
-with `tidekeeper --update-gui`.
+updates. After installing with the GUI extra above, launch it with
+`tidekeeper-gui` or `tidekeeper --gui`. Update GUI installs with
+`tidekeeper --update-gui`.
 
 | Search | Queue |
 | --- | --- |
@@ -129,8 +144,19 @@ with `tidekeeper --update-gui`.
 
 ## Troubleshooting
 
+Run diagnostics first:
+
+```bash
+tidekeeper --doctor
+tidekeeper --paths
+```
+
 For repeated HTTP 429 errors, keep **Use request delay** enabled and raise
 **Request delay seconds** to `30` or `60` before retrying.
+
+If doctor warns that **ffmpeg** is missing, install it from your OS package
+manager (or use the Docker image). Video downloads and FLAC remux may otherwise
+be limited.
 
 If Termux reports `cannot locate symbol "x265_api_get_216"`, refresh its media
 packages with `pkg upgrade -y && pkg reinstall -y ffmpeg x265`. If that fails,
