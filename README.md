@@ -9,6 +9,7 @@ is `tidekeeper`; `tidal-dl` remains available for compatibility.
 
 [![CI](https://github.com/OpenNerdz/tidekeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenNerdz/tidekeeper/actions/workflows/ci.yml)
 [![Build](https://github.com/OpenNerdz/tidekeeper/actions/workflows/build.yml/badge.svg)](https://github.com/OpenNerdz/tidekeeper/actions/workflows/build.yml)
+[![PyPI](https://img.shields.io/pypi/v/tidekeeper.svg)](https://pypi.org/project/tidekeeper/)
 [![Release](https://img.shields.io/github/v/release/OpenNerdz/tidekeeper?display_name=tag)](https://github.com/OpenNerdz/tidekeeper/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/downloads/)
@@ -20,18 +21,25 @@ Tidekeeper requires **Python 3.10 or newer**.
 **ffmpeg is recommended** for video downloads and optional FLAC remux
 (`tidekeeper --doctor` reports whether it is available).
 
-### From Git (recommended)
+### From PyPI (recommended)
+
+```bash
+python -m pip install -U tidekeeper
+tidekeeper --help
+```
+
+Desktop GUI:
+
+```bash
+python -m pip install -U "tidekeeper[gui]"
+tidekeeper-gui
+```
+
+### From Git
 
 ```bash
 python -m pip install -U "git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
 tidekeeper --help
-```
-
-GUI extras:
-
-```bash
-python -m pip install -U "tidekeeper[gui] @ git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
-tidekeeper-gui
 ```
 
 ### One-line installer (Linux / Termux)

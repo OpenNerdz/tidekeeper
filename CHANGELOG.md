@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented and enabled first-party PyPI installs (`pip install tidekeeper`).
+- `tidekeeper --update` and the one-line installer now install from PyPI by default.
+
 ## 2026.7.30.0 - 2026-07-30
 
 ### Reliability and correctness

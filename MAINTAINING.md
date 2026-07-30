@@ -44,9 +44,10 @@ PyInstaller work) and `TIDALDL-PY/exe` (terminal and GUI executables).
 2. Move `CHANGELOG.md` entries from Unreleased into a new version section.
 3. Run the local development checks and the test suite.
 4. Push to `main` and confirm GitHub Actions CI passes.
-5. Confirm the GitHub `pypi` environment exists. For trusted publishing, register
-   this repository on PyPI as a trusted publisher for project `tidekeeper`:
-   workflow `.github/workflows/publish.yml`, environment `pypi`.
+5. Confirm the GitHub `pypi` environment exists and the `PYPI_API_TOKEN` repository
+   secret is set (PyPI API token with upload rights for project `tidekeeper`).
+   Optional: also register a trusted publisher on PyPI for OIDC fallback
+   (workflow `.github/workflows/publish.yml`, environment `pypi`).
 6. Tag the release and push the tag:
 
    ```bash
@@ -55,7 +56,7 @@ PyInstaller work) and `TIDALDL-PY/exe` (terminal and GUI executables).
    ```
 
    The Build workflow creates the GitHub release and attaches terminal and GUI
-   binaries for Windows, macOS, and Linux.
-7. Confirm the release's Publish workflow succeeds and the package appears on
-   PyPI. Only advertise `pip install tidekeeper` after the first successful
-   publication; until then, document Git install and release binaries.
+   binaries for Windows, macOS, and Linux. The Publish workflow uploads the sdist
+   and wheel to [PyPI](https://pypi.org/project/tidekeeper/).
+7. Confirm the release's Publish workflow succeeds and
+   `pip install -U tidekeeper` installs the new version.

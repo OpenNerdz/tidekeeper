@@ -88,10 +88,11 @@ package_source() {
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+    # Prefer a local checkout when running from a clone; otherwise install from PyPI.
     if [[ -f "$script_dir/$PACKAGE_SUBDIR/setup.py" ]]; then
         echo "$script_dir/$PACKAGE_SUBDIR"
     else
-        echo "git+$REPO_URL#subdirectory=$PACKAGE_SUBDIR"
+        echo "tidekeeper"
     fi
 }
 

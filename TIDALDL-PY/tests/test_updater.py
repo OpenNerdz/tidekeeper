@@ -7,14 +7,9 @@ from tidal_dl import updater
 
 class UpdaterTests(unittest.TestCase):
     def test_update_target_selects_terminal_or_gui_extra(self):
-        self.assertEqual(
-            updater.update_target(False),
-            "tidekeeper @ git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY",
-        )
-        self.assertEqual(
-            updater.update_target(True),
-            "tidekeeper[gui] @ git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY",
-        )
+        self.assertEqual(updater.update_target(False), "tidekeeper")
+        self.assertEqual(updater.update_target(True), "tidekeeper[gui]")
+
 
     def test_update_command_uses_current_python(self):
         command = updater.update_command(True)

@@ -43,3 +43,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: TIDALDL-PY/dist
+          # Prefer API token when set; otherwise fall back to OIDC trusted publishing.
+          password: ${{ secrets.PYPI_API_TOKEN }}

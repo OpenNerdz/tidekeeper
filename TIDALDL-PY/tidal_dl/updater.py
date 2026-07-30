@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 PROJECT_URL = "https://github.com/OpenNerdz/tidekeeper"
 RELEASES_URL = f"{PROJECT_URL}/releases/latest"
-PACKAGE_URL = "git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
+# Published on PyPI: https://pypi.org/project/tidekeeper/
+PACKAGE_NAME = "tidekeeper"
 
 
 @dataclass
@@ -37,8 +38,7 @@ def is_standalone_build() -> bool:
 
 
 def update_target(include_gui: bool = False) -> str:
-    package_name = "tidekeeper[gui]" if include_gui else "tidekeeper"
-    return f"{package_name} @ {PACKAGE_URL}"
+    return f"{PACKAGE_NAME}[gui]" if include_gui else PACKAGE_NAME
 
 
 def update_command(include_gui: bool = False) -> list[str]:
