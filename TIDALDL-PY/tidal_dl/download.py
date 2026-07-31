@@ -1123,12 +1123,9 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             Printf.err(f"DL Track '{title}' failed: {str(err)}{__downloadErrorHint__(err)}")
             return False, str(err)
 
-        # encrypted -> decrypt and remove encrypted file
-        try:
-            __encrypted__(stream, partPath, path)
-        except Exception:
-            # Keep partPath for a clean retry without re-fetching CDN bytes.
-            raise
+        # encrypted -> decrypt and remove encrypted file.
+        # On failure, the outer handler keeps a complete partPath for retry.
+        __encrypted__(stream, partPath, path)
         __removeDir__(partsDir)
         path = __exportFlacFromContainer__(path, stream)
 
