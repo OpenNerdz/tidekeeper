@@ -244,6 +244,12 @@ def __contentRangeStart__(response):
 
 
 def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chunkSize=DOWNLOAD_CHUNK_SIZE):
+    """Download one CDN URL to outputPath with HTTP Range resume.
+
+    Partial progress is kept in ``outputPath + '.download'`` until the transfer
+    finishes, then moved into place with ``os.replace`` so callers never see a
+    half-written final file.
+    """
     tempOutputPath = outputPath + ".download"
     progressInitialized = False
     lastError = None
@@ -255,14 +261,26 @@ def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chu
         try:
             response = __httpRequest__("GET", url, stream=True, allow_redirects=True, headers=headers)
             mode = "wb"
-            if resumeSize > 0 and response.status_code == 206 and __contentRangeStart__(response) == resumeSize:
-                mode = "ab"
-                if not progressInitialized:
-                    __addExistingProgress__(progress, userProgress, resumeSize)
-                    progressInitialized = True
-            elif resumeSize > 0:
-                __removeFile__(tempOutputPath)
-                resumeSize = 0
+            if resumeSize > 0:
+                rangeStart = __contentRangeStart__(response)
+                if response.status_code == 206 and rangeStart == resumeSize:
+                    mode = "ab"
+                    if not progressInitialized:
+                        __addExistingProgress__(progress, userProgress, resumeSize)
+                        progressInitialized = True
+                elif response.status_code == 200:
+                    # Server ignored Range and returned the full object; restart.
+                    __removeFile__(tempOutputPath)
+                    resumeSize = 0
+                    mode = "wb"
+                else:
+                    # Mismatched partial response: drop partial and re-GET fully.
+                    response.close()
+                    response = None
+                    __removeFile__(tempOutputPath)
+                    resumeSize = 0
+                    response = __httpRequest__("GET", url, stream=True, allow_redirects=True)
+                    mode = "wb"
 
             with open(tempOutputPath, mode) as output:
                 for chunk in response.iter_content(chunk_size=chunkSize):
@@ -288,6 +306,20 @@ def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chu
     raise lastError
 
 
+def __concatenateFiles__(partPaths, outputPath):
+    tempOutputPath = f"{outputPath}.tmp.{os.getpid()}"
+    __removeFile__(tempOutputPath)
+    try:
+        with open(tempOutputPath, "wb") as output:
+            for partPath in partPaths:
+                with open(partPath, "rb") as inputFile:
+                    shutil.copyfileobj(inputFile, output)
+        os.replace(tempOutputPath, outputPath)
+    except Exception:
+        __removeFile__(tempOutputPath)
+        raise
+
+
 def __downloadUrls__(
         urls,
         outputPath,
@@ -311,61 +343,44 @@ def __downloadUrls__(
         if showProgress:
             progress = aigpy.progress.ProgressTool(totalSize, 15, unit="B")
 
-    if len(urls) == 1 or threadNum <= 1:
+    if len(urls) == 1:
         try:
-            if len(urls) == 1:
-                __downloadSingleUrl__(urls[0], outputPath, progress, userProgress, chunkSize)
-                return True, ''
-
-            with open(tempOutputPath, "wb") as output:
-                for url in urls:
-                    response = __httpRequest__("GET", url, stream=True, allow_redirects=True)
-                    try:
-                        for chunk in response.iter_content(chunk_size=chunkSize):
-                            if not chunk:
-                                continue
-                            output.write(chunk)
-                            size = len(chunk)
-                            if progress is not None:
-                                progress.addCurCount(size)
-                            __addUserProgress__(userProgress, size)
-                    finally:
-                        response.close()
-            os.replace(tempOutputPath, outputPath)
+            __downloadSingleUrl__(urls[0], outputPath, progress, userProgress, chunkSize)
             return True, ''
         except Exception as e:
-            __removeFile__(tempOutputPath)
             return False, str(e)
 
+    # Multi-segment (DASH / HLS parts): download each segment with resume support,
+    # then concatenate in order. Parallel path still uses a temp parts dir.
     partsDir = tempOutputPath + '.parts'
     __removeDir__(partsDir)
     os.makedirs(partsDir, exist_ok=True)
     progressLock = Lock()
+    workers = 1 if threadNum <= 1 else min(threadNum, len(urls))
 
     try:
-        with ThreadPoolExecutor(max_workers=threadNum) as thread_pool:
-            futures = []
-            for index, url in enumerate(urls):
-                partPath = os.path.join(partsDir, f"{index:08d}.part")
-                futures.append(thread_pool.submit(
-                    __downloadUrlToPath__,
-                    url,
-                    partPath,
-                    progress,
-                    userProgress,
-                    progressLock,
-                    chunkSize,
-                ))
+        partPaths = [os.path.join(partsDir, f"{index:08d}.part") for index in range(len(urls))]
+        if workers == 1:
+            for url, partPath in zip(urls, partPaths):
+                __downloadSingleUrl__(url, partPath, progress, userProgress, chunkSize)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as thread_pool:
+                futures = [
+                    thread_pool.submit(
+                        __downloadUrlToPath__,
+                        url,
+                        partPath,
+                        progress,
+                        userProgress,
+                        progressLock,
+                        chunkSize,
+                    )
+                    for url, partPath in zip(urls, partPaths)
+                ]
+                for future in as_completed(futures):
+                    future.result()
 
-            for future in as_completed(futures):
-                future.result()
-
-        with open(tempOutputPath, "wb") as output:
-            for index in range(len(urls)):
-                partPath = os.path.join(partsDir, f"{index:08d}.part")
-                with open(partPath, "rb") as inputFile:
-                    shutil.copyfileobj(inputFile, output)
-        os.replace(tempOutputPath, outputPath)
+        __concatenateFiles__(partPaths, outputPath)
         return True, ''
     except Exception as e:
         __removeFile__(tempOutputPath)
@@ -860,6 +875,15 @@ def __ensureTrackStreamable__(track):
 
 
 def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, partSize=DEFAULT_PART_SIZE):
+    """Resolve stream → download CDN bytes → decrypt → tag.
+
+    Pipeline:
+      1. Quality priority + OpenAPI/playback fallback (``getStreamUrlByPriority``)
+      2. Skip if a complete file already exists (size vs remote Content-Length)
+      3. Download to ``path.part`` with Range resume / multi-segment concat
+      4. AES-CTR decrypt when encryptionKey is present (chunked, not whole-file)
+      5. Optional ffmpeg FLAC remux, lyrics sidecar, metadata tags
+    """
     title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
     partPath = ''
     try:
@@ -886,7 +910,9 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         logging.info("[DL Track] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.url)
 
         __ensureParentDir__(path)
-        __removeFile__(partPath)
+        # Keep any ``.part.download`` resume sidecar; only clear a stale final part.
+        if aigpy.file.getSize(partPath) > 0:
+            __removeFile__(partPath)
 
         check, err = __downloadUrls__(
             stream.urls,
@@ -897,6 +923,8 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             max(int(partSize), 64 * 1024),
         )
         if not check:
+            # Leave partial ``.download`` sidecars so a retry can resume; drop
+            # only a failed assembled part file.
             __removeFile__(partPath)
             __logFailedTrack__(track, album, playlist, err)
             Printf.err(f"DL Track '{title}' failed: {str(err)}{__downloadErrorHint__(err)}")

@@ -4,6 +4,7 @@
 
 - Documented and enabled first-party PyPI installs (`pip install tidekeeper`).
 - `tidekeeper --update` and the one-line installer now install from PyPI by default.
+- Hardened track CDN downloads: mismatched HTTP Range responses re-fetch fully instead of writing a truncated body; multi-segment sequential DASH/HLS parts use per-segment resume.
 
 ## 2026.7.30.0 - 2026-07-30
 
