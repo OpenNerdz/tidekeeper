@@ -193,10 +193,6 @@ class DownloadBackendTests(unittest.TestCase):
         (self.source / "001.bin").write_bytes(b"BBBBCCCC")
         output_file = self.root / "seg-resume.out"
 
-        # Pre-seed a partial second segment so sequential multi-url resume is exercised.
-        # Implementation uses a parts dir under a pid temp prefix; mock single-url
-        # path by downloading normally after a connection drop on segment 2 is awkward
-        # with the real HTTP server, so just verify full multi-url sequential integrity.
         ok, msg = download.__downloadUrls__([
             f"{self.base_url}/000.bin",
             f"{self.base_url}/001.bin",
@@ -204,6 +200,80 @@ class DownloadBackendTests(unittest.TestCase):
 
         self.assertTrue(ok, msg)
         self.assertEqual(output_file.read_bytes(), b"AAAABBBBCCCC")
+
+    def test_incomplete_size_verification_fails_download(self):
+        class FakeResponse:
+            status_code = 200
+            headers = {"Content-Length": "10"}
+
+            def iter_content(self, chunk_size):
+                yield b"short"
+
+            def close(self):
+                pass
+
+        output_file = self.root / "short.out"
+        with mock.patch.object(download, "__httpRequest__", return_value=FakeResponse()), \
+             mock.patch.object(download.time, "sleep"):
+            ok, msg = download.__downloadUrls__(
+                ["https://example.invalid/media.bin"],
+                str(output_file),
+                threadNum=1,
+                probeSize=False,
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("Incomplete", msg)
+        self.assertFalse(output_file.exists())
+
+    def test_reuses_complete_output_without_redownload(self):
+        output_file = self.root / "cached.out"
+        payload = b"already-downloaded-bytes"
+        output_file.write_bytes(payload)
+
+        with mock.patch.object(download, "__httpRequest__") as request, \
+             mock.patch.object(download, "__remoteSize__", return_value=len(payload)):
+            ok, msg = download.__downloadUrls__(
+                ["https://example.invalid/media.bin"],
+                str(output_file),
+                threadNum=1,
+                probeSize=True,
+            )
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(output_file.read_bytes(), payload)
+        request.assert_not_called()
+
+    def test_multi_url_failure_preserves_completed_segments(self):
+        (self.source / "000.bin").write_bytes(b"KEEPME")
+        output_file = self.root / "partial-join.out"
+        parts_dir = Path(str(output_file) + ".parts")
+
+        ok, msg = download.__downloadUrls__([
+            f"{self.base_url}/000.bin",
+            f"{self.base_url}/missing.bin",
+        ], str(output_file), threadNum=1, probeSize=False)
+
+        self.assertFalse(ok)
+        self.assertTrue(parts_dir.exists())
+        self.assertEqual((parts_dir / "00000000.part").read_bytes(), b"KEEPME")
+        self.assertFalse(output_file.exists())
+
+    def test_parallel_multi_url_uses_resumable_segments(self):
+        (self.source / "000.bin").write_bytes(b"one-")
+        (self.source / "001.bin").write_bytes(b"two-")
+        (self.source / "002.bin").write_bytes(b"three")
+        output_file = self.root / "parallel.out"
+
+        ok, msg = download.__downloadUrls__([
+            f"{self.base_url}/000.bin",
+            f"{self.base_url}/001.bin",
+            f"{self.base_url}/002.bin",
+        ], str(output_file), threadNum=3, probeSize=False)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(output_file.read_bytes(), b"one-two-three")
+        self.assertFalse(Path(str(output_file) + ".parts").exists())
 
     def test_flac_export_without_ffmpeg_falls_back_to_m4a_container(self):
         old_value = download.SETTINGS.saveAsFlac

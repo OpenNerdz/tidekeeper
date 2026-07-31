@@ -4,7 +4,14 @@
 
 - Documented and enabled first-party PyPI installs (`pip install tidekeeper`).
 - `tidekeeper --update` and the one-line installer now install from PyPI by default.
-- Hardened track CDN downloads: mismatched HTTP Range responses re-fetch fully instead of writing a truncated body; multi-segment sequential DASH/HLS parts use per-segment resume.
+- Hardened track CDN downloads for reliability and stability:
+  - Mismatched HTTP Range responses re-fetch fully instead of writing a truncated body.
+  - Multi-segment DASH/HLS parts use per-segment resume (sequential and parallel).
+  - Stable `.parts` directories keep finished segments across retries; fail-fast cancels sibling segment jobs.
+  - Post-download size verification against Content-Length / Content-Range totals.
+  - HEAD size probes fall back to a 1-byte ranged GET when CDNs reject HEAD.
+  - Complete assembled `.part` files are reused after decrypt failures (no redundant CDN re-fetch).
+  - Parallel segment workers share the resumable single-URL path with thread-safe progress.
 
 ## 2026.7.30.0 - 2026-07-30
 

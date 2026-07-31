@@ -149,12 +149,74 @@ def __httpRequest__(method, url, **kwargs):
     raise last_error
 
 
+def __parseIntHeader__(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def __contentRangeStart__(response):
+    contentRange = response.headers.get("Content-Range", "")
+    if not contentRange.lower().startswith("bytes "):
+        return None
+    try:
+        return int(contentRange.split(" ", 1)[1].split("-", 1)[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def __contentTotalSize__(response):
+    """Best-effort total object size from Content-Range or Content-Length."""
+    if response is None:
+        return -1
+    contentRange = response.headers.get("Content-Range", "")
+    if contentRange.lower().startswith("bytes ") and "/" in contentRange:
+        total = contentRange.rsplit("/", 1)[-1].strip()
+        if total != "*":
+            size = __parseIntHeader__(total)
+            if size > 0:
+                return size
+    if response.status_code == 200:
+        size = __parseIntHeader__(response.headers.get("Content-Length"))
+        if size > 0:
+            return size
+    return -1
+
+
 def __contentLength__(url):
+    """Probe remote size via HEAD, falling back to a 1-byte Range GET."""
     try:
         response = __httpRequest__("HEAD", url, allow_redirects=True)
-        response.close()
-        length = response.headers.get("Content-Length")
-        return int(length) if length is not None else -1
+        try:
+            size = __parseIntHeader__(response.headers.get("Content-Length"))
+            if size > 0:
+                return size
+            size = __contentTotalSize__(response)
+            if size > 0:
+                return size
+        finally:
+            response.close()
+    except Exception:
+        pass
+
+    # Some CDNs reject HEAD; a tiny ranged GET still exposes total size.
+    try:
+        response = __httpRequest__(
+            "GET",
+            url,
+            allow_redirects=True,
+            stream=True,
+            headers={"Range": "bytes=0-0"},
+        )
+        try:
+            size = __contentTotalSize__(response)
+            if size > 0:
+                return size
+            size = __parseIntHeader__(response.headers.get("Content-Length"))
+            return size if size > 0 else -1
+        finally:
+            response.close()
     except Exception:
         return -1
 
@@ -180,6 +242,46 @@ def __remoteSize__(urls):
     return total
 
 
+def __localFileSize__(path):
+    return aigpy.file.getSize(path) if path else 0
+
+
+def __isCompleteLocalFile__(path, expectedSize=-1):
+    """True when ``path`` is a finished object.
+
+    If ``expectedSize`` is known, require an exact match. If unknown, only treat
+    the file as finished when there is no ``.download`` resume sidecar (used for
+    multi-segment parts that already completed in a prior attempt).
+    """
+    size = __localFileSize__(path)
+    if size <= 0:
+        return False
+    # A leftover .download sidecar means the last transfer did not finish cleanly.
+    if __localFileSize__(path + ".download") > 0:
+        return False
+    if expectedSize > 0:
+        return size == expectedSize
+    return True
+
+
+def __isReusableAssembledFile__(path, expectedSize=-1):
+    """Stricter check for assembled outputs: never skip when size is unknown."""
+    if expectedSize is None or expectedSize <= 0:
+        return False
+    return __isCompleteLocalFile__(path, expectedSize)
+
+
+def __verifyLocalSize__(path, expectedSize, label="download"):
+    if expectedSize is None or expectedSize <= 0:
+        return __localFileSize__(path)
+    actual = __localFileSize__(path)
+    if actual != expectedSize:
+        raise IOError(
+            f"Incomplete {label}: got {actual} bytes, expected {expectedSize}"
+        )
+    return actual
+
+
 def __setUserProgressMax__(userProgress, size):
     if userProgress is None or size <= 0:
         return
@@ -189,41 +291,30 @@ def __setUserProgressMax__(userProgress, size):
         pass
 
 
-def __addUserProgress__(userProgress, size):
+def __addUserProgress__(userProgress, size, progressLock=None):
     if userProgress is None or size <= 0:
         return
     try:
-        userProgress.addCurNum(size)
+        if progressLock is not None:
+            with progressLock:
+                userProgress.addCurNum(size)
+        else:
+            userProgress.addCurNum(size)
     except Exception:
         pass
 
 
-def __downloadUrlToPath__(url, path, progress=None, userProgress=None, progressLock=None, chunkSize=DOWNLOAD_CHUNK_SIZE):
-    tempPath = path + '.part'
-    __removeFile__(tempPath)
-    response = __httpRequest__("GET", url, stream=True, allow_redirects=True)
-    try:
-        with open(tempPath, "wb") as output:
-            for chunk in response.iter_content(chunk_size=chunkSize):
-                if not chunk:
-                    continue
-                output.write(chunk)
-                size = len(chunk)
-                if progress is not None:
-                    progress.addCurCount(size)
-                if progressLock is not None:
-                    with progressLock:
-                        __addUserProgress__(userProgress, size)
-                else:
-                    __addUserProgress__(userProgress, size)
-        os.replace(tempPath, path)
-    finally:
-        response.close()
-        __removeFile__(tempPath)
-
-
-def __addExistingProgress__(progress, userProgress, size):
+def __addExistingProgress__(progress, userProgress, size, progressLock=None):
     if size <= 0:
+        return
+    if progressLock is not None:
+        with progressLock:
+            if progress is not None:
+                try:
+                    progress.addCurCount(size)
+                except Exception:
+                    pass
+            __addUserProgress__(userProgress, size)
         return
     if progress is not None:
         try:
@@ -233,29 +324,68 @@ def __addExistingProgress__(progress, userProgress, size):
     __addUserProgress__(userProgress, size)
 
 
-def __contentRangeStart__(response):
-    contentRange = response.headers.get("Content-Range", "")
-    if not contentRange.lower().startswith("bytes "):
-        return None
-    try:
-        return int(contentRange.split(" ", 1)[1].split("-", 1)[0])
-    except (IndexError, ValueError):
-        return None
+def __noteProgress__(progress, userProgress, size, progressLock=None):
+    if size <= 0:
+        return
+    if progressLock is not None:
+        with progressLock:
+            if progress is not None:
+                try:
+                    progress.addCurCount(size)
+                except Exception:
+                    pass
+            __addUserProgress__(userProgress, size)
+        return
+    if progress is not None:
+        try:
+            progress.addCurCount(size)
+        except Exception:
+            pass
+    __addUserProgress__(userProgress, size)
 
 
-def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chunkSize=DOWNLOAD_CHUNK_SIZE):
+def __downloadSingleUrl__(
+        url,
+        outputPath,
+        progress=None,
+        userProgress=None,
+        chunkSize=DOWNLOAD_CHUNK_SIZE,
+        progressLock=None,
+        expectedSize=-1,
+        allowUnknownSizeReuse=False):
     """Download one CDN URL to outputPath with HTTP Range resume.
 
     Partial progress is kept in ``outputPath + '.download'`` until the transfer
     finishes, then moved into place with ``os.replace`` so callers never see a
-    half-written final file.
+    half-written final file. When ``expectedSize`` or response headers expose a
+    total size, the finished file is verified before it is promoted.
     """
+    # When expectedSize is known, require an exact match. Multi-segment parts may
+    # also reuse a finished object when size is unknown (prior successful segment
+    # write). Top-level single-URL downloads must not skip just because a local
+    # file exists — that path might be an unrelated leftover.
+    if expectedSize > 0:
+        reusable = __isCompleteLocalFile__(outputPath, expectedSize)
+    elif allowUnknownSizeReuse:
+        reusable = (
+            __localFileSize__(outputPath) > 0
+            and __localFileSize__(outputPath + ".download") <= 0
+        )
+    else:
+        reusable = False
+    if reusable:
+        __addExistingProgress__(
+            progress, userProgress, __localFileSize__(outputPath), progressLock
+        )
+        return __localFileSize__(outputPath)
+
     tempOutputPath = outputPath + ".download"
     progressInitialized = False
     lastError = None
+    knownTotal = expectedSize if expectedSize and expectedSize > 0 else -1
 
     for attempt in range(DOWNLOAD_RETRIES):
-        resumeSize = aigpy.file.getSize(tempOutputPath)
+        resumeSize = __localFileSize__(tempOutputPath)
         headers = {"Range": f"bytes={resumeSize}-"} if resumeSize > 0 else {}
         response = None
         try:
@@ -266,7 +396,7 @@ def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chu
                 if response.status_code == 206 and rangeStart == resumeSize:
                     mode = "ab"
                     if not progressInitialized:
-                        __addExistingProgress__(progress, userProgress, resumeSize)
+                        __addExistingProgress__(progress, userProgress, resumeSize, progressLock)
                         progressInitialized = True
                 elif response.status_code == 200:
                     # Server ignored Range and returned the full object; restart.
@@ -282,19 +412,25 @@ def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chu
                     response = __httpRequest__("GET", url, stream=True, allow_redirects=True)
                     mode = "wb"
 
+            responseTotal = __contentTotalSize__(response)
+            if responseTotal > 0:
+                knownTotal = responseTotal
+            elif response.status_code == 200:
+                contentLength = __parseIntHeader__(response.headers.get("Content-Length"))
+                if contentLength > 0:
+                    knownTotal = contentLength
+
             with open(tempOutputPath, mode) as output:
                 for chunk in response.iter_content(chunk_size=chunkSize):
                     if not chunk:
                         continue
                     output.write(chunk)
-                    size = len(chunk)
-                    if progress is not None:
-                        progress.addCurCount(size)
-                    __addUserProgress__(userProgress, size)
+                    __noteProgress__(progress, userProgress, len(chunk), progressLock)
 
+            __verifyLocalSize__(tempOutputPath, knownTotal, label="CDN object")
             os.replace(tempOutputPath, outputPath)
-            return
-        except (requests.RequestException, OSError) as error:
+            return __localFileSize__(outputPath)
+        except (requests.RequestException, OSError, IOError) as error:
             lastError = error
             if attempt >= DOWNLOAD_RETRIES - 1:
                 raise
@@ -306,7 +442,7 @@ def __downloadSingleUrl__(url, outputPath, progress=None, userProgress=None, chu
     raise lastError
 
 
-def __concatenateFiles__(partPaths, outputPath):
+def __concatenateFiles__(partPaths, outputPath, expectedSize=-1):
     tempOutputPath = f"{outputPath}.tmp.{os.getpid()}"
     __removeFile__(tempOutputPath)
     try:
@@ -314,10 +450,36 @@ def __concatenateFiles__(partPaths, outputPath):
             for partPath in partPaths:
                 with open(partPath, "rb") as inputFile:
                     shutil.copyfileobj(inputFile, output)
+        __verifyLocalSize__(tempOutputPath, expectedSize, label="assembled media")
         os.replace(tempOutputPath, outputPath)
     except Exception:
         __removeFile__(tempOutputPath)
         raise
+
+
+def __partsDirectory__(outputPath):
+    # Stable across retries so multi-segment DASH can resume after a failure.
+    return f"{outputPath}.parts"
+
+
+def __downloadSegment__(
+        url,
+        partPath,
+        progress=None,
+        userProgress=None,
+        progressLock=None,
+        chunkSize=DOWNLOAD_CHUNK_SIZE,
+        expectedSize=-1):
+    return __downloadSingleUrl__(
+        url,
+        partPath,
+        progress=progress,
+        userProgress=userProgress,
+        chunkSize=chunkSize,
+        progressLock=progressLock,
+        expectedSize=expectedSize,
+        allowUnknownSizeReuse=True,
+    )
 
 
 def __downloadUrls__(
@@ -333,8 +495,6 @@ def __downloadUrls__(
         return False, "URL list is empty."
 
     __ensureParentDir__(outputPath)
-    tempOutputPath = f"{outputPath}.tmp.{os.getpid()}"
-    __removeFile__(tempOutputPath)
 
     totalSize = __remoteSize__(urls) if probeSize else -1
     progress = None
@@ -343,57 +503,83 @@ def __downloadUrls__(
         if showProgress:
             progress = aigpy.progress.ProgressTool(totalSize, 15, unit="B")
 
+    # Already-complete assembled file (e.g. decrypt failed after CDN success).
+    # Only reuse when the remote size is known and matches — never skip a
+    # download solely because a local file happens to exist.
+    if __isReusableAssembledFile__(outputPath, totalSize):
+        __addExistingProgress__(progress, userProgress, __localFileSize__(outputPath))
+        __removeDir__(__partsDirectory__(outputPath))
+        return True, ''
+
     if len(urls) == 1:
         try:
-            __downloadSingleUrl__(urls[0], outputPath, progress, userProgress, chunkSize)
+            __downloadSingleUrl__(
+                urls[0],
+                outputPath,
+                progress,
+                userProgress,
+                chunkSize,
+                expectedSize=totalSize,
+            )
             return True, ''
         except Exception as e:
             return False, str(e)
 
-    # Multi-segment (DASH / HLS parts): download each segment with resume support,
-    # then concatenate in order. Parallel path still uses a temp parts dir.
-    partsDir = tempOutputPath + '.parts'
-    __removeDir__(partsDir)
+    # Multi-segment (DASH / HLS): resumeable per-segment downloads, ordered concat.
+    partsDir = __partsDirectory__(outputPath)
     os.makedirs(partsDir, exist_ok=True)
     progressLock = Lock()
     workers = 1 if threadNum <= 1 else min(threadNum, len(urls))
+    partPaths = [os.path.join(partsDir, f"{index:08d}.part") for index in range(len(urls))]
 
     try:
-        partPaths = [os.path.join(partsDir, f"{index:08d}.part") for index in range(len(urls))]
         if workers == 1:
             for url, partPath in zip(urls, partPaths):
-                __downloadSingleUrl__(url, partPath, progress, userProgress, chunkSize)
+                __downloadSegment__(
+                    url,
+                    partPath,
+                    progress,
+                    userProgress,
+                    None,
+                    chunkSize,
+                )
         else:
             with ThreadPoolExecutor(max_workers=workers) as thread_pool:
-                futures = [
+                futures = {
                     thread_pool.submit(
-                        __downloadUrlToPath__,
+                        __downloadSegment__,
                         url,
                         partPath,
                         progress,
                         userProgress,
                         progressLock,
                         chunkSize,
-                    )
-                    for url, partPath in zip(urls, partPaths)
-                ]
-                for future in as_completed(futures):
-                    future.result()
+                    ): index
+                    for index, (url, partPath) in enumerate(zip(urls, partPaths))
+                }
+                try:
+                    for future in as_completed(futures):
+                        future.result()
+                except Exception:
+                    for pending in futures:
+                        pending.cancel()
+                    raise
 
-        __concatenateFiles__(partPaths, outputPath)
+        __concatenateFiles__(partPaths, outputPath, expectedSize=totalSize)
+        __removeDir__(partsDir)
         return True, ''
     except Exception as e:
-        __removeFile__(tempOutputPath)
+        # Keep complete segments under outputPath.parts for the next attempt.
         return False, str(e)
-    finally:
-        __removeDir__(partsDir)
 
 
 def __isSkip__(finalpath, urls):
     if not SETTINGS.checkExist:
         return False
-    curSize = aigpy.file.getSize(finalpath)
+    curSize = __localFileSize__(finalpath)
     if curSize <= 0:
+        return False
+    if __localFileSize__(finalpath + ".download") > 0:
         return False
     netSize = __remoteSize__(urls)
     if netSize <= 0:
@@ -411,6 +597,8 @@ def __downloadErrorHint__(err):
         return " (hint: this quality may be unavailable to this app for your account; set a fallback order, e.g. --quality-priority Max,HiFi,High,Normal)"
     if any(item in text for item in ("403", "entitled", "not allowed", "client_not_entitled")):
         return " (hint: stream may be unavailable for this account or quality; try a lower quality/fallback order)"
+    if "incomplete" in text and "expected" in text:
+        return " (hint: retry the download; a partial transfer was discarded after size verification failed)"
     if any(item in text for item in ("timeout", "connection", "network", "name or service not known")):
         return " (hint: check network/VPN/proxy/firewall, or run tidekeeper --doctor)"
     if any(item in text for item in ("permission", "denied", "access is denied", "readonly")):
@@ -891,6 +1079,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         stream = __getTrackStream__(track.id)
         path = getTrackPath(track, stream, album, playlist)
         partPath = path + '.part'
+        partsDir = __partsDirectory__(partPath)
 
         if SETTINGS.showTrackInfo and not SETTINGS.multiThread:
             Printf.track(track, stream)
@@ -910,28 +1099,37 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         logging.info("[DL Track] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.url)
 
         __ensureParentDir__(path)
-        # Keep any ``.part.download`` resume sidecar; only clear a stale final part.
-        if aigpy.file.getSize(partPath) > 0:
-            __removeFile__(partPath)
 
-        check, err = __downloadUrls__(
-            stream.urls,
-            partPath,
-            SETTINGS.showProgress and not SETTINGS.multiThread,
-            userProgress,
-            TRACK_THREAD_COUNT if SETTINGS.multiThread else 1,
-            max(int(partSize), 64 * 1024),
-        )
+        # Reuse a complete assembled part from a previous attempt (e.g. decrypt
+        # failed after a successful CDN transfer). Otherwise download/resume.
+        expectedSize = __remoteSize__(stream.urls)
+        if __isReusableAssembledFile__(partPath, expectedSize):
+            check, err = True, ''
+        else:
+            # Incomplete assembled part is not useful; resume lives in sidecars /
+            # outputPath.parts instead.
+            if __localFileSize__(partPath) > 0 and not __isReusableAssembledFile__(partPath, expectedSize):
+                __removeFile__(partPath)
+            check, err = __downloadUrls__(
+                stream.urls,
+                partPath,
+                SETTINGS.showProgress and not SETTINGS.multiThread,
+                userProgress,
+                TRACK_THREAD_COUNT if SETTINGS.multiThread else 1,
+                max(int(partSize), 64 * 1024),
+            )
         if not check:
-            # Leave partial ``.download`` sidecars so a retry can resume; drop
-            # only a failed assembled part file.
-            __removeFile__(partPath)
             __logFailedTrack__(track, album, playlist, err)
             Printf.err(f"DL Track '{title}' failed: {str(err)}{__downloadErrorHint__(err)}")
             return False, str(err)
 
         # encrypted -> decrypt and remove encrypted file
-        __encrypted__(stream, partPath, path)
+        try:
+            __encrypted__(stream, partPath, path)
+        except Exception:
+            # Keep partPath for a clean retry without re-fetching CDN bytes.
+            raise
+        __removeDir__(partsDir)
         path = __exportFlacFromContainer__(path, stream)
 
         # contributors
@@ -951,7 +1149,9 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         return True, ''
     except Exception as e:
-        __removeFile__(partPath)
+        # Preserve complete/partial transfer state for resume; only drop empty parts.
+        if partPath and __localFileSize__(partPath) <= 0:
+            __removeFile__(partPath)
         __logFailedTrack__(track, album, playlist, e)
         Printf.err(f"DL Track '{title}' failed: {str(e)}{__downloadErrorHint__(e)}")
         return False, str(e)

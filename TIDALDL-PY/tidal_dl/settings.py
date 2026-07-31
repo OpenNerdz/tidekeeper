@@ -201,20 +201,29 @@ class TokenSettings(aigpy.model.ModelBase):
             data = json.loads(self.__decode__(txt))
             aigpy.model.dictToModel(data, self)
 
+    def __ensurePath__(self):
+        if getattr(self, '_path_', None):
+            return self._path_
+        # Allow save() after programmatic login without a prior read().
+        from .paths import PATHS
+        self._path_ = PATHS.getTokenPath()
+        return self._path_
+
     def save(self):
+        path = self.__ensurePath__()
         data = aigpy.model.modelToDict(self)
         txt = json.dumps(data)
         encoded = self.__encode__(txt)
-        parent = os.path.dirname(os.path.abspath(self._path_))
+        parent = os.path.dirname(os.path.abspath(path))
         if parent:
             os.makedirs(parent, exist_ok=True)
-        fd = os.open(self._path_, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             with os.fdopen(fd, 'wb') as output:
                 output.write(encoded)
         finally:
             try:
-                os.chmod(self._path_, 0o600)
+                os.chmod(path, 0o600)
             except OSError:
                 pass
 
