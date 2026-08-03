@@ -91,7 +91,11 @@ tidekeeper -l "https://tidal.com/browse/track/70973230"
 tidekeeper --video-only -l "https://tidal.com/browse/artist/123456"
 ```
 
-Dolby Atmos downloads are opt-in with `tidekeeper -q Atmos`.
+Dolby Atmos downloads are opt-in with `tidekeeper -q Atmos` (or GUI audio quality
+**Atmos**). TIDAL keeps Atmos mixes on separate catalog IDs that often report
+quality `LOW` with an Atmos flag — search now labels those rows clearly, and
+when Atmos quality is selected Tidekeeper will switch a stereo album/track pick
+to the matching Atmos catalog release when one exists.
 
 Failed downloads are saved to `failed-tracks.txt` in the download folder and can
 be retried with:

@@ -16,9 +16,11 @@ import shutil
 
 from . import apiKey as apiKey
 
+from .enums import Type
 from .model import *
 from .paths import *
 from .settings import *
+from .tidal import TIDAL_API
 from .environment import isTermux
 from .lang.language import *
 
@@ -292,6 +294,9 @@ class Printf(object):
 
     @staticmethod
     def album(data: Album):
+        modes = getattr(data, "audioModes", None) or []
+        modes_label = ", ".join(str(mode) for mode in modes) if modes else ""
+        flag = TIDAL_API.getFlag(data, Type.Album, short=False)
         tb = Printf.__gettable__([LANG.select.MODEL_ALBUM_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_TITLE, data.title],
             ["ID", data.id],
@@ -300,6 +305,9 @@ class Printf(object):
             [LANG.select.MODEL_RELEASE_DATE, data.releaseDate],
             [LANG.select.MODEL_VERSION, data.version],
             [LANG.select.MODEL_EXPLICIT, data.explicit],
+            ["Max-Q", getattr(data, "audioQuality", None)],
+            ["Audio modes", modes_label or None],
+            ["Flags", flag or None],
         ])
         print(tb)
         logging.info("====album " + str(data.id) + "====\n" +

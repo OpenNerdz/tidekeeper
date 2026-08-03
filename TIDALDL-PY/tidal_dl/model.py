@@ -92,6 +92,8 @@ class Track(aigpy.model.ModelBase):
         self.isrc = None
         self.explicit = False
         self.audioQuality = None
+        # TIDAL search/catalog payloads include audioModes (e.g. STEREO / DOLBY_ATMOS).
+        self.audioModes = None
         self.copyRight = None
         self.artist = Artist()
         self.artists = Artist()

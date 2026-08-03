@@ -1174,6 +1174,10 @@ class TidalAPI(object):
             if getattr(item, 'name', None)
         )
 
+    def __hasAtmosMode__(self, data) -> bool:
+        modes = getattr(data, "audioModes", None) or []
+        return any(str(mode).upper() == "DOLBY_ATMOS" for mode in modes)
+
     def getFlag(self, data, type: Type, short=True, separator=" / "):
         master = False
         atmos = False
@@ -1181,7 +1185,8 @@ class TidalAPI(object):
         if type == Type.Album or type == Type.Track:
             if data.audioQuality == "HI_RES":
                 master = True
-            if type == Type.Album and "DOLBY_ATMOS" in (data.audioModes or []):
+            # Atmos catalog rows often report audioQuality=LOW; audioModes is the real signal.
+            if self.__hasAtmosMode__(data):
                 atmos = True
             if data.explicit is True:
                 explicit = True
@@ -1198,6 +1203,113 @@ class TidalAPI(object):
         if explicit:
             array.append("E" if short else "Explicit")
         return separator.join(array)
+
+    def __normalizeCatalogTitle__(self, title) -> str:
+        text = (title or "").strip().lower()
+        return " ".join(text.split())
+
+    def findAtmosAlbumVariant(self, album: Album):
+        """Return a Dolby Atmos catalog twin for a stereo album, or the album itself.
+
+        TIDAL keeps Atmos mixes as separate album/track IDs. Search often ranks the
+        stereo LOSSLESS release first; the Atmos release usually has audioQuality=LOW
+        and audioModes containing DOLBY_ATMOS.
+        """
+        if album is None:
+            return None
+        if self.__hasAtmosMode__(album):
+            return album
+
+        artist_id = None
+        artist = getattr(album, "artist", None)
+        if artist is not None and getattr(artist, "id", None) is not None:
+            artist_id = artist.id
+        if artist_id is None:
+            for item in self.__artistList__(getattr(album, "artists", None)):
+                if getattr(item, "id", None) is not None:
+                    artist_id = item.id
+                    break
+        if artist_id is None:
+            return None
+
+        target_title = self.__normalizeCatalogTitle__(getattr(album, "title", None))
+        if not target_title:
+            return None
+
+        try:
+            candidates = self.getArtistAlbums(artist_id, includeEP=True) or []
+        except Exception as e:
+            logging.info("Unable to look up Atmos album variant for album %s: %s", getattr(album, "id", ""), e)
+            return None
+
+        matches = []
+        for candidate in candidates:
+            if not self.__hasAtmosMode__(candidate):
+                continue
+            if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) != target_title:
+                continue
+            matches.append(candidate)
+        if not matches:
+            return None
+
+        def score(candidate):
+            track_delta = abs(
+                int(getattr(candidate, "numberOfTracks", 0) or 0)
+                - int(getattr(album, "numberOfTracks", 0) or 0)
+            )
+            same_explicit = int(bool(getattr(candidate, "explicit", False)) != bool(getattr(album, "explicit", False)))
+            return (track_delta, same_explicit, str(getattr(candidate, "id", "")))
+
+        best = sorted(matches, key=score)[0]
+        if str(getattr(best, "id", "")) == str(getattr(album, "id", "")):
+            return album
+        return best
+
+    def findAtmosTrackVariant(self, track: Track):
+        """Return a Dolby Atmos catalog twin for a stereo track when available."""
+        if track is None:
+            return None
+        if self.__hasAtmosMode__(track):
+            return track
+
+        album_ref = getattr(track, "album", None)
+        album_id = getattr(album_ref, "id", None) if album_ref is not None else None
+        if album_id is None:
+            return None
+
+        try:
+            album = self.getAlbum(album_id)
+        except Exception as e:
+            logging.info("Unable to load album %s for Atmos track variant: %s", album_id, e)
+            return None
+
+        atmos_album = self.findAtmosAlbumVariant(album)
+        if atmos_album is None or str(getattr(atmos_album, "id", "")) == str(album_id):
+            return None
+
+        try:
+            atmos_tracks, _ = self.getItems(atmos_album.id, Type.Album)
+        except Exception as e:
+            logging.info("Unable to list Atmos album %s tracks: %s", getattr(atmos_album, "id", ""), e)
+            return None
+
+        target_title = self.__normalizeCatalogTitle__(getattr(track, "title", None))
+        target_isrc = (getattr(track, "isrc", None) or "").strip().upper()
+        target_number = getattr(track, "trackNumber", None)
+        target_volume = getattr(track, "volumeNumber", None)
+
+        for candidate in atmos_tracks or []:
+            if target_isrc and (getattr(candidate, "isrc", None) or "").strip().upper() == target_isrc:
+                return candidate
+        for candidate in atmos_tracks or []:
+            if target_number is not None and getattr(candidate, "trackNumber", None) == target_number:
+                if target_volume is None or getattr(candidate, "volumeNumber", None) == target_volume:
+                    if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
+                        return candidate
+        for candidate in atmos_tracks or []:
+            if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
+                return candidate
+        return None
 
     def parseUrl(self, url):
         if "tidal.com" not in url:
