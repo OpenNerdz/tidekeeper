@@ -1055,6 +1055,40 @@ def __getTrackStream__(track_id):
     return TIDAL_API.getStreamUrlByPriority(track_id, priority)
 
 
+def __wantsAtmosDownload__():
+    return any(quality == AudioQuality.Atmos for quality in SETTINGS.getDownloadAudioQualityPriority())
+
+
+def __resolveTrackForAtmosDownload__(track: Track, album=None):
+    """Swap stereo catalog IDs for Atmos twins when Atmos quality is requested.
+
+    Covers album, track, playlist, and mix paths — not only start_track().
+    """
+    if track is None or not __wantsAtmosDownload__():
+        return track, album
+    if TIDAL_API.__hasAtmosMode__(track):
+        return track, album
+
+    atmos = TIDAL_API.findAtmosTrackVariant(track)
+    if atmos is None or str(getattr(atmos, 'id', '')) == str(getattr(track, 'id', '')):
+        return track, album
+
+    Printf.info(
+        f"Using Dolby Atmos track {atmos.id} "
+        f"(stereo catalog id was {track.id})."
+    )
+
+    atmos_album = album
+    atmos_album_id = getattr(getattr(atmos, 'album', None), 'id', None)
+    album_id = getattr(album, 'id', None) if album is not None else None
+    if atmos_album_id is not None and str(atmos_album_id) != str(album_id or ''):
+        try:
+            atmos_album = TIDAL_API.getAlbum(atmos_album_id)
+        except Exception:
+            atmos_album = album
+    return atmos, atmos_album
+
+
 def __ensureTrackStreamable__(track):
     if getattr(track, 'allowStreaming', None) is False:
         raise Exception("Track is not available for streaming on this account.")
@@ -1075,6 +1109,8 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
     title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
     partPath = ''
     try:
+        track, album = __resolveTrackForAtmosDownload__(track, album)
+        title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
         __ensureTrackStreamable__(track)
         stream = __getTrackStream__(track.id)
         path = getTrackPath(track, stream, album, playlist)
