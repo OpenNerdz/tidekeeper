@@ -6,8 +6,11 @@
 - `tidekeeper --update` and the one-line installer now install from PyPI by default.
 - Improved Dolby Atmos catalog selection (#44):
   - Search quality labels show `Dolby Atmos` when `audioModes` includes `DOLBY_ATMOS` (Atmos releases often report `LOW`).
+  - Album search injects matching Atmos catalog twins when TIDAL only returns the stereo row.
   - Track models retain `audioModes` from TIDAL search/catalog payloads.
-  - When download quality is Atmos, stereo album/track picks auto-resolve to the matching Atmos catalog twin when available.
+  - When download quality is Atmos, stereo album/track/playlist/mix picks auto-resolve to the matching Atmos catalog twin.
+  - Artist downloads skip stereo albums when an Atmos twin is already in the list.
+  - GUI applies current Settings (including Atmos quality) before starting downloads.
   - Album details print max quality, audio modes, and flags.
 - Hardened track CDN downloads for reliability and stability:
   - Mismatched HTTP Range responses re-fetch fully instead of writing a truncated body.

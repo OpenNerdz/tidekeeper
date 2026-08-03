@@ -1036,6 +1036,100 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             events.SETTINGS.audioQuality = old_quality
             events.SETTINGS.audioQualityPriority = old_priority
 
+    def test_download_track_resolves_atmos_for_playlist_path(self):
+        stereo = SimpleNamespace(
+            id=11,
+            title="Track",
+            version=None,
+            audioModes=["STEREO"],
+            album=SimpleNamespace(id=100, title="Album"),
+            allowStreaming=True,
+            streamReady=True,
+            explicit=False,
+            audioQuality="LOSSLESS",
+        )
+        atmos = SimpleNamespace(
+            id=22,
+            title="Track",
+            version=None,
+            audioModes=["DOLBY_ATMOS"],
+            album=SimpleNamespace(id=200, title="Album"),
+            allowStreaming=True,
+            streamReady=True,
+            explicit=False,
+            audioQuality="LOW",
+        )
+        atmos_album = SimpleNamespace(id=200, title="Album", cover=None)
+        stream = self._stream()
+        stream.soundQuality = "DOLBY_ATMOS"
+        stream.codec = "ec-3"
+        stream.fallbackReason = None
+        old_quality = download.SETTINGS.audioQuality
+        old_priority = download.SETTINGS.audioQualityPriority
+        old_show = download.SETTINGS.showTrackInfo
+        try:
+            download.SETTINGS.audioQuality = AudioQuality.Atmos
+            download.SETTINGS.audioQualityPriority = []
+            download.SETTINGS.showTrackInfo = False
+            with mock.patch.object(download.TIDAL_API, "findAtmosTrackVariant", return_value=atmos) as resolve, \
+                 mock.patch.object(download.TIDAL_API, "getAlbum", return_value=atmos_album), \
+                 mock.patch.object(download, "__getTrackStream__", return_value=stream) as get_stream, \
+                 mock.patch.object(download, "getTrackPath", return_value="/tmp/track.m4a"), \
+                 mock.patch.object(download, "__skipPath__", return_value="/tmp/track.m4a"), \
+                 mock.patch.object(download, "__saveLyricsForTrack__", return_value=None), \
+                 mock.patch.object(download.Printf, "success"), \
+                 mock.patch.object(download.Printf, "info"):
+                ok, err = download.downloadTrack(stereo, album=None, playlist=SimpleNamespace(uuid="p", title="Playlist"))
+            self.assertTrue(ok)
+            self.assertEqual(err, "")
+            resolve.assert_called_once_with(stereo)
+            get_stream.assert_called_once_with(22)
+        finally:
+            download.SETTINGS.audioQuality = old_quality
+            download.SETTINGS.audioQualityPriority = old_priority
+            download.SETTINGS.showTrackInfo = old_show
+
+    def test_prefer_atmos_search_albums_injects_missing_twin(self):
+        api = TidalAPI()
+        stereo = SimpleNamespace(
+            id=100,
+            title="Album",
+            audioModes=["STEREO"],
+            audioQuality="LOSSLESS",
+            explicit=False,
+            numberOfTracks=10,
+            artist=SimpleNamespace(id=1),
+            artists=[SimpleNamespace(id=1)],
+        )
+        atmos = SimpleNamespace(
+            id=200,
+            title="Album",
+            audioModes=["DOLBY_ATMOS"],
+            audioQuality="LOW",
+            explicit=False,
+            numberOfTracks=10,
+            artist=SimpleNamespace(id=1),
+            artists=[SimpleNamespace(id=1)],
+        )
+        with mock.patch.object(api, "findAtmosAlbumVariant", return_value=atmos):
+            enriched = api.preferAtmosSearchAlbums([stereo])
+        self.assertEqual([item.id for item in enriched], [100, 200])
+
+    def test_artist_album_list_skips_stereo_when_atmos_twin_present(self):
+        stereo = SimpleNamespace(id=100, title="Album", audioModes=["STEREO"])
+        atmos = SimpleNamespace(id=200, title="Album", audioModes=["DOLBY_ATMOS"])
+        other = SimpleNamespace(id=300, title="Other", audioModes=["STEREO"])
+        old_quality = events.SETTINGS.audioQuality
+        old_priority = events.SETTINGS.audioQualityPriority
+        try:
+            events.SETTINGS.audioQuality = AudioQuality.Atmos
+            events.SETTINGS.audioQualityPriority = []
+            preferred = events.__preferAtmosAlbums__([stereo, atmos, other])
+            self.assertEqual([item.id for item in preferred], [200, 300])
+        finally:
+            events.SETTINGS.audioQuality = old_quality
+            events.SETTINGS.audioQualityPriority = old_priority
+
     def test_get_cover_data_uses_timeout(self):
         api = TidalAPI()
         response = SimpleNamespace(content=b"cover")

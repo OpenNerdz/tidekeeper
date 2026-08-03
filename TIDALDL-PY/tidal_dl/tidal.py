@@ -645,14 +645,50 @@ class TidalAPI(object):
         return tracks, videos
 
     def getArtistAlbums(self, id, includeEP=False):
+        cache = getattr(self, "_artistAlbumsCache", None)
+        if cache is None:
+            self._artistAlbumsCache = {}
+            cache = self._artistAlbumsCache
+        cache_key = (str(id), bool(includeEP))
+        if cache_key in cache:
+            return list(cache[cache_key])
+
         data = self.__getItems__(f'artists/{str(id)}/albums')
         albums = list(aigpy.model.dictToModel(item, Album()) for item in data)
-        if not includeEP:
-            return albums
-
-        data = self.__getItems__(f'artists/{str(id)}/albums', {"filter": "EPSANDSINGLES"})
-        albums += list(aigpy.model.dictToModel(item, Album()) for item in data)
+        if includeEP:
+            data = self.__getItems__(f'artists/{str(id)}/albums', {"filter": "EPSANDSINGLES"})
+            albums += list(aigpy.model.dictToModel(item, Album()) for item in data)
+        cache[cache_key] = list(albums)
         return albums
+
+    def preferAtmosSearchAlbums(self, albums):
+        """Insert Atmos catalog twins for stereo album search hits when missing.
+
+        TIDAL album search often omits Dolby Atmos releases even when a stereo
+        LOSSLESS row for the same title is present.
+        """
+        if not albums:
+            return []
+
+        seen = set()
+        enriched = []
+        for album in albums:
+            album_id = str(getattr(album, "id", "") or "")
+            if album_id and album_id in seen:
+                continue
+            if album_id:
+                seen.add(album_id)
+            enriched.append(album)
+
+            if self.__hasAtmosMode__(album):
+                continue
+            twin = self.findAtmosAlbumVariant(album)
+            twin_id = str(getattr(twin, "id", "") or "") if twin is not None else ""
+            if not twin_id or twin_id in seen or twin_id == album_id:
+                continue
+            seen.add(twin_id)
+            enriched.append(twin)
+        return enriched
 
     def getArtistVideos(self, id):
         data = self.__getItems__(f'artists/{str(id)}/videos')

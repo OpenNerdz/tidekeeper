@@ -859,6 +859,8 @@ class MainWindow(QMainWindow):
         if self.download_in_progress:
             self.queue_status.setText("A download is already running.")
             return
+        # Honor the Settings screen even if the user did not click Save first.
+        self.apply_settings_for_download()
         self.download_in_progress = True
         self._cancel_requested = False
         self.update_action_states()
@@ -1018,7 +1020,7 @@ class MainWindow(QMainWindow):
             if self.priority_preset.itemText(index).startswith("Custom saved: "):
                 self.priority_preset.removeItem(index)
 
-    def save_settings(self):
+    def collect_settings_values(self) -> dict:
         values = {
             "downloadPath": self.download_path.text().strip(),
             "audioQuality": self.audio_quality.currentData(),
@@ -1033,7 +1035,14 @@ class MainWindow(QMainWindow):
         }
         values.update({key: checkbox.isChecked() for key, checkbox in self.checks.items()})
         values["requestIntervalSeconds"] = float(self.request_interval.value())
-        self.backend.save_settings(values)
+        return values
+
+    def apply_settings_for_download(self):
+        """Push current GUI quality/settings into the download backend."""
+        self.backend.save_settings(self.collect_settings_values())
+
+    def save_settings(self):
+        self.backend.save_settings(self.collect_settings_values())
         self.settings_status.setText("Settings saved.")
 
     def refresh_auth_status(self):

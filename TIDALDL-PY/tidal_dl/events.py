@@ -12,16 +12,13 @@
 import logging
 
 from .download import *
+from .download import __wantsAtmosDownload__  # import * skips underscore names
 
 '''
 =================================
 START DOWNLOAD
 =================================
 '''
-
-
-def __wantsAtmosDownload__() -> bool:
-    return any(quality == AudioQuality.Atmos for quality in SETTINGS.getDownloadAudioQualityPriority())
 
 
 def __resolveAlbumForDownload__(obj: Album) -> Album:
@@ -40,20 +37,27 @@ def __resolveAlbumForDownload__(obj: Album) -> Album:
     return atmos
 
 
-def __resolveTrackForDownload__(obj: Track) -> Track:
-    """Prefer the Atmos catalog twin when Atmos quality is requested."""
-    if obj is None or not __wantsAtmosDownload__():
-        return obj
-    if TIDAL_API.__hasAtmosMode__(obj):
-        return obj
-    atmos = TIDAL_API.findAtmosTrackVariant(obj)
-    if atmos is None or str(getattr(atmos, "id", "")) == str(getattr(obj, "id", "")):
-        return obj
-    Printf.info(
-        f"Using Dolby Atmos track {atmos.id} "
-        f"(stereo search result was {obj.id})."
-    )
-    return atmos
+def __preferAtmosAlbums__(albums):
+    """When Atmos is requested, skip stereo albums that already have an Atmos twin in the list."""
+    if not albums or not __wantsAtmosDownload__():
+        return albums
+
+    atmos_titles = {
+        TIDAL_API.__normalizeCatalogTitle__(getattr(album, "title", None))
+        for album in albums
+        if TIDAL_API.__hasAtmosMode__(album)
+    }
+    preferred = []
+    for album in albums:
+        title = TIDAL_API.__normalizeCatalogTitle__(getattr(album, "title", None))
+        if (
+            title
+            and title in atmos_titles
+            and not TIDAL_API.__hasAtmosMode__(album)
+        ):
+            continue
+        preferred.append(album)
+    return preferred
 
 
 def start_album(obj: Album, videoOnly=False):
@@ -73,10 +77,13 @@ def start_album(obj: Album, videoOnly=False):
 
 
 def start_track(obj: Track):
-    obj = __resolveTrackForDownload__(obj)
-    album = TIDAL_API.getAlbum(obj.album.id)
-    if SETTINGS.saveCovers:
-        downloadCover(album)
+    # downloadTrack resolves Atmos twins for album/track/playlist/mix paths.
+    album = None
+    album_id = getattr(getattr(obj, "album", None), "id", None)
+    if album_id is not None:
+        album = TIDAL_API.getAlbum(album_id)
+        if SETTINGS.saveCovers:
+            downloadCover(album)
     check, _ = downloadTrack(obj, album)
     return check
 
@@ -95,7 +102,7 @@ def start_artist(obj: Artist, videoOnly=False):
             return False
         return downloadVideos(videos, None)
 
-    albums = TIDAL_API.getArtistAlbums(obj.id, SETTINGS.includeEP)
+    albums = __preferAtmosAlbums__(TIDAL_API.getArtistAlbums(obj.id, SETTINGS.includeEP))
     Printf.artist(obj, len(albums))
     success = True
     for item in albums:

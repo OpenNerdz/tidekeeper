@@ -258,12 +258,15 @@ class TidekeeperBackend:
         if kind == Type.Null:
             items = []
             for result_kind in (Type.Artist, Type.Album, Type.Track, Type.Playlist, Type.Video):
-                items.extend(
-                    to_search_item(result_kind, item)
-                    for item in TIDAL_API.getSearchResultItems(result, result_kind)
-                )
+                raw_items = TIDAL_API.getSearchResultItems(result, result_kind)
+                if result_kind == Type.Album:
+                    raw_items = TIDAL_API.preferAtmosSearchAlbums(raw_items)
+                items.extend(to_search_item(result_kind, item) for item in raw_items)
             return items
-        return [to_search_item(kind, item) for item in TIDAL_API.getSearchResultItems(result, kind)]
+        raw_items = TIDAL_API.getSearchResultItems(result, kind)
+        if kind == Type.Album:
+            raw_items = TIDAL_API.preferAtmosSearchAlbums(raw_items)
+        return [to_search_item(kind, item) for item in raw_items]
 
     def artist_tracks(self, artist: SearchItem) -> List[SearchItem]:
         self._ensure_catalog_session()
