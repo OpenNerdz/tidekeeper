@@ -20,7 +20,44 @@ START DOWNLOAD
 '''
 
 
+def __wantsAtmosDownload__() -> bool:
+    return any(quality == AudioQuality.Atmos for quality in SETTINGS.getDownloadAudioQualityPriority())
+
+
+def __resolveAlbumForDownload__(obj: Album) -> Album:
+    """Prefer the Atmos catalog twin when Atmos quality is requested."""
+    if obj is None or not __wantsAtmosDownload__():
+        return obj
+    if TIDAL_API.__hasAtmosMode__(obj):
+        return obj
+    atmos = TIDAL_API.findAtmosAlbumVariant(obj)
+    if atmos is None or str(getattr(atmos, "id", "")) == str(getattr(obj, "id", "")):
+        return obj
+    Printf.info(
+        f"Using Dolby Atmos catalog release {atmos.id} "
+        f"(stereo search result was {obj.id})."
+    )
+    return atmos
+
+
+def __resolveTrackForDownload__(obj: Track) -> Track:
+    """Prefer the Atmos catalog twin when Atmos quality is requested."""
+    if obj is None or not __wantsAtmosDownload__():
+        return obj
+    if TIDAL_API.__hasAtmosMode__(obj):
+        return obj
+    atmos = TIDAL_API.findAtmosTrackVariant(obj)
+    if atmos is None or str(getattr(atmos, "id", "")) == str(getattr(obj, "id", "")):
+        return obj
+    Printf.info(
+        f"Using Dolby Atmos track {atmos.id} "
+        f"(stereo search result was {obj.id})."
+    )
+    return atmos
+
+
 def start_album(obj: Album, videoOnly=False):
+    obj = __resolveAlbumForDownload__(obj)
     Printf.album(obj)
     tracks, videos = TIDAL_API.getItems(obj.id, Type.Album)
     success = True
@@ -36,6 +73,7 @@ def start_album(obj: Album, videoOnly=False):
 
 
 def start_track(obj: Track):
+    obj = __resolveTrackForDownload__(obj)
     album = TIDAL_API.getAlbum(obj.album.id)
     if SETTINGS.saveCovers:
         downloadCover(album)

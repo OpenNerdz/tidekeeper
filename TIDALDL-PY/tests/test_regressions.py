@@ -905,6 +905,137 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         album = SimpleNamespace(audioQuality="LOW", audioModes=None, explicit=False)
         self.assertEqual(TidalAPI().getFlag(album, Type.Album), "")
 
+    def test_track_flag_detects_atmos_audio_modes(self):
+        track = SimpleNamespace(audioQuality="LOW", audioModes=["DOLBY_ATMOS"], explicit=False)
+        self.assertEqual(TidalAPI().getFlag(track, Type.Track, short=False), "Dolby Atmos")
+        self.assertEqual(TidalAPI().getFlag(track, Type.Track, short=True), "A")
+
+    def test_search_quality_label_includes_atmos_mode(self):
+        from tidal_dl.gui_app.backend import _item_quality
+
+        album = SimpleNamespace(audioQuality="LOW", audioModes=["DOLBY_ATMOS"], explicit=True)
+        self.assertEqual(_item_quality(album, Type.Album), "LOW · Dolby Atmos · Explicit")
+
+        stereo = SimpleNamespace(audioQuality="LOSSLESS", audioModes=["STEREO"], explicit=False)
+        self.assertEqual(_item_quality(stereo, Type.Album), "LOSSLESS")
+
+    def test_find_atmos_album_variant_prefers_matching_title(self):
+        api = TidalAPI()
+        stereo = SimpleNamespace(
+            id=100,
+            title="Happier Than Ever",
+            audioModes=["STEREO"],
+            audioQuality="LOSSLESS",
+            explicit=True,
+            numberOfTracks=16,
+            artist=SimpleNamespace(id=7, name="Billie"),
+            artists=[SimpleNamespace(id=7, name="Billie")],
+        )
+        atmos = SimpleNamespace(
+            id=200,
+            title="Happier Than Ever",
+            audioModes=["DOLBY_ATMOS"],
+            audioQuality="LOW",
+            explicit=True,
+            numberOfTracks=16,
+            artist=SimpleNamespace(id=7, name="Billie"),
+            artists=[SimpleNamespace(id=7, name="Billie")],
+        )
+        other = SimpleNamespace(
+            id=300,
+            title="Other Album",
+            audioModes=["DOLBY_ATMOS"],
+            audioQuality="LOW",
+            explicit=False,
+            numberOfTracks=10,
+            artist=SimpleNamespace(id=7, name="Billie"),
+            artists=[SimpleNamespace(id=7, name="Billie")],
+        )
+        with mock.patch.object(api, "getArtistAlbums", return_value=[stereo, other, atmos]):
+            found = api.findAtmosAlbumVariant(stereo)
+        self.assertIs(found, atmos)
+
+    def test_find_atmos_track_variant_matches_title_and_number(self):
+        api = TidalAPI()
+        stereo_track = SimpleNamespace(
+            id=11,
+            title="Getting Older",
+            audioModes=["STEREO"],
+            isrc="USUG121",
+            trackNumber=1,
+            volumeNumber=1,
+            album=SimpleNamespace(id=100),
+        )
+        stereo_album = SimpleNamespace(
+            id=100,
+            title="Happier Than Ever",
+            audioModes=["STEREO"],
+            audioQuality="LOSSLESS",
+            explicit=True,
+            numberOfTracks=16,
+            artist=SimpleNamespace(id=7, name="Billie"),
+            artists=[SimpleNamespace(id=7, name="Billie")],
+        )
+        atmos_album = SimpleNamespace(
+            id=200,
+            title="Happier Than Ever",
+            audioModes=["DOLBY_ATMOS"],
+            audioQuality="LOW",
+            explicit=True,
+            numberOfTracks=16,
+            artist=SimpleNamespace(id=7, name="Billie"),
+            artists=[SimpleNamespace(id=7, name="Billie")],
+        )
+        atmos_track = SimpleNamespace(
+            id=22,
+            title="Getting Older",
+            audioModes=["DOLBY_ATMOS"],
+            isrc="USUG121",
+            trackNumber=1,
+            volumeNumber=1,
+            album=atmos_album,
+        )
+        with mock.patch.object(api, "getAlbum", return_value=stereo_album), \
+             mock.patch.object(api, "findAtmosAlbumVariant", return_value=atmos_album), \
+             mock.patch.object(api, "getItems", return_value=([atmos_track], [])):
+            found = api.findAtmosTrackVariant(stereo_track)
+        self.assertIs(found, atmos_track)
+
+    def test_album_download_switches_to_atmos_catalog_when_requested(self):
+        stereo = SimpleNamespace(
+            id=100,
+            title="Album",
+            audioModes=["STEREO"],
+            audioQuality="LOSSLESS",
+            cover=None,
+        )
+        atmos = SimpleNamespace(
+            id=200,
+            title="Album",
+            audioModes=["DOLBY_ATMOS"],
+            audioQuality="LOW",
+            cover=None,
+        )
+        old_quality = events.SETTINGS.audioQuality
+        old_priority = events.SETTINGS.audioQualityPriority
+        try:
+            events.SETTINGS.audioQuality = AudioQuality.Atmos
+            events.SETTINGS.audioQualityPriority = []
+            with mock.patch.object(events.TIDAL_API, "findAtmosAlbumVariant", return_value=atmos) as resolve, \
+                 mock.patch.object(events.Printf, "album"), \
+                 mock.patch.object(events.Printf, "info"), \
+                 mock.patch.object(events.TIDAL_API, "getItems", return_value=([], [])) as get_items, \
+                 mock.patch.object(events, "downloadTracks", return_value=True), \
+                 mock.patch.object(events, "downloadVideos", return_value=True), \
+                 mock.patch.object(events, "downloadAlbumInfo"), \
+                 mock.patch.object(events, "downloadCover"):
+                self.assertTrue(events.start_album(stereo))
+            resolve.assert_called_once_with(stereo)
+            get_items.assert_called_once_with(200, Type.Album)
+        finally:
+            events.SETTINGS.audioQuality = old_quality
+            events.SETTINGS.audioQualityPriority = old_priority
+
     def test_get_cover_data_uses_timeout(self):
         api = TidalAPI()
         response = SimpleNamespace(content=b"cover")

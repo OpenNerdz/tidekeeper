@@ -114,8 +114,23 @@ def _item_title(item) -> str:
     return getattr(item, "title", None) or getattr(item, "name", None) or "Untitled"
 
 
-def _item_quality(item) -> str:
-    return getattr(item, "audioQuality", None) or getattr(item, "quality", None) or ""
+def _item_quality(item, kind: Type | None = None) -> str:
+    """Catalog quality plus Atmos/Master/Explicit flags when present.
+
+    Atmos releases often report audioQuality=LOW. Without the audioModes flag
+    they look worse than stereo LOSSLESS results even though they are the only
+    IDs that can download Dolby Atmos.
+    """
+    quality = getattr(item, "audioQuality", None) or getattr(item, "quality", None) or ""
+    flag = ""
+    if kind in (Type.Album, Type.Track, Type.Video):
+        try:
+            flag = TIDAL_API.getFlag(item, kind, short=False, separator=" · ")
+        except Exception:
+            flag = ""
+    if quality and flag:
+        return f"{quality} · {flag}"
+    return str(quality or flag or "")
 
 
 def _item_identifier(item, kind: Type) -> str:
@@ -129,7 +144,7 @@ def to_search_item(kind: Type, item) -> SearchItem:
         kind=kind,
         title=_item_title(item),
         artists=_artists_label(item),
-        quality=_item_quality(item),
+        quality=_item_quality(item, kind),
         identifier=_item_identifier(item, kind),
         duration=_duration_label(getattr(item, "duration", 0)),
         source=item,

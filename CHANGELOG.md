@@ -4,6 +4,11 @@
 
 - Documented and enabled first-party PyPI installs (`pip install tidekeeper`).
 - `tidekeeper --update` and the one-line installer now install from PyPI by default.
+- Improved Dolby Atmos catalog selection (#44):
+  - Search quality labels show `Dolby Atmos` when `audioModes` includes `DOLBY_ATMOS` (Atmos releases often report `LOW`).
+  - Track models retain `audioModes` from TIDAL search/catalog payloads.
+  - When download quality is Atmos, stereo album/track picks auto-resolve to the matching Atmos catalog twin when available.
+  - Album details print max quality, audio modes, and flags.
 - Hardened track CDN downloads for reliability and stability:
   - Mismatched HTTP Range responses re-fetch fully instead of writing a truncated body.
   - Multi-segment DASH/HLS parts use per-segment resume (sequential and parallel).
