@@ -108,7 +108,7 @@ tidekeeper -l "/path/to/downloads/failed-tracks.txt"
 Custom filename formats are supported:
 | Tokens  | Description  | Album | Track | Video | Playlist |
 | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
-| {ArtistID}  | Comma separated list of each artists' ID for that media (i.e: ```123, 456```)  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {ArtistID}  | Comma separated list of each artists' ID for that media (i.e: ```123, 456```)  | :white_check_mark:  | :x:  | :white_check_mark:  | :x: |
 | {ArtistName}  | Comma separated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :white_check_mark:  | :x:  | :x:  | :x: |
 | {ArtistName}  | Primary artist's name for that media | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
 | {ArtistsName}  | Comma separated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |

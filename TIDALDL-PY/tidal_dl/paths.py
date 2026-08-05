@@ -203,6 +203,7 @@ def getVideoPath(video, album=None, playlist=None):
     # get artist
     artists = __fixPath__(TIDAL_API.getArtistsName(video.artists))
     artist = __fixPath__(video.artist.name) if video.artist is not None else ""
+    artistID = __fixPath__(str(video.artist.id)) if video.artist is not None else ""
 
     # explicit
     explicit = "(Explicit)" if video.explicit else ''
@@ -217,6 +218,7 @@ def getVideoPath(video, album=None, playlist=None):
         retpath = SETTINGS.getDefaultPathFormat(Type.Video)
     retpath = retpath.replace(R"{VideoNumber}", number)
     retpath = retpath.replace(R"{ArtistName}", artist)
+    retpath = retpath.replace(R"{ArtistID}", artistID)
     retpath = retpath.replace(R"{ArtistsName}", artists)
     retpath = retpath.replace(R"{VideoTitle}", title)
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
