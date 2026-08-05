@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2026.8.5.0 - 2026-08-05
+
+### Reliability and packaging
+
+- Invalid settings and token files now fall back safely instead of crashing startup.
+- Settings instances no longer share mutable audio-quality priority state.
+- In-app updates now time out after 10 minutes instead of potentially hanging indefinitely.
+- Aligned the PrettyTable dependency constraint between `setup.py` and `requirements.txt`.
+
+### Additional fixes
+
 - `{ArtistID}` in video file formats now lists every video artist ID (matching `{Artists}` behavior) and skips artists without an ID instead of rendering `None`.
 - Deduplicated download progress helpers: removed `__addExistingProgress__` (identical to `__noteProgress__`) and repointed resume/reuse call sites, fixing a potential `NameError` on resumed downloads.
 - Code hygiene: replaced `== None` / `== False` comparisons with `is None` / `not ...` (`paths.py`, `printf.py`, `__init__.py`).

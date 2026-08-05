@@ -13,7 +13,7 @@ from tidal_dl import apiKey, download, events, paths
 from tidal_dl.enums import AudioQuality, Type
 from tidal_dl.gui_app.backend import TidekeeperBackend, SearchItem, with_video_only
 from tidal_dl.model import Artist, StreamUrl
-from tidal_dl.settings import Settings
+from tidal_dl.settings import Settings, TokenSettings
 from tidal_dl.tidal import API_BASE_PRIMARY, TidalAPI, TidalApiError
 
 
@@ -1449,6 +1449,41 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             AudioQuality.HiFi,
             AudioQuality.Normal,
         ])
+
+    def test_invalid_settings_file_uses_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.json"
+            settings_path.write_text("{broken", encoding="utf-8")
+
+            settings = Settings()
+            settings.read(str(settings_path))
+
+        self.assertEqual(settings.audioQuality, AudioQuality.Max)
+        self.assertEqual(settings.audioQualityPriority, [
+            AudioQuality.Max,
+            AudioQuality.HiFi,
+            AudioQuality.High,
+            AudioQuality.Normal,
+        ])
+
+    def test_invalid_token_file_is_treated_as_signed_out(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            token_path = Path(temp_dir) / "token.json"
+            token_path.write_text("not-base64-or-json", encoding="utf-8")
+
+            token = TokenSettings()
+            token.read(str(token_path))
+
+        self.assertIsNone(token.accessToken)
+        self.assertIsNone(token.refreshToken)
+
+    def test_settings_instances_do_not_share_quality_priority(self):
+        first = Settings()
+        second = Settings()
+
+        first.audioQualityPriority.append(AudioQuality.Atmos)
+
+        self.assertEqual(second.audioQualityPriority, [])
 
     def test_audio_quality_priority_accepts_user_facing_aliases(self):
         settings = Settings()

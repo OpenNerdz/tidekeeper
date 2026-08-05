@@ -106,7 +106,7 @@ setup(
         "requests>=2.34.2",
         "pycryptodome",
         "pydub",
-        "prettytable>=3.10.0",
+        "prettytable>=3.18.0",
         "lxml>=6.1.1",
     ],
     extras_require={

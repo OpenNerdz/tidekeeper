@@ -35,6 +35,16 @@ class UpdaterTests(unittest.TestCase):
         self.assertIn("pip unavailable", result.output)
         self.assertEqual(result.command, updater.update_command(False))
 
+    def test_run_update_reports_timeout(self):
+        error = updater.subprocess.TimeoutExpired(
+            updater.update_command(False), updater.UPDATE_TIMEOUT_SECONDS
+        )
+        with mock.patch.object(updater.subprocess, "run", side_effect=error):
+            result = updater.run_update(False)
+
+        self.assertFalse(result.ok)
+        self.assertIn("timed out", result.output)
+
     def test_run_update_returns_pip_output(self):
         completed = mock.Mock(returncode=0, stdout="updated\n")
 

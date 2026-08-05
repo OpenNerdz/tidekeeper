@@ -12,6 +12,7 @@ PROJECT_URL = "https://github.com/OpenNerdz/tidekeeper"
 RELEASES_URL = f"{PROJECT_URL}/releases/latest"
 # Published on PyPI: https://pypi.org/project/tidekeeper/
 PACKAGE_NAME = "tidekeeper"
+UPDATE_TIMEOUT_SECONDS = 600
 
 
 @dataclass
@@ -60,6 +61,13 @@ def run_update(include_gui: bool = False) -> UpdateResult:
             text=True,
             env=env,
             check=False,
+            timeout=UPDATE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return UpdateResult(
+            False,
+            command,
+            f"Update timed out after {UPDATE_TIMEOUT_SECONDS} seconds.",
         )
     except OSError as exc:
         return UpdateResult(False, command, str(exc))

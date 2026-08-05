@@ -11,6 +11,7 @@
 import json
 import aigpy
 import base64
+import logging
 import os
 
 from .lang.language import *
@@ -53,6 +54,10 @@ class Settings(aigpy.model.ModelBase):
     playlistFolderFormat = R"Playlist/{PlaylistName} [{PlaylistUUID}]"
     trackFileFormat = R"{TrackNumber} - {ArtistName} - {TrackTitle}{ExplicitFlag}"
     videoFileFormat = R"{VideoNumber} - {ArtistName} - {VideoTitle}{ExplicitFlag}"
+
+    def __init__(self):
+        # ModelBase has no initializer; copy mutable defaults per instance.
+        self.audioQualityPriority = list(type(self).audioQualityPriority)
 
     def getDefaultPathFormat(self, type: Type):
         if type == Type.Album:
@@ -130,10 +135,16 @@ class Settings(aigpy.model.ModelBase):
         self._path_ = path
         txt = aigpy.file.getContent(self._path_)
         hasSavedSettings = len(txt) > 0
-        if len(txt) > 0:
-            data = json.loads(txt)
-            if aigpy.model.dictToModel(data, self) is None:
-                return
+        if hasSavedSettings:
+            try:
+                data = json.loads(txt)
+                if not isinstance(data, dict):
+                    raise ValueError("settings root must be a JSON object")
+                if aigpy.model.dictToModel(data, self) is None:
+                    return
+            except (json.JSONDecodeError, TypeError, ValueError) as error:
+                logging.warning("Ignoring invalid settings file %s: %s", self._path_, error)
+                hasSavedSettings = False
 
         self.audioQuality = self.getAudioQuality(self.audioQuality)
         self.audioQualityPriority = self.getAudioQualityPriority(self.audioQualityPriority)
@@ -198,8 +209,13 @@ class TokenSettings(aigpy.model.ModelBase):
         self._path_ = path
         txt = aigpy.file.getContent(self._path_)
         if len(txt) > 0:
-            data = json.loads(self.__decode__(txt))
-            aigpy.model.dictToModel(data, self)
+            try:
+                data = json.loads(self.__decode__(txt))
+                if not isinstance(data, dict):
+                    raise ValueError("token root must be a JSON object")
+                aigpy.model.dictToModel(data, self)
+            except (json.JSONDecodeError, TypeError, ValueError) as error:
+                logging.warning("Ignoring invalid token file %s: %s", self._path_, error)
 
     def __ensurePath__(self):
         if getattr(self, '_path_', None):
