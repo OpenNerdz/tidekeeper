@@ -304,26 +304,6 @@ def __addUserProgress__(userProgress, size, progressLock=None):
         pass
 
 
-def __addExistingProgress__(progress, userProgress, size, progressLock=None):
-    if size <= 0:
-        return
-    if progressLock is not None:
-        with progressLock:
-            if progress is not None:
-                try:
-                    progress.addCurCount(size)
-                except Exception:
-                    pass
-            __addUserProgress__(userProgress, size)
-        return
-    if progress is not None:
-        try:
-            progress.addCurCount(size)
-        except Exception:
-            pass
-    __addUserProgress__(userProgress, size)
-
-
 def __noteProgress__(progress, userProgress, size, progressLock=None):
     if size <= 0:
         return
@@ -374,7 +354,7 @@ def __downloadSingleUrl__(
     else:
         reusable = False
     if reusable:
-        __addExistingProgress__(
+        __noteProgress__(
             progress, userProgress, __localFileSize__(outputPath), progressLock
         )
         return __localFileSize__(outputPath)
@@ -396,7 +376,7 @@ def __downloadSingleUrl__(
                 if response.status_code == 206 and rangeStart == resumeSize:
                     mode = "ab"
                     if not progressInitialized:
-                        __addExistingProgress__(progress, userProgress, resumeSize, progressLock)
+                        __noteProgress__(progress, userProgress, resumeSize, progressLock)
                         progressInitialized = True
                 elif response.status_code == 200:
                     # Server ignored Range and returned the full object; restart.
@@ -507,7 +487,7 @@ def __downloadUrls__(
     # Only reuse when the remote size is known and matches — never skip a
     # download solely because a local file happens to exist.
     if __isReusableAssembledFile__(outputPath, totalSize):
-        __addExistingProgress__(progress, userProgress, __localFileSize__(outputPath))
+        __noteProgress__(progress, userProgress, __localFileSize__(outputPath))
         __removeDir__(__partsDirectory__(outputPath))
         return True, ''
 

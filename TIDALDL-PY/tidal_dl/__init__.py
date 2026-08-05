@@ -42,7 +42,7 @@ def preMainCommand():
     opts, args = getopt.getopt(preArgs, "c:", ["configPathOverride="])
     for opt, val in opts:
         if opt in ('-c', '--configPathOverride'):
-            if os.path.isdir(val) == False:
+            if not os.path.isdir(val):
                 raise ValueError("configPathOverride must be an existing directory")
             PATHS.homePathOverride = val
 

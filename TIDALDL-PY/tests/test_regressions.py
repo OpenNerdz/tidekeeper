@@ -172,6 +172,28 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
 
+    def test_video_artist_id_token_lists_all_ids_and_skips_missing(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.videoFileFormat = "{ArtistID} - {VideoTitle}"
+
+            video = self._video()
+            video.artists = [self._artist(id=123), self._artist(name="Feat", id=456)]
+            self.assertTrue(paths.getVideoPath(video).endswith("123, 456 - Video.mp4"))
+
+            video.artists = [self._artist(id=None), self._artist(name="Feat", id=456)]
+            video.artist = self._artist(id=None)
+            video_path = paths.getVideoPath(video)
+            self.assertNotIn("None", video_path)
+            self.assertTrue(video_path.endswith("456 - Video.mp4"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
     def test_get_album_converts_each_artist_to_model(self):
         api = TidalAPI()
         payload = {

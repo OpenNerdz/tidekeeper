@@ -203,7 +203,7 @@ def getVideoPath(video, album=None, playlist=None):
     # get artist
     artists = __fixPath__(TIDAL_API.getArtistsName(video.artists))
     artist = __fixPath__(video.artist.name) if video.artist is not None else ""
-    artistID = __fixPath__(str(video.artist.id)) if video.artist is not None else ""
+    artistID = __fixPath__(TIDAL_API.getArtistsID(video.artists))
 
     # explicit
     explicit = "(Explicit)" if video.explicit else ''
@@ -245,7 +245,7 @@ class Paths(aigpy.model.ModelBase):
     homePathOverride = None
 
     def __getHomePath__(self):
-        if self.homePathOverride == None:
+        if self.homePathOverride is None:
             return self.__getDefaultHomePath__()
         else:
             return self.homePathOverride

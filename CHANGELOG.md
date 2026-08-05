@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `{ArtistID}` in video file formats now lists every video artist ID (matching `{Artists}` behavior) and skips artists without an ID instead of rendering `None`.
+- Deduplicated download progress helpers: removed `__addExistingProgress__` (identical to `__noteProgress__`) and repointed resume/reuse call sites, fixing a potential `NameError` on resumed downloads.
+- Code hygiene: replaced `== None` / `== False` comparisons with `is None` / `not ...` (`paths.py`, `printf.py`, `__init__.py`).
 - Reduced TIDAL API rate-limit pressure without changing successful download quality:
   - OpenAPI no longer retries DOWNLOAD→PLAYBACK after permanent `CLIENT_NOT_ENTITLED` blocks (was 2 limited calls for Atmos misses).
   - Atmos quality no longer probes standard playback as accidental `HI_RES`; fall through uses the configured quality priority instead.

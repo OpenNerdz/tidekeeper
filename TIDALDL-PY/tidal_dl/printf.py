@@ -344,7 +344,7 @@ class Printf(object):
     def video(data: Video, stream: VideoStreamUrl = None):
         tb = Printf.__gettable__([LANG.select.MODEL_VIDEO_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_TITLE, data.title],
-            [LANG.select.MODEL_ALBUM, data.album.title if data.album != None else None],
+            [LANG.select.MODEL_ALBUM, data.album.title if data.album is not None else None],
             [LANG.select.MODEL_VERSION, data.version],
             [LANG.select.MODEL_EXPLICIT, data.explicit],
             ["Max-Q", data.quality],
