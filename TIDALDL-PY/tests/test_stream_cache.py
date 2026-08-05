@@ -39,8 +39,15 @@ class StreamCacheTests(unittest.TestCase):
 
     def test_expired_stream_is_resolved_again(self):
         api = TidalAPI()
+        # getStreamUrlByPriority checks the cache outside and inside the resolve lock.
+        times = [
+            0.0, 0.0, 0.0,  # first resolve: outer miss, inner miss, cache store
+            STREAM_CACHE_TTL_SECONDS + 1,  # second outer: expired
+            STREAM_CACHE_TTL_SECONDS + 1,  # second inner: expired
+            STREAM_CACHE_TTL_SECONDS + 1,  # second cache store
+        ]
         with mock.patch.object(api, "__getAudioStreamUrlForQuality__", return_value=self._stream()) as resolve, \
-             mock.patch("tidal_dl.tidal.time.monotonic", side_effect=[0.0, 0.0, STREAM_CACHE_TTL_SECONDS + 1, STREAM_CACHE_TTL_SECONDS + 1]):
+             mock.patch("tidal_dl.tidal.time.monotonic", side_effect=times):
             api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
             api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
 

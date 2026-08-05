@@ -111,6 +111,14 @@ class TidalAPI(object):
         self._playbackBlockedParams = set()
         self._streamCache = {}
         self._streamCacheLock = Lock()
+        # Serialize stream-manifest resolution so multi-thread downloads do not
+        # stampede playback/OpenAPI endpoints.
+        self._streamResolveLock = Lock()
+        # Session caches that cut repeat catalog / Atmos-miss traffic.
+        self._artistAlbumsCache = {}
+        self._atmosAlbumTwinCache = {}
+        self._atmosTrackTwinCache = {}
+        self._atmosUnavailableTrackIds = set()
 
     def __responseBody__(self, response):
         try:
@@ -196,6 +204,22 @@ class TidalAPI(object):
             return
         syncPlaybackRateLimiter()
         self.playbackRateLimiter.wait()
+
+    def __waitForCatalogRequestQuota__(self):
+        """Pace catalog calls only while adaptive backoff is elevated after 429s.
+
+        Normal search stays snappy; after rate limits, catalog traffic cools down
+        with the same shared limiter used for playback/manifest requests.
+        """
+        if SETTINGS.downloadDelay is False:
+            return
+        if not getattr(SETTINGS, 'adaptiveRateLimit', True):
+            return
+        syncPlaybackRateLimiter()
+        limiter = self.playbackRateLimiter
+        if limiter.effectiveInterval() <= max(limiter.minInterval, 0.0):
+            return
+        limiter.wait()
 
     def __applyRateLimitPenalty__(self, response, attempt):
         delay = self.__retryAfter__(response, attempt)
@@ -307,11 +331,16 @@ class TidalAPI(object):
                 header = {'authorization': f'Bearer {self.key.accessToken}'}
                 if playbackRequest:
                     self.__waitForStreamRequestQuota__()
+                else:
+                    # Only engages after a 429 raised the adaptive interval.
+                    self.__waitForCatalogRequestQuota__()
 
                 respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT)
 
                 if respond.status_code == 429:
-                    delay = self.__applyRateLimitPenalty__(respond, index) if playbackRequest else self.__retryAfter__(respond, index)
+                    # Always apply adaptive penalty (catalog and playback) so one
+                    # storm cools the whole client, not only stream endpoints.
+                    delay = self.__applyRateLimitPenalty__(respond, index)
                     if index >= RATE_LIMIT_MAX_ATTEMPTS - 1:
                         raise self.__httpError__("Get operation", respond)
                     print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
@@ -645,10 +674,7 @@ class TidalAPI(object):
         return tracks, videos
 
     def getArtistAlbums(self, id, includeEP=False):
-        cache = getattr(self, "_artistAlbumsCache", None)
-        if cache is None:
-            self._artistAlbumsCache = {}
-            cache = self._artistAlbumsCache
+        cache = self._artistAlbumsCache
         cache_key = (str(id), bool(includeEP))
         if cache_key in cache:
             return list(cache[cache_key])
@@ -768,8 +794,13 @@ class TidalAPI(object):
     def __isRetryableManifestError__(self, error):
         if not isinstance(error, TidalApiError):
             return False
+        # Permanent entitlement blocks are not fixed by switching DOWNLOAD↔PLAYBACK.
+        # Retrying doubles rate-limited OpenAPI traffic for no gain (e.g. Atmos on stereo).
+        if 'CLIENT_NOT_ENTITLED' in error.errorCodes:
+            return False
         if 'PREREQUISITE_MISSING' in error.errorCodes:
             return True
+        # Other 403/404/405 can still be usage- or format-specific.
         return error.statusCode in (403, 404, 405)
 
     def __getOpenApiTrackManifest__(self, id, formats, usages=None):
@@ -862,13 +893,25 @@ class TidalAPI(object):
         return None
 
     def __getAtmosStreamUrl__(self, id):
-        attrs = self.__getOpenApiTrackManifest__(id, ['EAC3_JOC'])
+        track_id = str(id)
+        if track_id in self._atmosUnavailableTrackIds:
+            raise TidalStreamUnavailable("Dolby Atmos stream is not available for this track.")
+
+        try:
+            attrs = self.__getOpenApiTrackManifest__(id, ['EAC3_JOC'])
+        except Exception as e:
+            if self.__isPermanentAtmosUnavailableError__(e):
+                self._atmosUnavailableTrackIds.add(track_id)
+            raise
+
         formats = attrs.get('formats') or []
         if 'EAC3_JOC' not in formats:
+            self._atmosUnavailableTrackIds.add(track_id)
             raise TidalStreamUnavailable("Dolby Atmos stream is not available for this track.")
 
         uri = attrs.get('uri') or ''
         if ',' not in uri:
+            self._atmosUnavailableTrackIds.add(track_id)
             raise TidalStreamUnavailable("Dolby Atmos manifest is empty.")
 
         xmldata = base64.b64decode(uri.split(',', 1)[1]).decode('utf-8')
@@ -882,7 +925,17 @@ class TidalAPI(object):
         ret.container = 'mp4'
         if len(ret.urls) > 0:
             ret.url = ret.urls[0]
+        self._atmosUnavailableTrackIds.discard(track_id)
         return ret
+
+    def __isPermanentAtmosUnavailableError__(self, error):
+        if isinstance(error, TidalStreamUnavailable):
+            return True
+        if not isinstance(error, TidalApiError):
+            return False
+        if 'CLIENT_NOT_ENTITLED' in error.errorCodes:
+            return True
+        return error.statusCode in (403, 404)
 
     def __getOpenApiFlacStreamUrl__(self, id, quality: AudioQuality):
         requested_formats = self.__openApiFormatsForQuality__(quality)
@@ -912,10 +965,14 @@ class TidalAPI(object):
     def __getAudioStreamUrlForQuality__(self, id, quality: AudioQuality):
         chain = []
         if quality == AudioQuality.Atmos:
+            # Atmos is OpenAPI-only. Do not probe standard playback with the
+            # accidental HI_RES mapping — that wastes a limited call and is not
+            # the next quality the user configured (use quality-priority instead).
             chain.append(lambda: self.__getAtmosStreamUrl__(id))
-        chain.append(lambda: self.__getStandardStreamUrl__(id, quality))
-        if quality in (AudioQuality.HiFi, AudioQuality.Max, AudioQuality.Master):
-            chain.append(lambda q=quality: self.__getOpenApiFlacStreamUrl__(id, q))
+        else:
+            chain.append(lambda: self.__getStandardStreamUrl__(id, quality))
+            if quality in (AudioQuality.HiFi, AudioQuality.Max, AudioQuality.Master):
+                chain.append(lambda q=quality: self.__getOpenApiFlacStreamUrl__(id, q))
 
         last_error = None
         last_stream = None
@@ -1133,25 +1190,31 @@ class TidalAPI(object):
         if cached is not None:
             return cached
 
-        lastError = None
-        requestedQuality = priority[0]
-        for index, item in enumerate(priority):
-            try:
-                stream = self.__getAudioStreamUrlForQuality__(id, item)
-                mismatch = self.__streamQualityMismatch__(stream, item)
-                if mismatch is not None:
-                    lastError = mismatch
-                    if index == len(priority) - 1:
-                        raise mismatch
-                    continue
-                stream = self.__annotateStreamFallback__(stream, requestedQuality, item, lastError)
-                self.__cacheStream__(cacheKey, stream)
-                return stream
-            except Exception as e:
-                lastError = e
-                if index == len(priority) - 1 or not self.__isManifestFallbackError__(e):
-                    raise
-        raise lastError
+        # One stream resolve at a time across multi-thread downloads.
+        with self._streamResolveLock:
+            cached = self.__getCachedStream__(cacheKey)
+            if cached is not None:
+                return cached
+
+            lastError = None
+            requestedQuality = priority[0]
+            for index, item in enumerate(priority):
+                try:
+                    stream = self.__getAudioStreamUrlForQuality__(id, item)
+                    mismatch = self.__streamQualityMismatch__(stream, item)
+                    if mismatch is not None:
+                        lastError = mismatch
+                        if index == len(priority) - 1:
+                            raise mismatch
+                        continue
+                    stream = self.__annotateStreamFallback__(stream, requestedQuality, item, lastError)
+                    self.__cacheStream__(cacheKey, stream)
+                    return stream
+                except Exception as e:
+                    lastError = e
+                    if index == len(priority) - 1 or not self.__isManifestFallbackError__(e):
+                        raise
+            raise lastError
 
     def getStreamUrl(self, id, quality: AudioQuality):
         # Share stream-manifest cache with the priority path used by downloads.
@@ -1256,6 +1319,11 @@ class TidalAPI(object):
         if self.__hasAtmosMode__(album):
             return album
 
+        album_id = str(getattr(album, "id", "") or "")
+        if album_id and album_id in self._atmosAlbumTwinCache:
+            cached = self._atmosAlbumTwinCache[album_id]
+            return album if cached is None else cached
+
         artist_id = None
         artist = getattr(album, "artist", None)
         if artist is not None and getattr(artist, "id", None) is not None:
@@ -1266,10 +1334,14 @@ class TidalAPI(object):
                     artist_id = item.id
                     break
         if artist_id is None:
+            if album_id:
+                self._atmosAlbumTwinCache[album_id] = None
             return None
 
         target_title = self.__normalizeCatalogTitle__(getattr(album, "title", None))
         if not target_title:
+            if album_id:
+                self._atmosAlbumTwinCache[album_id] = None
             return None
 
         try:
@@ -1286,6 +1358,8 @@ class TidalAPI(object):
                 continue
             matches.append(candidate)
         if not matches:
+            if album_id:
+                self._atmosAlbumTwinCache[album_id] = None
             return None
 
         def score(candidate):
@@ -1298,7 +1372,11 @@ class TidalAPI(object):
 
         best = sorted(matches, key=score)[0]
         if str(getattr(best, "id", "")) == str(getattr(album, "id", "")):
+            if album_id:
+                self._atmosAlbumTwinCache[album_id] = None
             return album
+        if album_id:
+            self._atmosAlbumTwinCache[album_id] = best
         return best
 
     def findAtmosTrackVariant(self, track: Track):
@@ -1308,9 +1386,15 @@ class TidalAPI(object):
         if self.__hasAtmosMode__(track):
             return track
 
+        track_id = str(getattr(track, "id", "") or "")
+        if track_id and track_id in self._atmosTrackTwinCache:
+            return self._atmosTrackTwinCache[track_id]
+
         album_ref = getattr(track, "album", None)
         album_id = getattr(album_ref, "id", None) if album_ref is not None else None
         if album_id is None:
+            if track_id:
+                self._atmosTrackTwinCache[track_id] = None
             return None
 
         try:
@@ -1321,6 +1405,8 @@ class TidalAPI(object):
 
         atmos_album = self.findAtmosAlbumVariant(album)
         if atmos_album is None or str(getattr(atmos_album, "id", "")) == str(album_id):
+            if track_id:
+                self._atmosTrackTwinCache[track_id] = None
             return None
 
         try:
@@ -1334,18 +1420,27 @@ class TidalAPI(object):
         target_number = getattr(track, "trackNumber", None)
         target_volume = getattr(track, "volumeNumber", None)
 
+        matched = None
         for candidate in atmos_tracks or []:
             if target_isrc and (getattr(candidate, "isrc", None) or "").strip().upper() == target_isrc:
-                return candidate
-        for candidate in atmos_tracks or []:
-            if target_number is not None and getattr(candidate, "trackNumber", None) == target_number:
-                if target_volume is None or getattr(candidate, "volumeNumber", None) == target_volume:
-                    if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
-                        return candidate
-        for candidate in atmos_tracks or []:
-            if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
-                return candidate
-        return None
+                matched = candidate
+                break
+        if matched is None:
+            for candidate in atmos_tracks or []:
+                if target_number is not None and getattr(candidate, "trackNumber", None) == target_number:
+                    if target_volume is None or getattr(candidate, "volumeNumber", None) == target_volume:
+                        if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
+                            matched = candidate
+                            break
+        if matched is None:
+            for candidate in atmos_tracks or []:
+                if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
+                    matched = candidate
+                    break
+
+        if track_id:
+            self._atmosTrackTwinCache[track_id] = matched
+        return matched
 
     def parseUrl(self, url):
         if "tidal.com" not in url:
