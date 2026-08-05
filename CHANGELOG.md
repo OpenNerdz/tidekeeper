@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Reduced TIDAL API rate-limit pressure without changing successful download quality:
+  - OpenAPI no longer retries DOWNLOAD→PLAYBACK after permanent `CLIENT_NOT_ENTITLED` blocks (was 2 limited calls for Atmos misses).
+  - Atmos quality no longer probes standard playback as accidental `HI_RES`; fall through uses the configured quality priority instead.
+  - Session caches for Atmos twin albums/tracks and Atmos-unavailable track IDs.
+  - Catalog HTTP 429s apply the same adaptive backoff as playback/manifest requests.
+  - Catalog calls only join the request delay while adaptive backoff is elevated after a 429.
+  - Stream manifest resolution is single-flight across multi-thread downloads.
+
 ## 2026.8.4.0 - 2026-08-04
 
 ### Dolby Atmos catalog selection (#44)
