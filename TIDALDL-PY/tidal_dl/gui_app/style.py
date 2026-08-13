@@ -120,6 +120,11 @@ QTextEdit {
     min-height: 120px;
 }
 
+QTextEdit#DirectInput {
+    min-height: 68px;
+    max-height: 88px;
+}
+
 QLineEdit:read-only {
     background: #f8fafc;
     color: #344054;

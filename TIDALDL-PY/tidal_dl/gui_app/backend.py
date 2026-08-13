@@ -72,6 +72,9 @@ class SearchItem:
     duration: str
     source: object
     video_only: bool = False
+    status: str = "Queued"
+    progress_percent: int = 0
+    progress_label: str = ""
 
 
 class _CallbackWriter(io.TextIOBase):
@@ -153,6 +156,139 @@ def to_search_item(kind: Type, item) -> SearchItem:
 
 def with_video_only(item: SearchItem, video_only: bool) -> SearchItem:
     return replace(item, video_only=video_only)
+
+
+def parse_direct_inputs(text: str, _seen_files: Optional[set] = None) -> List[str]:
+    """Split pasted URLs/IDs into one token per queue row.
+
+    Accepts newlines, commas, and space-separated http(s) URLs. A path to an
+    existing text file is expanded using the same comment-skipping rules as
+    CLI ``start_file``.
+    """
+    if text is None:
+        return []
+    stripped = str(text).strip()
+    if not stripped:
+        return []
+
+    seen_files = set() if _seen_files is None else _seen_files
+    if os.path.isfile(stripped):
+        path = os.path.abspath(stripped)
+        if path in seen_files:
+            return []
+        seen_files.add(path)
+        try:
+            with open(stripped, "r", encoding="utf-8") as handle:
+                stripped = handle.read()
+        except OSError:
+            return [stripped]
+        if not stripped.strip():
+            return []
+
+    tokens: List[str] = []
+    seen = set()
+
+    def _add(token: str):
+        token = token.strip()
+        if not token or token in seen:
+            return
+        if os.path.isfile(token):
+            for nested in parse_direct_inputs(token, seen_files):
+                if nested not in seen:
+                    seen.add(nested)
+                    tokens.append(nested)
+            return
+        seen.add(token)
+        tokens.append(token)
+
+    for line in stripped.splitlines():
+        line = line.strip()
+        if not line or line[0] in "#[{":
+            continue
+        if os.path.isfile(line):
+            _add(line)
+            continue
+        for part in line.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "://" in part and " " in part:
+                for piece in part.split():
+                    _add(piece)
+            else:
+                _add(part)
+    return tokens
+
+
+def format_byte_size(num) -> str:
+    try:
+        value = float(num)
+    except (TypeError, ValueError):
+        return "0 B"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(value) < 1024.0 or unit == "TB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{value:.1f} TB"
+
+
+def format_duration_short(seconds) -> str:
+    try:
+        total = int(round(float(seconds)))
+    except (TypeError, ValueError):
+        return ""
+    if total < 0:
+        return ""
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s" if secs else f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+
+def format_queue_progress(snapshot: dict) -> str:
+    snapshot = snapshot or {}
+    count = int(snapshot.get("count") or 0)
+    current = int(snapshot.get("current") or 0)
+    completed = int(snapshot.get("completed") or 0)
+    bytes_current = int(snapshot.get("bytes") or 0)
+    bytes_total = int(snapshot.get("bytes_total") or 0)
+    speed = float(snapshot.get("speed") or 0)
+    eta = snapshot.get("eta")
+
+    parts = []
+    if count > 1:
+        shown = current if current else min(completed + 1, count)
+        parts.append(f"{shown}/{count}")
+    elif bytes_total > 0:
+        parts.append(f"{format_byte_size(bytes_current)}/{format_byte_size(bytes_total)}")
+    if speed > 0:
+        parts.append(f"{format_byte_size(speed)}/s")
+    if eta is not None:
+        label = format_duration_short(eta)
+        if label:
+            parts.append(label)
+    return " · ".join(parts)
+
+
+def queue_progress_percent(snapshot: dict) -> int:
+    snapshot = snapshot or {}
+    count = int(snapshot.get("count") or 0)
+    completed = int(snapshot.get("completed") or 0)
+    bytes_current = int(snapshot.get("bytes") or 0)
+    bytes_total = int(snapshot.get("bytes_total") or 0)
+    file_frac = (bytes_current / bytes_total) if bytes_total > 0 else 0.0
+    if count > 1:
+        value = ((completed + file_frac) / count) * 100.0
+    elif bytes_total > 0:
+        value = file_frac * 100.0
+    else:
+        return 0
+    return int(max(0, min(100, value)))
 
 
 class TidekeeperBackend:
@@ -312,15 +448,18 @@ class TidekeeperBackend:
         label = os.path.basename(text) if os.path.exists(text) else text
         return SearchItem(Type.Null, label, "", "Direct", text, "", text)
 
-    def download(self, item: SearchItem, log: LogCallback = None):
+    def download(self, item: SearchItem, log: LogCallback = None, progress=None):
         self._ensure_catalog_session()
         callback = log or (lambda text: None)
         writer = _CallbackWriter(callback)
+        kwargs = {}
+        if progress is not None:
+            kwargs["progress"] = progress
         with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
             if item.kind == Type.Null:
-                ok = start(str(item.source), item.video_only)
+                ok = start(str(item.source), item.video_only, **kwargs)
             else:
-                ok = start_type(item.kind, item.source, item.video_only)
+                ok = start_type(item.kind, item.source, item.video_only, **kwargs)
         if not ok:
             raise RuntimeError(f"Download failed for {item.title}")
 
@@ -513,7 +652,13 @@ class DemoBackend(TidekeeperBackend):
     def direct_item(self, text: str) -> SearchItem:
         return SearchItem(Type.Null, text, "", "Direct", text, "", text)
 
-    def download(self, item: SearchItem, log: LogCallback = None):
+    def download(self, item: SearchItem, log: LogCallback = None, progress=None):
+        if progress is not None:
+            progress.begin_collection(1)
+            progress.begin_entry(1, 1, item.title)
+            progress.setMaxNum(1)
+            progress.addCurNum(1)
+            progress.finish_entry(1, 1, True)
         if log:
             log(f"Queued {item.title}\n")
             if item.video_only:

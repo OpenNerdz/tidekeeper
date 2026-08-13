@@ -4,7 +4,7 @@ import webbrowser
 from typing import Dict, List, Tuple
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QColor, QPalette, QTextCursor
+from PySide6.QtGui import QColor, QPalette, QPainter, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -32,9 +34,45 @@ from PySide6.QtWidgets import (
 
 from ..enums import AudioQuality, Type, VideoQuality
 from ..settings import SETTINGS
-from .backend import SearchItem, TidekeeperBackend, with_video_only
+from .backend import (
+    SearchItem,
+    TidekeeperBackend,
+    format_queue_progress,
+    parse_direct_inputs,
+    queue_progress_percent,
+    with_video_only,
+)
 from .style import APP_STYLESHEET, TABLE_TEXT_COLOR
 from .workers import DownloadWorker, TaskWorker
+
+PROGRESS_PERCENT_ROLE = Qt.UserRole + 1
+
+
+class QueueProgressDelegate(QStyledItemDelegate):
+    def paint(self, painter: QPainter, option, index):
+        percent = index.data(PROGRESS_PERCENT_ROLE)
+        try:
+            percent = int(percent)
+        except (TypeError, ValueError):
+            percent = 0
+        percent = max(0, min(100, percent))
+        painter.save()
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+        track = option.rect.adjusted(8, 8, -8, -8)
+        painter.setPen(QColor("#d0d5dd"))
+        painter.setBrush(QColor("#f2f4f7"))
+        painter.drawRoundedRect(track, 3, 3)
+        if percent > 0:
+            fill = track.adjusted(0, 0, 0, 0)
+            fill.setWidth(max(2, int(track.width() * percent / 100.0)))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#0f766e"))
+            painter.drawRoundedRect(fill, 3, 3)
+        text = index.data() or ""
+        painter.setPen(QColor("#172033"))
+        painter.drawText(track, Qt.AlignCenter, str(text))
+        painter.restore()
 
 
 SCREEN_ORDER = ("search", "queue", "settings", "account")
@@ -212,23 +250,28 @@ class MainWindow(QMainWindow):
         direct_layout.setContentsMargins(16, 16, 16, 16)
         direct_layout.setHorizontalSpacing(10)
         direct_layout.setVerticalSpacing(10)
-        self.direct_text = QLineEdit()
-        self.direct_text.setPlaceholderText("Direct download: TIDAL URL, numeric ID, mix ID, or .txt file")
+        self.direct_text = QTextEdit()
+        self.direct_text.setObjectName("DirectInput")
+        self.direct_text.setAcceptRichText(False)
+        self.direct_text.setPlaceholderText(
+            "Direct download: one TIDAL URL or ID per line, comma-separated IDs, or a .txt file"
+        )
+        self.direct_text.setFixedHeight(72)
         self.direct_video_only = QCheckBox("Videos only")
         self.direct_browse_button = _button("File")
         self.direct_queue_button = _button("Add Direct")
         self.direct_download_button = _button("Download Direct", primary=True)
         self.direct_video_only.setToolTip("Skip audio tracks for artist, album, playlist, mix, video, or file downloads.")
         self.direct_browse_button.setToolTip("Pick a text file containing TIDAL URLs.")
-        self.direct_queue_button.setToolTip("Add this URL, ID, or file to the queue.")
-        self.direct_download_button.setToolTip("Start this direct download now.")
+        self.direct_queue_button.setToolTip("Add each pasted URL, ID, or file line to the queue.")
+        self.direct_download_button.setToolTip("Queue and start every pasted URL, ID, or file line.")
         self.direct_browse_button.clicked.connect(self.browse_direct_file)
         self.direct_queue_button.clicked.connect(self.add_direct_to_queue)
         self.direct_download_button.clicked.connect(self.download_direct)
         self.direct_text.textChanged.connect(self.update_direct_actions)
         direct_layout.addWidget(_panel_title("Direct input"), 0, 0)
         direct_layout.addWidget(self.direct_text, 0, 1, 1, 4)
-        direct_layout.addWidget(self.direct_browse_button, 0, 5)
+        direct_layout.addWidget(self.direct_browse_button, 0, 5, Qt.AlignTop)
         direct_layout.addWidget(self.direct_video_only, 1, 1)
         direct_layout.addWidget(self.direct_queue_button, 1, 4)
         direct_layout.addWidget(self.direct_download_button, 1, 5)
@@ -276,12 +319,15 @@ class MainWindow(QMainWindow):
     def _build_queue_page(self) -> QWidget:
         page, layout = self._page("Queue", "Download list")
 
-        self.queue_table = QTableWidget(0, 5)
-        self._setup_table(self.queue_table, ["Type", "Title", "Artists", "Quality", "Status"])
+        self.queue_table = QTableWidget(0, 6)
+        self._setup_table(self.queue_table, ["Type", "Title", "Artists", "Quality", "Status", "Progress"])
         self.queue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         self.queue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self.queue_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Fixed)
         self.queue_table.setColumnWidth(3, 150)
-        self.queue_table.setColumnWidth(4, 120)
+        self.queue_table.setColumnWidth(4, 260)
+        self.queue_table.setColumnWidth(5, 130)
+        self.queue_table.setItemDelegateForColumn(5, QueueProgressDelegate(self.queue_table))
         self.queue_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.queue_table.itemSelectionChanged.connect(self.update_queue_actions)
         layout.addWidget(self.queue_table, 1)
@@ -291,18 +337,22 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.queue_status, 1)
         self.remove_queue_button = _button("Remove")
         self.clear_queue_button = _button("Clear")
+        self.retry_failed_button = _button("Retry Failed")
         self.cancel_queue_button = _button("Cancel", danger=True)
         self.start_queue_button = _button("Start Queue", primary=True)
         self.remove_queue_button.setToolTip("Remove selected queue rows.")
         self.clear_queue_button.setToolTip("Clear the queue and output log.")
+        self.retry_failed_button.setToolTip("Re-queue items that failed and download them again.")
         self.cancel_queue_button.setToolTip("Stop after the current item finishes.")
-        self.start_queue_button.setToolTip("Download every queued item.")
+        self.start_queue_button.setToolTip("Download queued and failed items. Completed rows are skipped.")
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_items)
         self.clear_queue_button.clicked.connect(self.clear_queue)
+        self.retry_failed_button.clicked.connect(self.retry_failed_downloads)
         self.cancel_queue_button.clicked.connect(self.cancel_downloads)
         self.start_queue_button.clicked.connect(self.start_queue_download)
         action_layout.addWidget(self.remove_queue_button)
         action_layout.addWidget(self.clear_queue_button)
+        action_layout.addWidget(self.retry_failed_button)
         action_layout.addWidget(self.cancel_queue_button)
         action_layout.addWidget(self.start_queue_button)
         layout.addLayout(action_layout)
@@ -771,36 +821,46 @@ class MainWindow(QMainWindow):
         self.search_status.setText(f"Added {len(items)} item{'s' if len(items) != 1 else ''} to queue.")
 
     def browse_direct_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "URL list", self.direct_text.text(), "Text files (*.txt);;All files (*)")
+        current = self.direct_text.toPlainText().strip().splitlines()
+        start_dir = current[0] if current else ""
+        path, _ = QFileDialog.getOpenFileName(self, "URL list", start_dir, "Text files (*.txt);;All files (*)")
         if path:
-            self.direct_text.setText(path)
+            self.direct_text.setPlainText(path)
 
     def direct_item_from_input(self):
-        text = self.direct_text.text().strip()
-        if not text:
+        items = self.direct_items_from_input()
+        return items[0] if items else None
+
+    def direct_items_from_input(self) -> List[SearchItem]:
+        text = self.direct_text.toPlainText()
+        tokens = parse_direct_inputs(text)
+        if not tokens:
             self.search_status.setText("Enter a URL, ID, mix ID, or .txt file.")
-            return None
-        return with_video_only(self.backend.direct_item(text), self.direct_video_only.isChecked())
+            return []
+        video_only = self.direct_video_only.isChecked()
+        return [with_video_only(self.backend.direct_item(token), video_only) for token in tokens]
 
     def add_direct_to_queue(self):
-        item = self.direct_item_from_input()
-        if item is None:
+        items = self.direct_items_from_input()
+        if not items:
             return
-        self.queue.append(item)
+        self.queue.extend(items)
         self.refresh_queue_table()
-        self.search_status.setText("Direct item added to queue.")
+        self.search_status.setText(
+            f"Added {len(items)} direct item{'s' if len(items) != 1 else ''} to queue."
+        )
 
     def download_direct(self):
         if self.download_in_progress:
             self.search_status.setText("A download is already running.")
             return
-        item = self.direct_item_from_input()
-        if item is None:
+        items = self.direct_items_from_input()
+        if not items:
             return
-        self.queue.append(item)
+        self.queue.extend(items)
         self.refresh_queue_table()
         self.show_screen("queue")
-        self.start_downloads([item])
+        self.start_downloads(items)
 
     def download_selected(self):
         if self.download_in_progress:
@@ -815,19 +875,64 @@ class MainWindow(QMainWindow):
         self.show_screen("queue")
         self.start_downloads(items)
 
+    def _queue_kind_label(self, item: SearchItem) -> str:
+        kind = "Direct" if item.kind == Type.Null else item.kind.name
+        if item.video_only and item.kind != Type.Video:
+            kind += " videos"
+        return kind
+
+    def _queue_status_text(self, item: SearchItem) -> str:
+        status = item.status or "Queued"
+        if status == "Downloading" and item.progress_label:
+            return f"Downloading {item.progress_label}"
+        return status
+
+    def _queue_progress_text(self, item: SearchItem) -> str:
+        if item.status == "Done":
+            return "100%"
+        if item.progress_percent:
+            return f"{item.progress_percent}%"
+        if item.status == "Downloading":
+            return "0%"
+        return ""
+
+    def _set_queue_row(self, row: int, item: SearchItem):
+        values = [
+            self._queue_kind_label(item),
+            item.title,
+            item.artists,
+            item.quality,
+            self._queue_status_text(item),
+            self._queue_progress_text(item),
+        ]
+        for col, value in enumerate(values):
+            cell = self.queue_table.item(row, col)
+            if cell is None:
+                cell = self._table_cell(value, item if col == 0 else None)
+                self.queue_table.setItem(row, col, cell)
+            else:
+                cell.setText(str(value))
+                if col == 0:
+                    cell.setData(Qt.UserRole, item)
+        progress_cell = self.queue_table.item(row, 5)
+        if progress_cell is not None:
+            percent = 100 if item.status == "Done" else int(item.progress_percent or 0)
+            progress_cell.setData(PROGRESS_PERCENT_ROLE, percent)
+
     def refresh_queue_table(self):
         self.queue_table.setSortingEnabled(False)
         self.queue_table.setRowCount(len(self.queue))
         for row, item in enumerate(self.queue):
-            kind = "Direct" if item.kind == Type.Null else item.kind.name
-            if item.video_only and item.kind != Type.Video:
-                kind += " videos"
-            values = [kind, item.title, item.artists, item.quality, "Queued"]
-            for col, value in enumerate(values):
-                self.queue_table.setItem(row, col, self._table_cell(value, item if col == 0 else None))
+            self._set_queue_row(row, item)
         self.queue_table.setSortingEnabled(True)
         self.queue_status.setText(f"{len(self.queue)} item{'s' if len(self.queue) != 1 else ''} in queue.")
         self.update_queue_actions()
+
+    def _refresh_queue_row(self, item: SearchItem):
+        for row in range(self.queue_table.rowCount()):
+            if self._row_item(self.queue_table, row) is item:
+                self._set_queue_row(row, item)
+                break
 
     def remove_selected_queue_items(self):
         rows = sorted({index.row() for index in self.queue_table.selectionModel().selectedRows()})
@@ -846,18 +951,43 @@ class MainWindow(QMainWindow):
         self.refresh_queue_table()
         self.download_log.clear()
 
+    def pending_queue_items(self) -> List[SearchItem]:
+        return [item for item in self.queue if item.status not in ("Done", "Downloading")]
+
+    def failed_queue_items(self) -> List[SearchItem]:
+        return [item for item in self.queue if item.status == "Failed"]
+
     def start_queue_download(self):
         if self.download_in_progress:
             self.queue_status.setText("A download is already running.")
             return
-        if not self.queue:
-            self.queue_status.setText("Queue is empty.")
+        items = self.pending_queue_items()
+        if not items:
+            self.queue_status.setText("Nothing left to download.")
             return
-        self.start_downloads(list(self.queue))
+        self.start_downloads(items)
+
+    def retry_failed_downloads(self):
+        if self.download_in_progress:
+            self.queue_status.setText("A download is already running.")
+            return
+        items = self.failed_queue_items()
+        if not items:
+            self.queue_status.setText("No failed items to retry.")
+            return
+        for item in items:
+            item.status = "Queued"
+            item.progress_percent = 0
+            item.progress_label = ""
+        self.refresh_queue_table()
+        self.start_downloads(items)
 
     def start_downloads(self, items: List[SearchItem]):
         if self.download_in_progress:
             self.queue_status.setText("A download is already running.")
+            return
+        if not items:
+            self.queue_status.setText("Nothing left to download.")
             return
         # Honor the Settings screen even if the user did not click Save first.
         self.apply_settings_for_download()
@@ -869,6 +999,7 @@ class MainWindow(QMainWindow):
         self.download_worker = worker
         worker.signals.log.connect(self.append_download_log)
         worker.signals.item_status.connect(self._set_queue_item_status)
+        worker.signals.item_progress.connect(self._set_queue_item_progress)
         worker.signals.result.connect(lambda _: self.queue_status.setText("Downloads finished."))
         worker.signals.error.connect(self.show_download_error)
         worker.signals.finished.connect(self._download_finished)
@@ -891,12 +1022,20 @@ class MainWindow(QMainWindow):
         self.queue_status.setText("Cancelling after the current item...")
 
     def _set_queue_item_status(self, item, status: str):
-        for row in range(self.queue_table.rowCount()):
-            if self._row_item(self.queue_table, row) is item:
-                cell = self.queue_table.item(row, 4)
-                if cell is not None:
-                    cell.setText(status)
-                break
+        item.status = status
+        if status == "Done":
+            item.progress_percent = 100
+            item.progress_label = ""
+        elif status in ("Failed", "Cancelled", "Queued"):
+            item.progress_percent = 0
+            item.progress_label = ""
+        self._refresh_queue_row(item)
+
+    def _set_queue_item_progress(self, item, snapshot: dict):
+        item.progress_label = format_queue_progress(snapshot)
+        item.progress_percent = queue_progress_percent(snapshot)
+        if item.status == "Downloading":
+            self._refresh_queue_row(item)
 
     def update_action_states(self):
         self.update_search_action()
@@ -908,7 +1047,7 @@ class MainWindow(QMainWindow):
         self.search_button.setEnabled(bool(self.search_text.text().strip()) and not self.search_in_progress)
 
     def update_direct_actions(self):
-        has_input = bool(self.direct_text.text().strip())
+        has_input = bool(self.direct_text.toPlainText().strip())
         self.direct_queue_button.setEnabled(has_input)
         self.direct_download_button.setEnabled(has_input and not self.download_in_progress)
 
@@ -929,10 +1068,13 @@ class MainWindow(QMainWindow):
     def update_queue_actions(self):
         has_queue = bool(self.queue)
         has_selection = bool(self.queue_table.selectionModel().selectedRows())
+        has_failed = bool(self.failed_queue_items())
+        has_pending = bool(self.pending_queue_items())
         self.remove_queue_button.setEnabled(has_selection and not self.download_in_progress)
         self.clear_queue_button.setEnabled(has_queue and not self.download_in_progress)
+        self.retry_failed_button.setEnabled(has_failed and not self.download_in_progress)
         self.cancel_queue_button.setEnabled(self.download_in_progress and not self._cancel_requested)
-        self.start_queue_button.setEnabled(has_queue and not self.download_in_progress)
+        self.start_queue_button.setEnabled(has_pending and not self.download_in_progress)
 
     def append_download_log(self, text: str):
         cursor = self.download_log.textCursor()
@@ -1151,7 +1293,7 @@ class MainWindow(QMainWindow):
 
     def prepare_demo_state(self):
         self.search_text.setText("midnight")
-        self.direct_text.setText("https://tidal.com/browse/track/70973230")
+        self.direct_text.setPlainText("https://tidal.com/browse/track/70973230")
         self.set_search_results(self.backend.search("midnight", Type.Track))
         if self.results:
             self.results_table.selectRow(0)

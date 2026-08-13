@@ -469,14 +469,20 @@ def __downloadUrls__(
         userProgress=None,
         threadNum=1,
         chunkSize=DOWNLOAD_CHUNK_SIZE,
-        probeSize=True):
+        probeSize=True,
+        expectedSize=None):
     urls = [url for url in (urls or []) if not aigpy.string.isNull(url)]
     if len(urls) <= 0:
         return False, "URL list is empty."
 
     __ensureParentDir__(outputPath)
 
-    totalSize = __remoteSize__(urls) if probeSize else -1
+    if expectedSize is not None:
+        totalSize = expectedSize
+    elif probeSize:
+        totalSize = __remoteSize__(urls)
+    else:
+        totalSize = -1
     progress = None
     if totalSize > 0:
         __setUserProgressMax__(userProgress, totalSize)
@@ -981,7 +987,7 @@ def downloadAlbumInfo(album, tracks):
     aigpy.file.write(path, infos, "w+")
 
 
-def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None):
+def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, userProgress=None):
     title = getattr(video, 'title', None) or str(getattr(video, 'id', 'unknown'))
     partPath = ''
     try:
@@ -1013,7 +1019,8 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None):
             urls,
             partPath,
             SETTINGS.showProgress,
-            threadNum=VIDEO_THREAD_COUNT,
+            userProgress,
+            VIDEO_THREAD_COUNT,
             probeSize=False,
         )
         if check:
@@ -1133,6 +1140,8 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
                 userProgress,
                 TRACK_THREAD_COUNT if SETTINGS.multiThread else 1,
                 max(int(partSize), 64 * 1024),
+                False,
+                expectedSize,
             )
         if not check:
             __logFailedTrack__(track, album, playlist, err)
@@ -1170,9 +1179,13 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         return False, str(e)
 
 
-def downloadTracks(tracks, album: Album = None, playlist: Playlist = None):
+def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progress=None):
     albumCache = {}
     downloadedCovers = set()
+    tracks = list(tracks or [])
+    total = len(tracks)
+    if progress is not None and total:
+        progress.begin_collection(total)
 
     def __getAlbum__(item: Track):
         albumId = getattr(getattr(item, 'album', None), 'id', None)
@@ -1188,6 +1201,11 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None):
             downloadedCovers.add(albumId)
         return itemAlbum
 
+    def __trackProgressKwargs__():
+        if progress is None or SETTINGS.multiThread:
+            return {}
+        return {"userProgress": progress}
+
     if not SETTINGS.multiThread:
         success = True
         for index, item in enumerate(tracks):
@@ -1195,31 +1213,49 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None):
             if itemAlbum is None:
                 itemAlbum = __getAlbum__(item)
                 item.trackNumberOnPlaylist = index + 1
-            check, _ = downloadTrack(item, itemAlbum, playlist)
+            if progress is not None:
+                progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
+            check, _ = downloadTrack(item, itemAlbum, playlist, **__trackProgressKwargs__())
+            if progress is not None:
+                progress.finish_entry(index + 1, total, check)
             success = success and check
         return success
     else:
-        futures = []
+        futures = {}
         with ThreadPoolExecutor(max_workers=TRACK_THREAD_COUNT) as thread_pool:
             for index, item in enumerate(tracks):
                 itemAlbum = album
                 if itemAlbum is None:
                     itemAlbum = __getAlbum__(item)
                     item.trackNumberOnPlaylist = index + 1
-                futures.append(thread_pool.submit(downloadTrack, item, itemAlbum, playlist))
+                futures[thread_pool.submit(downloadTrack, item, itemAlbum, playlist)] = index
 
             success = True
             for future in as_completed(futures):
+                index = futures[future]
                 check, msg = future.result()
+                if progress is not None:
+                    progress.finish_entry(index + 1, total, check)
                 if not check:
                     success = False
                     logging.error("Track download failed: %s", msg)
             return success
 
 
-def downloadVideos(videos, album: Album, playlist=None):
+def downloadVideos(videos, album: Album, playlist=None, progress=None):
+    videos = list(videos or [])
+    total = len(videos)
+    if progress is not None and total:
+        progress.begin_collection(total)
     success = True
-    for item in videos:
-        check, _ = downloadVideo(item, album, playlist)
+    for index, item in enumerate(videos):
+        if progress is not None:
+            progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
+        kwargs = {}
+        if progress is not None:
+            kwargs["userProgress"] = progress
+        check, _ = downloadVideo(item, album, playlist, **kwargs)
+        if progress is not None:
+            progress.finish_entry(index + 1, total, check)
         success = success and check
     return success

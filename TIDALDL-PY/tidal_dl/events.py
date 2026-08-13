@@ -60,7 +60,11 @@ def __preferAtmosAlbums__(albums):
     return preferred
 
 
-def start_album(obj: Album, videoOnly=False):
+def _progress_kwargs(progress):
+    return {"progress": progress} if progress is not None else {}
+
+
+def start_album(obj: Album, videoOnly=False, progress=None):
     obj = __resolveAlbumForDownload__(obj)
     Printf.album(obj)
     tracks, videos = TIDAL_API.getItems(obj.id, Type.Album)
@@ -70,13 +74,13 @@ def start_album(obj: Album, videoOnly=False):
     if not videoOnly and SETTINGS.saveCovers and obj.cover is not None:
         downloadCover(obj)
     if not videoOnly:
-        success = downloadTracks(tracks, obj) and success
+        success = downloadTracks(tracks, obj, **_progress_kwargs(progress)) and success
     if videoOnly or SETTINGS.downloadVideos:
-        success = downloadVideos(videos, obj) and success
+        success = downloadVideos(videos, obj, **_progress_kwargs(progress)) and success
     return success
 
 
-def start_track(obj: Track):
+def start_track(obj: Track, progress=None):
     # downloadTrack resolves Atmos twins for album/track/playlist/mix paths.
     album = None
     album_id = getattr(getattr(obj, "album", None), "id", None)
@@ -84,54 +88,56 @@ def start_track(obj: Track):
         album = TIDAL_API.getAlbum(album_id)
         if SETTINGS.saveCovers:
             downloadCover(album)
-    check, _ = downloadTrack(obj, album)
+    kwargs = {"userProgress": progress} if progress is not None else {}
+    check, _ = downloadTrack(obj, album, **kwargs)
     return check
 
 
-def start_video(obj: Video):
-    check, _ = downloadVideo(obj, obj.album)
+def start_video(obj: Video, progress=None):
+    kwargs = {"userProgress": progress} if progress is not None else {}
+    check, _ = downloadVideo(obj, obj.album, **kwargs)
     return check
 
 
-def start_artist(obj: Artist, videoOnly=False):
+def start_artist(obj: Artist, videoOnly=False, progress=None):
     if videoOnly:
         videos = TIDAL_API.getArtistVideos(obj.id)
         Printf.artist(obj, len(videos), "Number of videos")
         if len(videos) <= 0:
             Printf.info("No videos found for artist.")
             return False
-        return downloadVideos(videos, None)
+        return downloadVideos(videos, None, **_progress_kwargs(progress))
 
     albums = __preferAtmosAlbums__(TIDAL_API.getArtistAlbums(obj.id, SETTINGS.includeEP))
     Printf.artist(obj, len(albums))
     success = True
     for item in albums:
-        success = start_album(item) and success
+        success = start_album(item, progress=progress) and success
     return success
 
 
-def start_playlist(obj: Playlist, videoOnly=False):
+def start_playlist(obj: Playlist, videoOnly=False, progress=None):
     Printf.playlist(obj)
     tracks, videos = TIDAL_API.getItems(obj.uuid, Type.Playlist)
     success = True
     if not videoOnly:
-        success = downloadTracks(tracks, None, obj) and success
+        success = downloadTracks(tracks, None, obj, **_progress_kwargs(progress)) and success
     if videoOnly or SETTINGS.downloadVideos:
-        success = downloadVideos(videos, None, obj) and success
+        success = downloadVideos(videos, None, obj, **_progress_kwargs(progress)) and success
     return success
 
 
-def start_mix(obj: Mix, videoOnly=False):
+def start_mix(obj: Mix, videoOnly=False, progress=None):
     Printf.mix(obj)
     success = True
     if not videoOnly:
-        success = downloadTracks(obj.tracks, None, None) and success
+        success = downloadTracks(obj.tracks, None, None, **_progress_kwargs(progress)) and success
     if videoOnly or SETTINGS.downloadVideos:
-        success = downloadVideos(obj.videos, None, None) and success
+        success = downloadVideos(obj.videos, None, None, **_progress_kwargs(progress)) and success
     return success
 
 
-def start_file(string, videoOnly=False):
+def start_file(string, videoOnly=False, progress=None):
     txt = aigpy.file.getContent(string)
     if aigpy.string.isNull(txt):
         Printf.err("Nothing can read!")
@@ -147,30 +153,30 @@ def start_file(string, videoOnly=False):
         if item[0] == '[':
             continue
         sawItem = True
-        success = start(item, videoOnly) and success
+        success = start(item, videoOnly, progress=progress) and success
     return success if sawItem else False
 
 
-def start_type(etype: Type, obj, videoOnly=False):
+def start_type(etype: Type, obj, videoOnly=False, progress=None):
     if etype == Type.Album:
-        return start_album(obj, videoOnly)
+        return start_album(obj, videoOnly, progress=progress)
     if etype == Type.Track:
         if videoOnly:
             Printf.err("Video-only downloads require an artist, album, playlist, mix, or video URL.")
             return False
-        return start_track(obj)
+        return start_track(obj, progress=progress)
     if etype == Type.Video:
-        return start_video(obj)
+        return start_video(obj, progress=progress)
     if etype == Type.Artist:
-        return start_artist(obj, videoOnly)
+        return start_artist(obj, videoOnly, progress=progress)
     if etype == Type.Playlist:
-        return start_playlist(obj, videoOnly)
+        return start_playlist(obj, videoOnly, progress=progress)
     if etype == Type.Mix:
-        return start_mix(obj, videoOnly)
+        return start_mix(obj, videoOnly, progress=progress)
     return False
 
 
-def start(string, videoOnly=False):
+def start(string, videoOnly=False, progress=None):
     if aigpy.string.isNull(string):
         Printf.err('Please enter something.')
         return False
@@ -178,7 +184,7 @@ def start(string, videoOnly=False):
     # Treat the whole input as a single token first so file paths that
     # contain spaces are not split apart.
     if os.path.exists(string.strip()):
-        return start_file(string.strip(), videoOnly)
+        return start_file(string.strip(), videoOnly, progress=progress)
 
     strings = string.split(" ")
     success = True
@@ -187,7 +193,7 @@ def start(string, videoOnly=False):
         if aigpy.string.isNull(item):
             continue
         if os.path.exists(item):
-            return start_file(item, videoOnly)
+            return start_file(item, videoOnly, progress=progress)
 
         sawItem = True
         try:
@@ -197,7 +203,7 @@ def start(string, videoOnly=False):
             return False
 
         try:
-            if not start_type(etype, obj, videoOnly):
+            if not start_type(etype, obj, videoOnly, progress=progress):
                 success = False
         except Exception as e:
             Printf.err(str(e))

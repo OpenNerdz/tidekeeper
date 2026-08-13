@@ -364,6 +364,189 @@ class GuiDownloadStatusTests(unittest.TestCase):
 
         start_type.assert_called_once()
 
+    def test_backend_download_forwards_progress(self):
+        from tidal_dl.enums import Type
+        from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend
+
+        backend = TidekeeperBackend()
+        item = SearchItem(Type.Track, "Track", "", "", "456", "", SimpleNamespace(id=456))
+        progress = object()
+        with mock.patch.object(backend, "_ensure_catalog_session"), \
+             mock.patch("tidal_dl.gui_app.backend.start_type", return_value=True) as start_type:
+            backend.download(item, progress=progress)
+
+        start_type.assert_called_once_with(Type.Track, item.source, False, progress=progress)
+
+    def test_download_urls_skips_probe_when_expected_size_given(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "sized.out"
+            with mock.patch.object(download, "__remoteSize__") as probe, \
+                 mock.patch.object(download, "__downloadSingleUrl__", return_value=12):
+                ok, msg = download.__downloadUrls__(
+                    ["http://example.invalid/track.bin"],
+                    str(output_file),
+                    threadNum=1,
+                    probeSize=False,
+                    expectedSize=12,
+                )
+
+        self.assertTrue(ok, msg)
+        probe.assert_not_called()
+
+    def test_download_urls_still_probes_without_expected_size(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "probed.out"
+            with mock.patch.object(download, "__remoteSize__", return_value=8) as probe, \
+                 mock.patch.object(download, "__downloadSingleUrl__", return_value=8):
+                ok, msg = download.__downloadUrls__(
+                    ["http://example.invalid/track.bin"],
+                    str(output_file),
+                    threadNum=1,
+                )
+
+        self.assertTrue(ok, msg)
+        probe.assert_called_once()
+
+    def test_download_track_passes_probed_size_without_second_probe(self):
+        track = SimpleNamespace(
+            id=1,
+            title="Song",
+            allowStreaming=True,
+            streamReady=True,
+            album=None,
+            artist=None,
+            artists=[],
+        )
+        stream = SimpleNamespace(
+            urls=["http://example.invalid/song.bin"],
+            url="http://example.invalid/song.bin",
+            codec="aac",
+            container="mp4",
+            manifestMimeType="",
+            encryptionKey="",
+        )
+        old_show = download.SETTINGS.showTrackInfo
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = str(Path(temp_dir) / "song.m4a")
+            download.SETTINGS.showTrackInfo = False
+            try:
+                with mock.patch.object(download, "__resolveTrackForAtmosDownload__", return_value=(track, None)), \
+                     mock.patch.object(download, "__getTrackStream__", return_value=stream), \
+                     mock.patch.object(download, "getTrackPath", return_value=path), \
+                     mock.patch.object(download, "__skipPath__", return_value=None), \
+                     mock.patch.object(download, "__remoteSize__", return_value=4096) as probe, \
+                     mock.patch.object(download, "__isReusableAssembledFile__", return_value=False), \
+                     mock.patch.object(download, "__localFileSize__", return_value=0), \
+                     mock.patch.object(download, "__downloadUrls__", return_value=(True, "")) as downloaded, \
+                     mock.patch.object(download, "__encrypted__"), \
+                     mock.patch.object(download, "__removeDir__"), \
+                     mock.patch.object(download, "__exportFlacFromContainer__", side_effect=lambda out, _stream: out), \
+                     mock.patch.object(download.TIDAL_API, "getTrackContributors", return_value=None), \
+                     mock.patch.object(download, "__saveLyricsForTrack__", return_value=""), \
+                     mock.patch.object(download, "__setMetaData__"), \
+                     mock.patch.object(download, "__ensureParentDir__"):
+                    ok, err = download.downloadTrack(track)
+            finally:
+                download.SETTINGS.showTrackInfo = old_show
+
+        self.assertTrue(ok, err)
+        probe.assert_called_once_with(stream.urls)
+        self.assertEqual(downloaded.call_args.args[6], False)
+        self.assertEqual(downloaded.call_args.args[7], 4096)
+
+    def test_download_tracks_reports_collection_progress(self):
+        class Recorder:
+            def __init__(self):
+                self.events = []
+
+            def begin_collection(self, total):
+                self.events.append(("collection", total))
+
+            def begin_entry(self, index, total, title=""):
+                self.events.append(("begin", index, total, title))
+
+            def finish_entry(self, index, total, ok=True):
+                self.events.append(("finish", index, total, ok))
+
+        old_multi = download.SETTINGS.multiThread
+        progress = Recorder()
+        track_one = SimpleNamespace(id=1, title="One", album=None)
+        track_two = SimpleNamespace(id=2, title="Two", album=None)
+        try:
+            download.SETTINGS.multiThread = False
+            with mock.patch.object(download, "downloadTrack", return_value=(True, "")):
+                self.assertTrue(download.downloadTracks([track_one, track_two], album=object(), progress=progress))
+        finally:
+            download.SETTINGS.multiThread = old_multi
+
+        self.assertEqual(progress.events[0], ("collection", 2))
+        self.assertEqual(progress.events[1], ("begin", 1, 2, "One"))
+        self.assertEqual(progress.events[2], ("finish", 1, 2, True))
+        self.assertEqual(progress.events[3], ("begin", 2, 2, "Two"))
+        self.assertEqual(progress.events[4], ("finish", 2, 2, True))
+
+
+class DirectInputAndProgressTests(unittest.TestCase):
+    def test_parse_direct_inputs_splits_lines_and_commas(self):
+        from tidal_dl.gui_app.backend import parse_direct_inputs
+
+        tokens = parse_direct_inputs(
+            "https://tidal.com/browse/track/1\n"
+            "70973230, 77798028\n"
+            "# comment\n"
+            "https://tidal.com/browse/track/3 https://tidal.com/browse/track/4\n"
+        )
+        self.assertEqual(tokens, [
+            "https://tidal.com/browse/track/1",
+            "70973230",
+            "77798028",
+            "https://tidal.com/browse/track/3",
+            "https://tidal.com/browse/track/4",
+        ])
+
+    def test_parse_direct_inputs_expands_text_file(self):
+        from tidal_dl.gui_app.backend import parse_direct_inputs
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "urls.txt"
+            path.write_text(
+                "# header\n"
+                "https://tidal.com/browse/track/1\n"
+                "https://tidal.com/browse/track/2\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(parse_direct_inputs(str(path)), [
+                "https://tidal.com/browse/track/1",
+                "https://tidal.com/browse/track/2",
+            ])
+
+    def test_queue_progress_helpers(self):
+        from tidal_dl.gui_app.backend import format_queue_progress, queue_progress_percent
+
+        album = {
+            "completed": 3,
+            "count": 12,
+            "current": 4,
+            "bytes": 2 * 1024 * 1024,
+            "bytes_total": 4 * 1024 * 1024,
+            "speed": 2 * 1024 * 1024,
+            "eta": 12,
+        }
+        self.assertEqual(format_queue_progress(album), "4/12 · 2.0 MB/s · 12s")
+        self.assertEqual(queue_progress_percent(album), 29)
+
+        single = {
+            "completed": 0,
+            "count": 1,
+            "current": 1,
+            "bytes": 1024,
+            "bytes_total": 4096,
+            "speed": 1024,
+            "eta": 3,
+        }
+        self.assertEqual(format_queue_progress(single), "1.0 KB/4.0 KB · 1.0 KB/s · 3s")
+        self.assertEqual(queue_progress_percent(single), 25)
+
 
 if __name__ == "__main__":
     unittest.main()
