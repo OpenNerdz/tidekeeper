@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 2026.8.13.0 - 2026-08-13
+
+### GUI
+
+- Queue rows now show download progress, transfer speed, and ETA. Albums and playlists report track position (for example `4/12`).
+- Added **Retry Failed** to re-queue only failed items. **Start Queue** skips completed rows.
+- Direct Input accepts multi-line or comma-separated URLs/IDs, and expands `.txt` lists into separate queue rows.
+
+### Performance
+
+- Track downloads reuse the already-probed CDN size instead of making a second HEAD/Range probe.
+
 ## 2026.8.5.0 - 2026-08-05
 
 ### Reliability and packaging
