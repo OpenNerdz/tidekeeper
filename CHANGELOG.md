@@ -2,8 +2,25 @@
 
 ## Unreleased
 
+## 2026.8.16.0 - 2026-08-16
+
+### Search
+
 - Catalog search no longer stops at the first 10 hits (pages of 50, up to 200).
 - Searching an artist name with the Album filter now includes that artist's full album list, not just the top ranked search hits (#50).
+
+### Reliability
+
+- Settings and token files are written atomically and kept at mode 0600.
+- Concurrent workers reuse a token refresh already completed by another thread.
+- Permanent download errors such as HTTP 404 fail immediately instead of retrying for tens of seconds.
+- Auth and catalog calls reject invalid JSON and honor Retry-After on server errors.
+- Stream cache evicts least-recently-used entries instead of scanning the full cache.
+
+### Packaging and cleanup
+
+- Removed unused `pydub` and `lxml` runtime dependencies.
+- Dropped leftover tidal-dl translation keys and dead debug helpers.
 
 ## 2026.8.13.0 - 2026-08-13
 
