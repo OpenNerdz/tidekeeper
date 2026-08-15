@@ -390,18 +390,27 @@ class TidekeeperBackend:
             item = TIDAL_API.getTypeData(item_id, parsed_kind)
             return [to_search_item(parsed_kind, item)] if item else []
 
-        result = TIDAL_API.search(text, kind)
+        if kind == Type.Album:
+            raw_items = TIDAL_API.searchAlbumsForQuery(text, includeEP=SETTINGS.includeEP)
+            return [to_search_item(Type.Album, item) for item in raw_items]
+
+        result = TIDAL_API.searchAll(text, kind)
         if kind == Type.Null:
             items = []
+            artists = TIDAL_API.getSearchResultItems(result, Type.Artist)
             for result_kind in (Type.Artist, Type.Album, Type.Track, Type.Playlist, Type.Video):
                 raw_items = TIDAL_API.getSearchResultItems(result, result_kind)
                 if result_kind == Type.Album:
+                    raw_items = TIDAL_API.mergeMatchingArtistAlbums(
+                        text,
+                        raw_items,
+                        artists,
+                        includeEP=SETTINGS.includeEP,
+                    )
                     raw_items = TIDAL_API.preferAtmosSearchAlbums(raw_items)
                 items.extend(to_search_item(result_kind, item) for item in raw_items)
             return items
         raw_items = TIDAL_API.getSearchResultItems(result, kind)
-        if kind == Type.Album:
-            raw_items = TIDAL_API.preferAtmosSearchAlbums(raw_items)
         return [to_search_item(kind, item) for item in raw_items]
 
     def artist_tracks(self, artist: SearchItem) -> List[SearchItem]:

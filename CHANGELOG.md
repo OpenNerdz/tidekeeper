@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Catalog search no longer stops at the first 10 hits (pages of 50, up to 200).
+- Searching an artist name with the Album filter now includes that artist's full album list, not just the top ranked search hits (#50).
+
 ## 2026.8.13.0 - 2026-08-13
 
 ### GUI

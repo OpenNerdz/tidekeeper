@@ -250,6 +250,12 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         self.assertEqual(api.getSearchResultItems(result, Type.Track), [])
         self.assertEqual(api.getSearchResultItems(None, Type.Album), [])
 
+    def test_search_result_items_wrap_single_model(self):
+        api = TidalAPI()
+        album = self._album()
+        result = SimpleNamespace(albums=SimpleNamespace(items=album))
+        self.assertEqual(api.getSearchResultItems(result, Type.Album), [album])
+
     def test_get_by_string_surfaces_auth_errors(self):
         api = TidalAPI()
         with mock.patch.object(api, "getTypeData", side_effect=TidalApiError("auth failed", 401)):
@@ -912,12 +918,145 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         backend = TidekeeperBackend()
         with mock.patch.object(backend, "_ensure_catalog_session"), \
-             mock.patch.object(events.TIDAL_API, "search", return_value=object()), \
+             mock.patch.object(events.TIDAL_API, "searchAll", return_value=object()), \
              mock.patch.object(events.TIDAL_API, "getSearchResultItems", side_effect=fake_items):
-            items = backend.search("artist", Type.Null)
+            items = backend.search("midnight", Type.Null)
 
         self.assertEqual([item.kind for item in items], [Type.Artist, Type.Album, Type.Track])
         self.assertEqual([item.title for item in items], ["Artist", "Album", "Track"])
+
+    def test_search_all_paginates_until_total(self):
+        api = TidalAPI()
+        pages = [
+            SimpleNamespace(albums=SimpleNamespace(
+                items=[SimpleNamespace(id=i, title=f"A{i}") for i in range(1, 51)],
+                totalNumberOfItems=75,
+            )),
+            SimpleNamespace(albums=SimpleNamespace(
+                items=[SimpleNamespace(id=i, title=f"A{i}") for i in range(51, 76)],
+                totalNumberOfItems=75,
+            )),
+        ]
+
+        with mock.patch.object(api, "search", side_effect=pages) as search:
+            result = api.searchAll("O.S.T.R.", Type.Album)
+
+        self.assertEqual(search.call_args_list[0].kwargs, {"offset": 0, "limit": 50})
+        self.assertEqual(search.call_args_list[1].kwargs, {"offset": 50, "limit": 50})
+        self.assertEqual(len(api.getSearchResultItems(result, Type.Album)), 75)
+        self.assertEqual(search.call_count, 2)
+
+    def test_search_all_stops_at_max_items(self):
+        api = TidalAPI()
+        page = SimpleNamespace(albums=SimpleNamespace(
+            items=[SimpleNamespace(id=i) for i in range(50)],
+            totalNumberOfItems=400,
+        ))
+
+        with mock.patch.object(api, "search", return_value=page) as search:
+            result = api.searchAll("love", Type.Album, max_items=100)
+
+        self.assertEqual(search.call_count, 2)
+        self.assertEqual(len(api.getSearchResultItems(result, Type.Album)), 100)
+
+    def test_find_matching_search_artists_normalizes_punctuation(self):
+        api = TidalAPI()
+        ostr = SimpleNamespace(id=4511654, name="O.S.T.R.")
+        other = SimpleNamespace(id=1, name="ANOTR")
+        matches = api.findMatchingSearchArtists("O.S.T.R.", [ostr, other])
+        self.assertEqual(matches, [ostr])
+        self.assertEqual(api.findMatchingSearchArtists("ostr", [ostr]), [ostr])
+        self.assertEqual(api.findMatchingSearchArtists("love", [ostr, other]), [])
+
+    def test_merge_matching_artist_albums_prepends_missing_discography(self):
+        api = TidalAPI()
+        artist = SimpleNamespace(id=4511654, name="O.S.T.R.")
+        ranked = SimpleNamespace(id=1, title="W drodze po szczęście")
+        buried = SimpleNamespace(id=2, title="Masz to jak w Banku")
+        variant = SimpleNamespace(id=3, title="LTD.")
+
+        with mock.patch.object(api, "getArtistAlbums", return_value=[buried, ranked, variant]) as discog:
+            merged = api.mergeMatchingArtistAlbums(
+                "O.S.T.R.",
+                [ranked],
+                [artist],
+                includeEP=False,
+            )
+
+        discog.assert_called_once_with(4511654, includeEP=False)
+        self.assertEqual([item.title for item in merged], [
+            "Masz to jak w Banku",
+            "W drodze po szczęście",
+            "LTD.",
+        ])
+
+    def test_merge_matching_artist_albums_skips_unrelated_query(self):
+        api = TidalAPI()
+        ranked = SimpleNamespace(id=1, title="Album")
+        with mock.patch.object(api, "getArtistAlbums") as discog:
+            merged = api.mergeMatchingArtistAlbums(
+                "masz to jak w banku",
+                [ranked],
+                [SimpleNamespace(id=4511654, name="O.S.T.R.")],
+            )
+        discog.assert_not_called()
+        self.assertEqual(merged, [ranked])
+
+    def test_search_albums_for_query_uses_discography_when_artist_matches(self):
+        api = TidalAPI()
+        artist = SimpleNamespace(id=4511654, name="O.S.T.R.")
+        ranked = SimpleNamespace(id=1, title="404")
+        buried = SimpleNamespace(id=2, title="Masz to jak w Banku")
+        artist_page = SimpleNamespace(artists=SimpleNamespace(items=[artist]))
+        album_page = SimpleNamespace(albums=SimpleNamespace(items=[ranked], totalNumberOfItems=125))
+
+        def fake_search(text, etype, offset=0, limit=10):
+            self.assertEqual(text, "O.S.T.R.")
+            if etype == Type.Artist:
+                return artist_page
+            return album_page
+
+        with mock.patch.object(api, "search", side_effect=fake_search) as search, \
+             mock.patch.object(api, "searchAll") as search_all, \
+             mock.patch.object(api, "getArtistAlbums", return_value=[buried, ranked]), \
+             mock.patch.object(api, "preferAtmosSearchAlbums", side_effect=lambda albums: albums):
+            albums = api.searchAlbumsForQuery("O.S.T.R.", includeEP=True)
+
+        search_all.assert_not_called()
+        self.assertEqual([call.args[1] for call in search.call_args_list], [Type.Artist, Type.Album])
+        self.assertEqual(search.call_args_list[1].kwargs["limit"], 50)
+        self.assertEqual([item.title for item in albums], ["Masz to jak w Banku", "404"])
+
+    def test_search_albums_for_query_paginates_when_no_artist_match(self):
+        api = TidalAPI()
+        albums = [SimpleNamespace(id=i, title=f"Hit {i}") for i in range(1, 12)]
+        artist_page = SimpleNamespace(artists=SimpleNamespace(items=[
+            SimpleNamespace(id=1, name="Unrelated"),
+        ]))
+        paged = SimpleNamespace(albums=SimpleNamespace(items=albums))
+
+        with mock.patch.object(api, "search", return_value=artist_page) as search, \
+             mock.patch.object(api, "searchAll", return_value=paged) as search_all, \
+             mock.patch.object(api, "getArtistAlbums") as discog, \
+             mock.patch.object(api, "preferAtmosSearchAlbums", side_effect=lambda items: items):
+            result = api.searchAlbumsForQuery("masz to jak w banku")
+
+        search.assert_called_once()
+        search_all.assert_called_once_with("masz to jak w banku", Type.Album)
+        discog.assert_not_called()
+        self.assertEqual(len(result), 11)
+
+    def test_gui_backend_album_search_uses_artist_discography(self):
+        backend = TidekeeperBackend()
+        buried = self._album()
+        buried.title = "Masz to jak w Banku"
+        with mock.patch.object(backend, "_ensure_catalog_session"), \
+             mock.patch.object(events.TIDAL_API, "searchAlbumsForQuery", return_value=[buried]) as lookup:
+            items = backend.search("O.S.T.R.", Type.Album)
+
+        lookup.assert_called_once_with("O.S.T.R.", includeEP=events.SETTINGS.includeEP)
+        self.assertEqual([item.title for item in items], ["Masz to jak w Banku"])
+        self.assertEqual(items[0].kind, Type.Album)
 
     def test_invalid_api_key_index_returns_error_key_dict(self):
         self.assertFalse(apiKey.isItemValid(999))

@@ -33,6 +33,16 @@ RATE_LIMIT_MAX_ATTEMPTS = 3
 # Keep short: signed CDN URLs often expire well under 10 minutes.
 STREAM_CACHE_TTL_SECONDS = 90
 STREAM_CACHE_MAX_ITEMS = 256
+SEARCH_PAGE_SIZE = 50
+SEARCH_MAX_ITEMS = 200
+SEARCH_RESULT_TYPES = (Type.Artist, Type.Album, Type.Track, Type.Playlist, Type.Video)
+SEARCH_BUCKETS = {
+    Type.Track: 'tracks',
+    Type.Video: 'videos',
+    Type.Album: 'albums',
+    Type.Artist: 'artists',
+    Type.Playlist: 'playlists',
+}
 
 
 class RequestRateLimiter:
@@ -631,22 +641,128 @@ class TidalAPI(object):
                   "types": typeStr}
         return aigpy.model.dictToModel(self.__get__('search', params=params), SearchResult())
 
+    def _asItemList(self, items):
+        if items is None:
+            return []
+        if isinstance(items, list):
+            return items
+        return [items]
+
     def getSearchResultItems(self, result: SearchResult, type: Type):
         if result is None:
             return []
-        if type == Type.Track:
-            items = getattr(result.tracks, 'items', None)
-        elif type == Type.Video:
-            items = getattr(result.videos, 'items', None)
-        elif type == Type.Album:
-            items = getattr(result.albums, 'items', None)
-        elif type == Type.Artist:
-            items = getattr(result.artists, 'items', None)
-        elif type == Type.Playlist:
-            items = getattr(result.playlists, 'items', None)
-        else:
+        bucket = SEARCH_BUCKETS.get(type)
+        if not bucket:
             return []
-        return items or []
+        items = getattr(getattr(result, bucket, None), 'items', None)
+        return self._asItemList(items)
+
+    def __normalizeSearchName__(self, text) -> str:
+        return re.sub(r'[^a-z0-9]+', '', (text or '').casefold())
+
+    def findMatchingSearchArtists(self, text, artists=None):
+        needle = self.__normalizeSearchName__(text)
+        if len(needle) < 2:
+            return []
+        matches = []
+        for artist in artists or []:
+            name = self.__normalizeSearchName__(getattr(artist, 'name', None))
+            if name and name == needle:
+                matches.append(artist)
+        return matches
+
+    def searchAll(self, text: str, type: Type, offset: int = 0, limit: int = SEARCH_PAGE_SIZE,
+                  max_items: int = SEARCH_MAX_ITEMS) -> SearchResult:
+        """Page through catalog search instead of stopping at the first 10 hits."""
+        kinds = list(SEARCH_RESULT_TYPES) if type == Type.Null else [type]
+        merged = None
+        page_offset = max(0, int(offset or 0))
+        page_size = max(1, int(limit or SEARCH_PAGE_SIZE))
+        cap = max(1, int(max_items or SEARCH_MAX_ITEMS))
+
+        while page_offset < cap:
+            page_limit = min(page_size, cap - page_offset)
+            page = self.search(text, type, offset=page_offset, limit=page_limit)
+            if page is None:
+                return merged
+            if merged is None:
+                merged = page
+                for kind in kinds:
+                    bucket = getattr(merged, SEARCH_BUCKETS.get(kind, ''), None)
+                    if bucket is not None:
+                        bucket.items = self.getSearchResultItems(merged, kind)
+            else:
+                for kind in kinds:
+                    bucket = getattr(merged, SEARCH_BUCKETS.get(kind, ''), None)
+                    if bucket is None:
+                        continue
+                    bucket.items = self.getSearchResultItems(merged, kind) + self.getSearchResultItems(page, kind)
+
+            more = False
+            for kind in kinds:
+                items = self.getSearchResultItems(page, kind)
+                bucket = getattr(page, SEARCH_BUCKETS.get(kind, ''), None)
+                total = int(getattr(bucket, 'totalNumberOfItems', 0) or 0)
+                have = page_offset + len(items)
+                page_cap = min(total, cap) if total else have
+                if items and have < page_cap:
+                    more = True
+            if not more:
+                break
+            page_offset += page_limit
+        return merged
+
+    def mergeMatchingArtistAlbums(self, text, albums, artists=None, includeEP=True):
+        """Prepend an artist's discography when the query is that artist's name.
+
+        Album search ranks by title, so searching 'O.S.T.R.' hides albums such as
+        'Masz to jak w Banku' and never returns some catalog variants.
+        """
+        matches = self.findMatchingSearchArtists(text, artists)
+        existing = self._asItemList(albums)
+        if not matches:
+            return existing
+
+        seen = set()
+        merged = []
+
+        def add(album):
+            album_id = str(getattr(album, 'id', '') or '')
+            if album_id and album_id in seen:
+                return
+            if album_id:
+                seen.add(album_id)
+            merged.append(album)
+
+        for artist in matches:
+            artist_id = getattr(artist, 'id', None)
+            if artist_id is None or str(artist_id).strip() == '':
+                continue
+            try:
+                discog = self.getArtistAlbums(artist_id, includeEP=includeEP) or []
+            except Exception as e:
+                logging.info("Unable to load albums for artist %s: %s", artist_id, e)
+                continue
+            for album in discog:
+                add(album)
+        for album in existing:
+            add(album)
+        return merged
+
+    def searchAlbumsForQuery(self, text, includeEP=True):
+        """Album search that also loads a matching artist's full album list."""
+        artists = self.getSearchResultItems(self.search(text, Type.Artist, limit=10), Type.Artist)
+        if self.findMatchingSearchArtists(text, artists):
+            result = self.search(text, Type.Album, offset=0, limit=SEARCH_PAGE_SIZE)
+        else:
+            result = self.searchAll(text, Type.Album)
+        albums = self.mergeMatchingArtistAlbums(
+            text,
+            self.getSearchResultItems(result, Type.Album),
+            artists,
+            includeEP=includeEP,
+        )
+        return self.preferAtmosSearchAlbums(albums)
 
     def getLyrics(self, id) -> Lyrics:
         data = self.__get__(f'tracks/{str(id)}/lyrics', urlpre='https://api.tidal.com/v1/')
