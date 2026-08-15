@@ -126,6 +126,14 @@ def __retryDelay__(response, attempt):
     return min(2 ** attempt, 20)
 
 
+def __shouldRetryDownload__(error=None):
+    """Retry connection failures and transient HTTP statuses, not 404/403/etc."""
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    if status is None:
+        return True
+    return status in RETRYABLE_STATUS_CODES
+
+
 def __httpRequest__(method, url, **kwargs):
     last_error = None
     for attempt in range(DOWNLOAD_RETRIES):
@@ -140,10 +148,11 @@ def __httpRequest__(method, url, **kwargs):
             return response
         except requests.RequestException as e:
             last_error = e
+            retry = attempt < DOWNLOAD_RETRIES - 1 and __shouldRetryDownload__(e)
             if response is not None:
                 response.close()
-            if attempt < DOWNLOAD_RETRIES - 1:
-                time.sleep(__retryDelay__(response, attempt))
+            if retry:
+                time.sleep(__retryDelay__(getattr(e, "response", None), attempt))
                 continue
             raise
     raise last_error
@@ -412,7 +421,7 @@ def __downloadSingleUrl__(
             return __localFileSize__(outputPath)
         except (requests.RequestException, OSError, IOError) as error:
             lastError = error
-            if attempt >= DOWNLOAD_RETRIES - 1:
+            if attempt >= DOWNLOAD_RETRIES - 1 or not __shouldRetryDownload__(error):
                 raise
             time.sleep(__retryDelay__(response, attempt))
         finally:

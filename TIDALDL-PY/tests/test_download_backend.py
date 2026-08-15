@@ -79,11 +79,13 @@ class DownloadBackendTests(unittest.TestCase):
         output_file = self.root / "existing.out"
         output_file.write_bytes(b"known-good")
 
-        ok, msg = download.__downloadUrls__([f"{self.base_url}/missing.bin"], str(output_file), threadNum=1)
+        with mock.patch.object(download.time, "sleep") as sleep:
+            ok, msg = download.__downloadUrls__([f"{self.base_url}/missing.bin"], str(output_file), threadNum=1)
 
         self.assertFalse(ok)
         self.assertIn("404", msg)
         self.assertEqual(output_file.read_bytes(), b"known-good")
+        sleep.assert_not_called()
 
     def test_single_url_download_resumes_existing_partial_file(self):
         output_file = self.root / "resumed.out"
@@ -249,15 +251,17 @@ class DownloadBackendTests(unittest.TestCase):
         output_file = self.root / "partial-join.out"
         parts_dir = Path(str(output_file) + ".parts")
 
-        ok, msg = download.__downloadUrls__([
-            f"{self.base_url}/000.bin",
-            f"{self.base_url}/missing.bin",
-        ], str(output_file), threadNum=1, probeSize=False)
+        with mock.patch.object(download.time, "sleep") as sleep:
+            ok, msg = download.__downloadUrls__([
+                f"{self.base_url}/000.bin",
+                f"{self.base_url}/missing.bin",
+            ], str(output_file), threadNum=1, probeSize=False)
 
         self.assertFalse(ok)
         self.assertTrue(parts_dir.exists())
         self.assertEqual((parts_dir / "00000000.part").read_bytes(), b"KEEPME")
         self.assertFalse(output_file.exists())
+        sleep.assert_not_called()
 
     def test_parallel_multi_url_uses_resumable_segments(self):
         (self.source / "000.bin").write_bytes(b"one-")
@@ -336,6 +340,57 @@ class DownloadBackendTests(unittest.TestCase):
         finally:
             for key, value in old_values.items():
                 setattr(download.SETTINGS, key, value)
+
+
+class DownloadRetryTests(unittest.TestCase):
+    def test_http_request_does_not_retry_not_found(self):
+        response = mock.Mock(status_code=404, headers={})
+        response.raise_for_status.side_effect = requests.HTTPError(response=response)
+        session = mock.Mock()
+        session.request.return_value = response
+        with mock.patch.object(download, "__httpSession__", return_value=session), \
+             mock.patch.object(download.time, "sleep") as sleep:
+            with self.assertRaises(requests.HTTPError):
+                download.__httpRequest__("GET", "http://example.invalid/missing")
+        self.assertEqual(session.request.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_http_request_retries_service_unavailable(self):
+        failed = mock.Mock(status_code=503, headers={"Retry-After": "1"})
+        success = mock.Mock(status_code=200, headers={})
+        success.raise_for_status.return_value = None
+        session = mock.Mock()
+        session.request.side_effect = [failed, success]
+        with mock.patch.object(download, "__httpSession__", return_value=session), \
+             mock.patch.object(download.time, "sleep") as sleep:
+            result = download.__httpRequest__("GET", "http://example.invalid/track")
+        self.assertIs(result, success)
+        self.assertEqual(session.request.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_http_request_retries_connection_error(self):
+        success = mock.Mock(status_code=200, headers={})
+        success.raise_for_status.return_value = None
+        session = mock.Mock()
+        session.request.side_effect = [requests.ConnectionError("drop"), success]
+        with mock.patch.object(download, "__httpSession__", return_value=session), \
+             mock.patch.object(download.time, "sleep") as sleep:
+            result = download.__httpRequest__("GET", "http://example.invalid/track")
+        self.assertIs(result, success)
+        self.assertEqual(session.request.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_incomplete_write_still_retries_after_http_200(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "incomplete.out"
+            with mock.patch.object(download, "__httpRequest__", side_effect=IOError("disk full")), \
+                 mock.patch.object(download.time, "sleep") as sleep:
+                with self.assertRaises(IOError):
+                    download.__downloadSingleUrl__(
+                        "http://example.invalid/track.bin",
+                        str(output_file),
+                    )
+            self.assertEqual(sleep.call_count, download.DOWNLOAD_RETRIES - 1)
 
 
 class GuiDownloadStatusTests(unittest.TestCase):

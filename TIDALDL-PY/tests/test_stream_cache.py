@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tidal_dl.enums import AudioQuality
-from tidal_dl.tidal import STREAM_CACHE_TTL_SECONDS, TidalAPI
+from tidal_dl.tidal import STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_SECONDS, TidalAPI
 
 
 class StreamCacheTests(unittest.TestCase):
@@ -66,6 +66,19 @@ class StreamCacheTests(unittest.TestCase):
     def test_stream_cache_ttl_is_short_lived(self):
         # Signed CDN URLs often expire in minutes; keep the cache brief.
         self.assertLessEqual(STREAM_CACHE_TTL_SECONDS, 120)
+
+    def test_cache_evicts_least_recently_used_stream(self):
+        api = TidalAPI()
+        stream = self._stream()
+        with mock.patch("tidal_dl.tidal.STREAM_CACHE_MAX_ITEMS", 2):
+            api.__cacheStream__(("1", ("HiFi",)), stream)
+            api.__cacheStream__(("2", ("HiFi",)), stream)
+            self.assertIsNotNone(api.__getCachedStream__(("1", ("HiFi",))))
+            api.__cacheStream__(("3", ("HiFi",)), stream)
+
+        self.assertIsNone(api.__getCachedStream__(("2", ("HiFi",))))
+        self.assertIsNotNone(api.__getCachedStream__(("1", ("HiFi",))))
+        self.assertLessEqual(len(api._streamCache), STREAM_CACHE_MAX_ITEMS)
 
 
 if __name__ == "__main__":

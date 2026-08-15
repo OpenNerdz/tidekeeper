@@ -105,9 +105,7 @@ setup(
         "aigpy>=2022.7.8.1",
         "requests>=2.34.2",
         "pycryptodome",
-        "pydub",
         "prettytable>=3.18.0",
-        "lxml>=6.1.1",
     ],
     extras_require={
         "gui": ["PySide6>=6.5"],

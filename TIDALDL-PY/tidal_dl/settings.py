@@ -13,10 +13,40 @@ import aigpy
 import base64
 import logging
 import os
+import tempfile
 
-from .lang.language import *
-from .enums import *
+from .enums import AudioQuality, Type, VideoQuality
 from .environment import getDefaultDownloadPath
+from .lang.language import LANG
+
+
+def _atomicWrite(path, content, binary=False, mode=0o600):
+    """Durably replace a settings file without exposing partial content."""
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    descriptor, temporary_path = tempfile.mkstemp(prefix=".tidekeeper-", dir=parent)
+    try:
+        with os.fdopen(descriptor, "wb" if binary else "w", encoding=None if binary else "utf-8") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, path)
+        try:
+            directory_fd = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            # Directory fsync is unavailable on some supported platforms.
+            pass
+    except Exception:
+        try:
+            os.remove(temporary_path)
+        except OSError:
+            pass
+        raise
 
 
 def getDefaultAudioQualityPriority():
@@ -182,7 +212,7 @@ class Settings(aigpy.model.ModelBase):
         data['audioQualityPriority'] = [item.name for item in self.getAudioQualityPriority(self.audioQualityPriority)]
         data['videoQuality'] = self.videoQuality.name
         txt = json.dumps(data, indent=2, sort_keys=True)
-        aigpy.file.write(self._path_, txt, 'w+')
+        _atomicWrite(self._path_, txt, mode=0o600)
 
 
 class TokenSettings(aigpy.model.ModelBase):
@@ -230,18 +260,7 @@ class TokenSettings(aigpy.model.ModelBase):
         data = aigpy.model.modelToDict(self)
         txt = json.dumps(data)
         encoded = self.__encode__(txt)
-        parent = os.path.dirname(os.path.abspath(path))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            with os.fdopen(fd, 'wb') as output:
-                output.write(encoded)
-        finally:
-            try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass
+        _atomicWrite(path, encoded, binary=True, mode=0o600)
 
 
 def syncPlaybackRateLimiter():

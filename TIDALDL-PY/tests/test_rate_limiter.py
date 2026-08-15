@@ -111,6 +111,71 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         penalize.assert_called_once()
         sleep.assert_called_once_with(11.0)
 
+    def test_auth_post_closes_successful_response(self):
+        api = TidalAPI()
+        response = SimpleNamespace(
+            status_code=200,
+            text='{"access_token":"ok"}',
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={"access_token": "ok"}),
+        )
+        with mock.patch.object(api.session, "post", return_value=response):
+            result = api.__post__("/token", {})
+        self.assertEqual(result, {"access_token": "ok"})
+        response.close.assert_called_once_with()
+
+    def test_catalog_503_uses_bounded_backoff_before_retry(self):
+        api = TidalAPI()
+        failed = SimpleNamespace(
+            status_code=503,
+            text="unavailable",
+            headers={"Retry-After": "4"},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={}),
+        )
+        success = SimpleNamespace(
+            status_code=200,
+            text='{"id":1}',
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={"id": 1}),
+        )
+        with mock.patch.object(api.session, "get", side_effect=[failed, success]), \
+             mock.patch("tidal_dl.tidal.time.sleep") as sleep:
+            result = api.__getOnce__("albums/1", urlpre=API_BASE_PRIMARY)
+        self.assertEqual(result, {"id": 1})
+        sleep.assert_called_once_with(4.0)
+
+    def test_catalog_rejects_non_object_json(self):
+        api = TidalAPI()
+        response = SimpleNamespace(
+            status_code=200,
+            text="[]",
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value=[]),
+        )
+        with mock.patch.object(api.session, "get", return_value=response):
+            with self.assertRaises(TidalApiError) as context:
+                api.__getOnce__("albums/1", urlpre=API_BASE_PRIMARY)
+        self.assertIn("invalid JSON payload", str(context.exception))
+
+    def test_manifest_rejects_missing_attributes(self):
+        api = TidalAPI()
+        response = SimpleNamespace(
+            status_code=200,
+            text='{"data":{}}',
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={"data": {}}),
+        )
+        with mock.patch.object(api.session, "get", return_value=response), \
+             mock.patch.object(api, "__waitForStreamRequestQuota__"):
+            with self.assertRaises(TidalApiError) as context:
+                api.__getOpenApiTrackManifestOnce__(1, ["FLAC"], "DOWNLOAD")
+        self.assertIn("attributes are missing", str(context.exception))
+
     def test_atmos_album_twin_cache_avoids_repeat_lookup(self):
         api = TidalAPI()
         stereo = SimpleNamespace(

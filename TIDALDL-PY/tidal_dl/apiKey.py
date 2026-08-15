@@ -67,10 +67,6 @@ __ERROR_KEY__ = {
 }
 
 
-def getNum():
-    return len(__API_KEYS__['keys'])
-
-
 def getItem(index: int):
     if index < 0 or index >= len(__API_KEYS__['keys']):
         return __ERROR_KEY__

@@ -13,7 +13,7 @@ from tidal_dl import apiKey, download, events, paths
 from tidal_dl.enums import AudioQuality, Type
 from tidal_dl.gui_app.backend import TidekeeperBackend, SearchItem, with_video_only
 from tidal_dl.model import Artist, StreamUrl
-from tidal_dl.settings import Settings, TokenSettings
+from tidal_dl.settings import SETTINGS, TOKEN, Settings, TokenSettings, _atomicWrite
 from tidal_dl.tidal import API_BASE_PRIMARY, TidalAPI, TidalApiError
 
 
@@ -2072,6 +2072,64 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             '{"errors":[{"status":"403","code":"PREREQUISITE_MISSING"}]}'
         ))
         self.assertIn("quality-priority", hint)
+
+
+class ReliabilityRegressionTests(unittest.TestCase):
+    def test_atomic_write_replaces_content_and_limits_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text("old", encoding="utf-8")
+
+            _atomicWrite(str(path), "new", mode=0o600)
+
+            self.assertEqual(path.read_text(encoding="utf-8"), "new")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_atomic_write_preserves_old_file_when_replace_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text("known-good", encoding="utf-8")
+            with mock.patch("tidal_dl.settings.os.replace", side_effect=OSError("disk failure")):
+                with self.assertRaises(OSError):
+                    _atomicWrite(str(path), "new")
+            self.assertEqual(path.read_text(encoding="utf-8"), "known-good")
+            self.assertEqual(list(Path(directory).glob(".tidekeeper-*")), [])
+
+    def test_auth_post_retries_server_error_using_retry_after(self):
+        api = TidalAPI()
+        failed = mock.Mock(status_code=503, text="busy", headers={"Retry-After": "2"})
+        failed.json.return_value = {"status": 503}
+        success = mock.Mock(status_code=200, text='{"access_token":"ok"}', headers={})
+        success.json.return_value = {"access_token": "ok"}
+        with mock.patch.object(api.session, "post", side_effect=[failed, success]), \
+             mock.patch("tidal_dl.tidal.time.sleep") as sleep:
+            result = api.__post__("/token", {})
+        self.assertEqual(result, {"access_token": "ok"})
+        sleep.assert_called_once_with(max(2.0, SETTINGS.requestIntervalSeconds))
+
+    def test_auth_post_rejects_non_object_json(self):
+        api = TidalAPI()
+        response = mock.Mock(status_code=200, text="[]", headers={})
+        response.json.return_value = []
+        with mock.patch.object(api.session, "post", return_value=response):
+            with self.assertRaises(TidalApiError):
+                api.__post__("/token", {})
+
+    def test_saved_token_refresh_reuses_refresh_from_other_worker(self):
+        api = TidalAPI()
+        api.key.accessToken = "expired"
+        old_values = (TOKEN.accessToken, TOKEN.refreshToken, TOKEN.userid, TOKEN.countryCode)
+        try:
+            TOKEN.accessToken = "fresh"
+            TOKEN.refreshToken = "refresh"
+            TOKEN.userid = "user"
+            TOKEN.countryCode = "US"
+            with mock.patch.object(api, "refreshAccessToken") as refresh:
+                self.assertTrue(api.__refreshSavedAccessToken__())
+            refresh.assert_not_called()
+            self.assertEqual(api.key.accessToken, "fresh")
+        finally:
+            TOKEN.accessToken, TOKEN.refreshToken, TOKEN.userid, TOKEN.countryCode = old_values
 
 
 if __name__ == "__main__":

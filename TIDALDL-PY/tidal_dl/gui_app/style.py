@@ -1,5 +1,4 @@
 TABLE_TEXT_COLOR = "#172033"
-TABLE_ALT_COLOR = "#f8fafc"
 
 APP_STYLESHEET = """
 * {

@@ -15,15 +15,31 @@ import time
 import base64
 import json
 import logging
+from collections import OrderedDict
 from threading import Lock
 from typing import List
 from xml.etree import ElementTree
 from urllib.parse import unquote, urlparse
 
+import aigpy
 import requests
 
-from .model import *
-from .settings import *
+from .enums import AudioQuality, Type, VideoQuality
+from .model import (
+    Album,
+    Artist,
+    LoginKey,
+    Lyrics,
+    Mix,
+    Playlist,
+    SearchResult,
+    StreamRespond,
+    StreamUrl,
+    Track,
+    Video,
+    VideoStreamUrl,
+)
+from .settings import SETTINGS, TOKEN, Settings, syncPlaybackRateLimiter
 
 REQUEST_TIMEOUT = (5, 60)
 API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
@@ -119,8 +135,9 @@ class TidalAPI(object):
         self.session.mount("https://", adapter)
         self.playbackRateLimiter = PLAYBACK_RATE_LIMITER
         self._playbackBlockedParams = set()
-        self._streamCache = {}
+        self._streamCache = OrderedDict()
         self._streamCacheLock = Lock()
+        self._tokenRefreshLock = Lock()
         # Serialize stream-manifest resolution so multi-thread downloads do not
         # stampede playback/OpenAPI endpoints.
         self._streamResolveLock = Lock()
@@ -189,20 +206,33 @@ class TidalAPI(object):
         if aigpy.string.isNull(getattr(TOKEN, 'refreshToken', None)):
             return False
 
-        try:
-            if not self.refreshAccessToken(TOKEN.refreshToken):
-                return False
+        access_token_before_wait = self.key.accessToken
+        with self._tokenRefreshLock:
+            # Another worker may have refreshed while this request waited.
+            if (
+                not aigpy.string.isNull(getattr(TOKEN, 'accessToken', None))
+                and TOKEN.accessToken != access_token_before_wait
+            ):
+                self.key.userId = TOKEN.userid
+                self.key.countryCode = TOKEN.countryCode
+                self.key.accessToken = TOKEN.accessToken
+                self.key.refreshToken = TOKEN.refreshToken
+                return True
 
-            TOKEN.userid = self.key.userId
-            TOKEN.countryCode = self.key.countryCode
-            TOKEN.accessToken = self.key.accessToken
-            TOKEN.refreshToken = self.key.refreshToken
-            TOKEN.expiresAfter = time.time() + int(self.key.expiresIn)
-            TOKEN.save()
-            return True
-        except Exception as e:
-            logging.info("Unable to refresh saved access token: %s", e)
-            return False
+            try:
+                if not self.refreshAccessToken(TOKEN.refreshToken):
+                    return False
+
+                TOKEN.userid = self.key.userId
+                TOKEN.countryCode = self.key.countryCode
+                TOKEN.accessToken = self.key.accessToken
+                TOKEN.refreshToken = self.key.refreshToken
+                TOKEN.expiresAfter = time.time() + int(self.key.expiresIn)
+                TOKEN.save()
+                return True
+            except (KeyError, TypeError, ValueError, OSError, requests.RequestException) as error:
+                logging.info("Unable to refresh saved access token: %s", error)
+                return False
 
     def __requestIntervalSeconds__(self):
         if SETTINGS.downloadDelay is False:
@@ -385,7 +415,18 @@ class TidalAPI(object):
                 if respond.status_code != 200:
                     raise self.__httpError__("Get operation", respond)
 
-                result = json.loads(respond.text)
+                try:
+                    result = json.loads(respond.text)
+                except (TypeError, ValueError) as error:
+                    raise TidalApiError(
+                        "Get operation failed: TIDAL returned invalid JSON.",
+                        respond.status_code,
+                    ) from error
+                if not isinstance(result, dict):
+                    raise TidalApiError(
+                        "Get operation failed: TIDAL returned an invalid JSON payload.",
+                        respond.status_code,
+                    )
                 if 'status' not in result:
                     if playbackRequest:
                         self.__rewardStreamRequest__()
@@ -398,6 +439,8 @@ class TidalAPI(object):
                 if self.__isNonRetryableTidalApiError__(e, playbackRequest) or index >= maxAttempts - 1:
                     raise e
                 lastError = e
+                if e.statusCode in (500, 502, 503, 504):
+                    time.sleep(self.__retryAfter__(respond, index))
             except Exception as e:
                 lastError = e
                 if index >= maxAttempts - 1 and respond is not None:
@@ -473,19 +516,47 @@ class TidalAPI(object):
         return ret
 
     def __post__(self, path, data, auth=None, urlpre='https://auth.tidal.com/v1/oauth2'):
-        for index in range(3):
+        url = urlpre + path
+        for attempt in range(3):
+            response = None
             try:
-                response = self.session.post(urlpre + path, data=data, auth=auth, timeout=REQUEST_TIMEOUT)
+                response = self.session.post(url, data=data, auth=auth, timeout=REQUEST_TIMEOUT)
                 try:
-                    return response.json()
-                except ValueError:
+                    result = response.json()
+                except ValueError as error:
                     detail = response.text[:200].replace("\n", " ")
-                    raise Exception(
-                        f"Unexpected HTTP {response.status_code} response from Tidal auth endpoint: {detail}"
-                    )
-            except Exception as e:
-                if index == 2:
-                    raise e
+                    if response.status_code < 500:
+                        raise TidalApiError(
+                            f"Auth operation failed: HTTP {response.status_code} {detail}",
+                            response.status_code,
+                        ) from error
+                    raise requests.HTTPError(
+                        f"Unexpected HTTP {response.status_code} response from Tidal auth endpoint: {detail}",
+                        response=response,
+                    ) from error
+
+                if not isinstance(result, dict):
+                    raise TidalApiError("Auth endpoint returned an invalid JSON payload.", response.status_code)
+                if response.status_code == 429 or response.status_code >= 500:
+                    if attempt == 2:
+                        raise self.__httpError__("Auth operation", response)
+                    delay = self.__retryAfter__(response, attempt)
+                    response.close()
+                    time.sleep(delay)
+                    continue
+                # OAuth errors are valid JSON responses and callers interpret
+                # authorization_pending and invalid_grant themselves.
+                return result
+            except TidalApiError:
+                raise
+            except requests.RequestException:
+                if attempt == 2:
+                    raise
+                time.sleep(min(2 ** attempt, 10))
+            finally:
+                if response is not None:
+                    response.close()
+        raise TidalApiError("Auth operation failed after retries.")
 
     def getDeviceCode(self) -> str:
         data = {
@@ -996,9 +1067,26 @@ class TidalAPI(object):
         if response is None or response.status_code != 200:
             raise self.__httpError__("Track manifest request", response)
 
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as error:
+            raise TidalApiError(
+                "Track manifest request failed: TIDAL returned invalid JSON.",
+                response.status_code,
+            ) from error
+        if not isinstance(data, dict):
+            raise TidalApiError(
+                "Track manifest request failed: TIDAL returned an invalid JSON payload.",
+                response.status_code,
+            )
+        attributes = data.get('data', {}).get('attributes')
+        if not isinstance(attributes, dict):
+            raise TidalApiError(
+                "Track manifest request failed: response attributes are missing.",
+                response.status_code,
+            )
         self.__rewardStreamRequest__()
-        return data.get('data', {}).get('attributes', {})
+        return attributes
 
     def __openApiFlacSoundQuality__(self, formats):
         available = set(formats or [])
@@ -1276,20 +1364,23 @@ class TidalAPI(object):
             if now - created > STREAM_CACHE_TTL_SECONDS:
                 self._streamCache.pop(key, None)
                 return None
+            self._streamCache.move_to_end(key)
             return copy.deepcopy(stream)
 
     def __cacheStream__(self, key, stream):
         now = time.monotonic()
         with self._streamCacheLock:
-            expired = [
-                itemKey for itemKey, (created, _) in self._streamCache.items()
-                if now - created > STREAM_CACHE_TTL_SECONDS
-            ]
-            for itemKey in expired:
-                self._streamCache.pop(itemKey, None)
+            # OrderedDict keeps insertion/access order, allowing expired and LRU
+            # entries to be removed in O(1) instead of scanning the full cache.
+            while self._streamCache:
+                oldestKey = next(iter(self._streamCache))
+                created, _ = self._streamCache[oldestKey]
+                if now - created <= STREAM_CACHE_TTL_SECONDS:
+                    break
+                self._streamCache.popitem(last=False)
+            self._streamCache.pop(key, None)
             while len(self._streamCache) >= STREAM_CACHE_MAX_ITEMS:
-                oldest = min(self._streamCache, key=lambda itemKey: self._streamCache[itemKey][0])
-                self._streamCache.pop(oldest, None)
+                self._streamCache.popitem(last=False)
             self._streamCache[key] = (now, copy.deepcopy(stream))
 
     def getStreamUrlByPriority(self, id, qualities):
