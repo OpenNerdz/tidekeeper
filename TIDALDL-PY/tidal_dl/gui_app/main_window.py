@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import webbrowser
 from typing import Dict, List, Tuple
 
@@ -1184,8 +1185,12 @@ class MainWindow(QMainWindow):
         self.backend.save_settings(self.collect_settings_values())
 
     def save_settings(self):
-        self.backend.save_settings(self.collect_settings_values())
-        self.settings_status.setText("Settings saved.")
+        result = self.backend.save_settings(self.collect_settings_values()) or {}
+        if result.get("reauth_required"):
+            self.refresh_auth_status()
+            self.settings_status.setText("Settings saved. Sign in again — the TIDAL client changed.")
+        else:
+            self.settings_status.setText("Settings saved.")
 
     def refresh_auth_status(self):
         status = self.backend.auth_status()
@@ -1216,29 +1221,45 @@ class MainWindow(QMainWindow):
         self.account_log.append(f"Code: {challenge.user_code}")
         self.login_polling = True
         self.login_poll_inflight = False
+        self.login_deadline = time.time() + max(1, int(challenge.expires_in or 0))
         self.poll_timer.start(max(1, challenge.interval) * 1000)
 
-    def _device_login_error(self, message: str):
+    def _stop_device_login(self, message: str):
+        self.poll_timer.stop()
+        self.login_polling = False
+        self.login_poll_inflight = False
+        self.login_deadline = 0
         self.device_login_button.setEnabled(True)
-        self.account_log.append(message)
+        if message:
+            self.account_log.append(message)
+
+    def _device_login_error(self, message: str):
+        self._stop_device_login(message)
 
     def _poll_device_login(self):
         if not self.login_polling or self.login_poll_inflight:
             return
+        if getattr(self, "login_deadline", 0) and time.time() >= self.login_deadline:
+            self._stop_device_login("Login code expired. Start login again.")
+            return
         self.login_poll_inflight = True
         worker = TaskWorker(self.backend.poll_device_login)
         worker.signals.result.connect(self._device_login_polled)
-        worker.signals.error.connect(lambda message: self.account_log.append(message))
+        worker.signals.error.connect(self._device_login_poll_error)
         worker.signals.finished.connect(self._device_login_poll_finished)
         self.start_worker(worker)
 
     def _device_login_polled(self, status):
         self.refresh_auth_status()
-        if status.has_token:
-            self.poll_timer.stop()
-            self.login_polling = False
-            self.device_login_button.setEnabled(True)
-            self.account_log.append("Login complete.")
+        if getattr(status, "fresh_login", False):
+            self._stop_device_login("Login complete.")
+
+    def _device_login_poll_error(self, message: str):
+        lowered = (message or "").lower()
+        if "expired" in lowered or "denied" in lowered:
+            self._stop_device_login(message)
+            return
+        self.account_log.append(message)
 
     def _device_login_poll_finished(self):
         self.login_poll_inflight = False

@@ -88,14 +88,22 @@ class ItemProgressReporter:
         self._emit(self.item, self.snapshot())
 
     def begin_collection(self, total):
+        extra = max(int(total or 0), 0)
+        if extra <= 0:
+            return
         with self._lock:
-            self.count = max(int(total or 0), 0)
-            self.completed = 0
-            self.current = 0
-            self.bytes = 0
-            self.bytes_total = 0
-            if self._started is None:
-                self._started = time.monotonic()
+            # Nested collections (album audio then videos) add to the total
+            # instead of resetting the bar back to 0%.
+            if self.count == 0:
+                self.count = extra
+                self.completed = 0
+                self.current = 0
+                self.bytes = 0
+                self.bytes_total = 0
+                if self._started is None:
+                    self._started = time.monotonic()
+            else:
+                self.count += extra
         self._push(force=True)
 
     def begin_entry(self, index, total, title=""):

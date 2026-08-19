@@ -369,7 +369,7 @@ def __downloadSingleUrl__(
         return __localFileSize__(outputPath)
 
     tempOutputPath = outputPath + ".download"
-    progressInitialized = False
+    reportedBytes = 0
     lastError = None
     knownTotal = expectedSize if expectedSize and expectedSize > 0 else -1
 
@@ -384,9 +384,10 @@ def __downloadSingleUrl__(
                 rangeStart = __contentRangeStart__(response)
                 if response.status_code == 206 and rangeStart == resumeSize:
                     mode = "ab"
-                    if not progressInitialized:
-                        __noteProgress__(progress, userProgress, resumeSize, progressLock)
-                        progressInitialized = True
+                    credit = max(resumeSize - reportedBytes, 0)
+                    if credit:
+                        __noteProgress__(progress, userProgress, credit, progressLock)
+                        reportedBytes = resumeSize
                 elif response.status_code == 200:
                     # Server ignored Range and returned the full object; restart.
                     __removeFile__(tempOutputPath)
@@ -415,6 +416,7 @@ def __downloadSingleUrl__(
                         continue
                     output.write(chunk)
                     __noteProgress__(progress, userProgress, len(chunk), progressLock)
+                    reportedBytes += len(chunk)
 
             __verifyLocalSize__(tempOutputPath, knownTotal, label="CDN object")
             os.replace(tempOutputPath, outputPath)
@@ -625,6 +627,20 @@ def __containerFallbackPath__(path):
     return path.rsplit('.', 1)[0] + '.m4a'
 
 
+def __looksLikeCompleteAudio__(path, minimum=1024):
+    size = aigpy.file.getSize(path)
+    if size < minimum:
+        return False
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(4)
+    except OSError:
+        return False
+    if path.lower().endswith(".flac"):
+        return header == b"fLaC"
+    return True
+
+
 def __skipPath__(path, stream):
     if __isSkip__(path, stream.urls):
         return path
@@ -634,7 +650,7 @@ def __skipPath__(path, stream):
 
     if SETTINGS.saveAsFlac and __isFlacInM4a__(stream):
         for candidate in (path, __containerFallbackPath__(path)):
-            if aigpy.file.getSize(candidate) > 0:
+            if __looksLikeCompleteAudio__(candidate):
                 return candidate
     return None
 
@@ -996,6 +1012,53 @@ def downloadAlbumInfo(album, tracks):
     aigpy.file.write(path, infos, "w+")
 
 
+def __finalizeVideoFile__(partPath, path):
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logging.warning("ffmpeg not found; saving concatenated MPEG-TS as %s", path)
+        os.replace(partPath, path)
+        Printf.info("Install ffmpeg to remux videos into playable MP4 files.")
+        return path
+
+    tempPath = f"{path}.tmp.{os.getpid()}.mp4"
+    __removeFile__(tempPath)
+    command = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        partPath,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        tempPath,
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if completed.returncode == 0 and __localFileSize__(tempPath) > 0:
+            os.replace(tempPath, path)
+            __removeFile__(partPath)
+            return path
+        logging.warning(
+            "ffmpeg remux failed (%s); keeping concatenated stream as %s",
+            (completed.stderr or b"").decode("utf-8", "ignore").strip(),
+            path,
+        )
+    except OSError as error:
+        logging.warning("ffmpeg remux failed: %s", error)
+    __removeFile__(tempPath)
+    os.replace(partPath, path)
+    return path
+
+
 def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, userProgress=None):
     title = getattr(video, 'title', None) or str(getattr(video, 'id', 'unknown'))
     partPath = ''
@@ -1033,7 +1096,7 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
             probeSize=False,
         )
         if check:
-            os.replace(partPath, path)
+            path = __finalizeVideoFile__(partPath, path)
             Printf.success(title)
             return True, ''
         else:
@@ -1202,7 +1265,11 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
             return None
 
         if albumId not in albumCache:
-            albumCache[albumId] = TIDAL_API.getAlbum(albumId)
+            try:
+                albumCache[albumId] = TIDAL_API.getAlbum(albumId)
+            except Exception as error:
+                logging.warning("Unable to load album %s for playlist track: %s", albumId, error)
+                albumCache[albumId] = None
 
         itemAlbum = albumCache[albumId]
         if SETTINGS.saveCovers and not SETTINGS.usePlaylistFolder and albumId not in downloadedCovers:
@@ -1211,7 +1278,7 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
         return itemAlbum
 
     def __trackProgressKwargs__():
-        if progress is None or SETTINGS.multiThread:
+        if progress is None:
             return {}
         return {"userProgress": progress}
 
@@ -1237,7 +1304,15 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
                 if itemAlbum is None:
                     itemAlbum = __getAlbum__(item)
                     item.trackNumberOnPlaylist = index + 1
-                futures[thread_pool.submit(downloadTrack, item, itemAlbum, playlist)] = index
+                if progress is not None:
+                    progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
+                futures[thread_pool.submit(
+                    downloadTrack,
+                    item,
+                    itemAlbum,
+                    playlist,
+                    **__trackProgressKwargs__(),
+                )] = index
 
             success = True
             for future in as_completed(futures):

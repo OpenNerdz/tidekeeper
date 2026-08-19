@@ -75,6 +75,20 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         openapi.assert_called_once()
         self.assertIn("999", api._atmosUnavailableTrackIds)
 
+    def test_atmos_transient_403_is_not_cached(self):
+        api = TidalAPI()
+        with mock.patch.object(
+            api,
+            "__getOpenApiTrackManifest__",
+            side_effect=TidalApiError("cdn blip", 403, []),
+        ) as openapi:
+            with self.assertRaises(TidalApiError):
+                api.__getAtmosStreamUrl__(888)
+            with self.assertRaises(TidalApiError):
+                api.__getAtmosStreamUrl__(888)
+        self.assertEqual(openapi.call_count, 2)
+        self.assertNotIn("888", api._atmosUnavailableTrackIds)
+
     def test_atmos_only_quality_does_not_probe_standard_hi_res(self):
         api = TidalAPI()
         with mock.patch.object(

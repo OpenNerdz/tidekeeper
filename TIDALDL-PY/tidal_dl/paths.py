@@ -137,7 +137,7 @@ def getPlaylistPath(playlist):
 
 
 def getTrackPath(track, stream, album=None, playlist=None):
-    base = './'
+    base = (SETTINGS.downloadPath or '.').rstrip('/') or '.'
     number = str(track.trackNumber).rjust(2, '0')
     if album is not None:
         base = getAlbumPath(album)

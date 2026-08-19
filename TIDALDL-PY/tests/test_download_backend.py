@@ -325,7 +325,7 @@ class DownloadBackendTests(unittest.TestCase):
             "checkExist": download.SETTINGS.checkExist,
         }
         existing = self.root / "track.flac"
-        existing.write_bytes(b"raw-flac")
+        existing.write_bytes(b"fLaC" + b"\x00" * 2048)
         stream = SimpleNamespace(
             urls=["https://example.invalid/init.mp4"],
             codec="flac",
@@ -337,6 +337,28 @@ class DownloadBackendTests(unittest.TestCase):
             download.SETTINGS.checkExist = True
             with mock.patch.object(download, "__remoteSize__", return_value=-1):
                 self.assertEqual(download.__skipPath__(str(existing), stream), str(existing))
+        finally:
+            for key, value in old_values.items():
+                setattr(download.SETTINGS, key, value)
+
+    def test_save_as_flac_skip_rejects_tiny_or_invalid_file(self):
+        old_values = {
+            "saveAsFlac": download.SETTINGS.saveAsFlac,
+            "checkExist": download.SETTINGS.checkExist,
+        }
+        existing = self.root / "track.flac"
+        existing.write_bytes(b"nope")
+        stream = SimpleNamespace(
+            urls=["https://example.invalid/init.mp4"],
+            codec="flac",
+            container="mp4",
+            manifestMimeType="application/dash+xml",
+        )
+        try:
+            download.SETTINGS.saveAsFlac = True
+            download.SETTINGS.checkExist = True
+            with mock.patch.object(download, "__remoteSize__", return_value=-1):
+                self.assertIsNone(download.__skipPath__(str(existing), stream))
         finally:
             for key, value in old_values.items():
                 setattr(download.SETTINGS, key, value)

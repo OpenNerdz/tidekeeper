@@ -78,7 +78,7 @@ class Settings(aigpy.model.ModelBase):
     downloadPath = "./download/"
     audioQuality = AudioQuality.Max
     audioQualityPriority = []
-    videoQuality = VideoQuality.P360
+    videoQuality = VideoQuality.P720
     usePlaylistFolder = True
     albumFolderFormat = R"{ArtistName}/{Flag} {AlbumTitle} [{AlbumID}] [{AlbumYear}]"
     playlistFolderFormat = R"Playlist/{PlaylistName} [{PlaylistUUID}]"

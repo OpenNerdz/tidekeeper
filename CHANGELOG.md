@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### GUI
+
+- Device login no longer reports success from a leftover token, and polling stops when the code expires.
+- Changing the TIDAL client in Settings signs you out so the next search does not 4022.
+- Queue progress no longer resets when album videos start, double-counts on CDN resume, or stays blank during parallel downloads.
+- Artist double-click now honours **Include EPs and singles**.
+
+### Reliability
+
+- Videos are remuxed to MP4 with ffmpeg when it is available (default quality 720p).
+- Playlist album lookup failures no longer abort the rest of the playlist.
+- Atmos misses from transient 403/404s are no longer cached for the whole session, so **Retry Failed** can recover.
+- Incomplete 1-byte `.flac` leftovers are not treated as finished downloads.
+
 ## 2026.8.16.0 - 2026-08-16
 
 ### Search

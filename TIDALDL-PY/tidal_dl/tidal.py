@@ -586,8 +586,11 @@ class TidalAPI(object):
         if not aigpy.string.isNull(self.apiKey.get('clientSecret')):
             data['client_secret'] = self.apiKey['clientSecret']
         result = self.__post__('/token', data)
-        if result.get('error') in ('authorization_pending', 'slow_down'):
+        error = result.get('error')
+        if error in ('authorization_pending', 'slow_down'):
             return False
+        if error in ('expired_token', 'access_denied'):
+            raise Exception("Login code expired. Start login again.")
         if 'status' in result and result['status'] != 200:
             if result['status'] == 400 and result.get('sub_status') == 1002:
                 return False
@@ -1137,9 +1140,9 @@ class TidalAPI(object):
             return True
         if not isinstance(error, TidalApiError):
             return False
-        if 'CLIENT_NOT_ENTITLED' in error.errorCodes:
-            return True
-        return error.statusCode in (403, 404)
+        # Only cache catalog/entitlement misses. Generic 403/404 can be
+        # transient CDN/auth glitches that Retry Failed should try again.
+        return 'CLIENT_NOT_ENTITLED' in error.errorCodes
 
     def __getOpenApiFlacStreamUrl__(self, id, quality: AudioQuality):
         requested_formats = self.__openApiFormatsForQuality__(quality)

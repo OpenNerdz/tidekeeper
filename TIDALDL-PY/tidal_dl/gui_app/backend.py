@@ -31,6 +31,9 @@ class AuthStatus:
     country_code: Optional[str]
     expires_after: float
     has_token: bool
+    # True only after this poll completed a new device-login grant.
+    # Existing saved tokens must not count as "login complete".
+    fresh_login: bool = False
 
     @property
     def label(self) -> str:
@@ -365,10 +368,10 @@ class TidekeeperBackend:
 
     def poll_device_login(self) -> AuthStatus:
         if not TIDAL_API.checkAuthStatus():
-            return self.auth_status()
+            return replace(self.auth_status(), fresh_login=False)
 
         self._save_api_login_key_to_token(time.time() + int(TIDAL_API.key.expiresIn))
-        return self.auth_status()
+        return replace(self.auth_status(), fresh_login=True)
 
     def logout(self) -> AuthStatus:
         logout()
@@ -419,7 +422,7 @@ class TidekeeperBackend:
         if artist_id is None or str(artist_id).strip() == "":
             raise RuntimeError("Artist ID is missing.")
 
-        albums = TIDAL_API.getArtistAlbums(artist_id, includeEP=True)
+        albums = TIDAL_API.getArtistAlbums(artist_id, includeEP=SETTINGS.includeEP)
         seen_albums = set()
         seen_tracks = set()
         tracks = []
@@ -474,7 +477,11 @@ class TidekeeperBackend:
 
     def save_settings(self, values: dict):
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
-        SETTINGS.downloadPath = values["downloadPath"]
+        previous_api_key_index = SETTINGS.apiKeyIndex
+        download_path = str(values.get("downloadPath") or "").strip()
+        if not download_path:
+            download_path = SETTINGS.downloadPath or "./download/"
+        SETTINGS.downloadPath = download_path
         SETTINGS.audioQuality = audio_priority[0] if audio_priority else AudioQuality[values["audioQuality"]]
         SETTINGS.audioQualityPriority = audio_priority
         SETTINGS.videoQuality = VideoQuality[values["videoQuality"]]
@@ -502,6 +509,13 @@ class TidekeeperBackend:
         LANG.setLang(SETTINGS.language)
         SETTINGS.save()
         syncPlaybackRateLimiter()
+        if SETTINGS.apiKeyIndex != previous_api_key_index:
+            # Tokens are bound to the client id. Applying a new key to an old
+            # token produces 4022 errors on the next search/download.
+            logout()
+            TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
+            return {"reauth_required": True}
+        return {"reauth_required": False}
 
     def open_download_folder(self, path: str = "") -> str:
         return openPath(path or SETTINGS.downloadPath)
@@ -594,7 +608,7 @@ class DemoBackend(TidekeeperBackend):
         return AuthChallenge("https://login.tidal.com/DEMO-CODE", "DEMO-CODE", 600, 2)
 
     def poll_device_login(self) -> AuthStatus:
-        return self.auth_status()
+        return replace(self.auth_status(), fresh_login=True)
 
     def logout(self) -> AuthStatus:
         return AuthStatus(None, None, 0, False)

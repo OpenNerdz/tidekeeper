@@ -76,6 +76,22 @@ class GuiQueueTests(unittest.TestCase):
         self.window.start_queue_download()
         self.assertEqual(started, [queued])
 
+    def test_device_login_poll_ignores_preexisting_token(self):
+        from tidal_dl.gui_app.backend import AuthStatus
+
+        self.window.login_polling = True
+        self.window.device_login_button.setEnabled(False)
+        stale = AuthStatus("old-user", "US", 0, True, fresh_login=False)
+        self.window._device_login_polled(stale)
+        self.assertTrue(self.window.login_polling)
+        self.assertFalse(self.window.device_login_button.isEnabled())
+
+        fresh = AuthStatus("new-user", "US", 0, True, fresh_login=True)
+        self.window._device_login_polled(fresh)
+        self.assertFalse(self.window.login_polling)
+        self.assertTrue(self.window.device_login_button.isEnabled())
+        self.assertIn("Login complete.", self.window.account_log.toPlainText())
+
     def test_progress_updates_status_and_percent(self):
         item = self.SearchItem(self.Type.Album, "Album", "Artist", "HI_RES", "9", "", SimpleNamespace(id=9))
         item.status = "Downloading"

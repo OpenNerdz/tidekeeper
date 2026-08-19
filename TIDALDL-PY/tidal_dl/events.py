@@ -432,6 +432,7 @@ def logout():
     TIDAL_API.key.accessToken = None
     TIDAL_API.key.refreshToken = None
     TIDAL_API.key.expiresIn = None
+    TIDAL_API._atmosUnavailableTrackIds.clear()
     Printf.success("Logged out.")
     return True
 
