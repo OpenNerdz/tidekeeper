@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.8.18.0 - 2026-08-18
+
 ### GUI
 
 - Device login no longer reports success from a leftover token, and polling stops when the code expires.
