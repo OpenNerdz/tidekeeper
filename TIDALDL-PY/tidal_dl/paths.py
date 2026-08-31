@@ -150,7 +150,11 @@ def getTrackPath(track, stream, album=None, playlist=None):
 
     # artist
     artists = __fixPath__(TIDAL_API.getArtistsName(track.artists))
-    artist = __fixPath__(track.artist.name) if track.artist is not None else ""
+    artistID = __fixPath__(TIDAL_API.getArtistsID(track.artists))
+
+    primary_artist = getattr(track, 'artist', None)
+    trackArtistID = __tokenValue__(getattr(primary_artist, 'id', None))
+    trackArtistName = __tokenValue__(getattr(primary_artist, 'name', None))
 
     # title
     title = __fixPath__(track.title)
@@ -172,8 +176,10 @@ def getTrackPath(track, stream, album=None, playlist=None):
         retpath = SETTINGS.getDefaultPathFormat(Type.Track)
     hasStreamIdentifier = __hasStreamIdentifierToken__(retpath)
     retpath = retpath.replace(R"{TrackNumber}", number)
-    retpath = retpath.replace(R"{ArtistName}", artist)
-    retpath = retpath.replace(R"{ArtistsName}", artists)
+    retpath = retpath.replace(R"{ArtistName}", artists)
+    retpath = retpath.replace(R"{ArtistID}", artistID)
+    retpath = retpath.replace(R"{TrackArtistID}", trackArtistID)
+    retpath = retpath.replace(R"{TrackArtistName}", trackArtistName)
     retpath = retpath.replace(R"{TrackTitle}", title)
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{AlbumYear}", year)
@@ -205,6 +211,10 @@ def getVideoPath(video, album=None, playlist=None):
     artist = __fixPath__(video.artist.name) if video.artist is not None else ""
     artistID = __fixPath__(TIDAL_API.getArtistsID(video.artists))
 
+    primary_artist = getattr(video, 'artist', None)
+    videoArtistID = __tokenValue__(getattr(primary_artist, 'id', None))
+    videoArtistName = __tokenValue__(getattr(primary_artist, 'name', None))
+
     # explicit
     explicit = "(Explicit)" if video.explicit else ''
 
@@ -217,9 +227,10 @@ def getVideoPath(video, album=None, playlist=None):
     if retpath is None or len(retpath) <= 0:
         retpath = SETTINGS.getDefaultPathFormat(Type.Video)
     retpath = retpath.replace(R"{VideoNumber}", number)
-    retpath = retpath.replace(R"{ArtistName}", artist)
+    retpath = retpath.replace(R"{ArtistName}", artists)
     retpath = retpath.replace(R"{ArtistID}", artistID)
-    retpath = retpath.replace(R"{ArtistsName}", artists)
+    retpath = retpath.replace(R"{VideoArtistID}", videoArtistID)
+    retpath = retpath.replace(R"{VideoArtistName}", videoArtistName)
     retpath = retpath.replace(R"{VideoTitle}", title)
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{VideoYear}", year)
