@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.8.31.0 - 2026-08-31
+
 ### Path tokens
 
 - Added `{TrackArtistID}`, `{TrackArtistName}`, `{VideoArtistID}`, and `{VideoArtistName}` for the primary artist on track and video filenames.
