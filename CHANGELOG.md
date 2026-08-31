@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Path tokens
+
+- Added `{TrackArtistID}`, `{TrackArtistName}`, `{VideoArtistID}`, and `{VideoArtistName}` for the primary artist on track and video filenames.
+- `{ArtistID}` now works in track file formats (comma-separated list of all track artist IDs).
+- Existing `{ArtistName}` (primary artist) and `{ArtistsName}` (all artists) on tracks and videos are unchanged.
+
 ## 2026.8.18.0 - 2026-08-18
 
 ### GUI

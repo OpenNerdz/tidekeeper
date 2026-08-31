@@ -109,12 +109,14 @@ Custom filename formats are supported:
 | Tokens  | Description  | Album | Track | Video | Playlist |
 | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
 | {ArtistID}  | Comma separated list of each artists' ID for that media (i.e: ```123, 456```)  | :white_check_mark:  | :white_check_mark:  | :white_check_mark:  | :x: |
-| {ArtistName}  | Comma separated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :white_check_mark:  | :white_check_mark:  | :white_check_mark:  | :x: |
+| {ArtistName}  | Comma separated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :white_check_mark:  | :x:  | :x:  | :x: |
+| {ArtistName}  | Primary artist's name for that media | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
+| {ArtistsName}  | Comma separated list of each artists' name for that media (i.e: ```ABC, DEF```)  | :x:  | :white_check_mark:  | :white_check_mark:  | :x: |
 | {AlbumArtistID}  | Primary artist's ID for that media | :white_check_mark:  | :x:  | :x:  | :x: |
 | {AlbumArtistName}  | Primary artist's name for that media | :white_check_mark:  | :x:  | :x:  | :x: |
 | {TrackArtistID}  | Primary artist's ID for that media | :x:  | :white_check_mark:  | :x:  | :x: |
 | {TrackArtistName}  | Primary artist's name for that media | :x:  | :white_check_mark:  | :x:  | :x: |
-| {VideoArtistID}  | Primary artist's ID for that media | :x: | :x:  | :white_check_mark:  | :x: |
+| {VideoArtistID}  | Primary artist's ID for that media | :x:  | :x:  | :white_check_mark:  | :x: |
 | {VideoArtistName}  | Primary artist's name for that media | :x:  | :x:  | :white_check_mark:  | :x: |
 | {Flag}  | Quality/content flags: `M` (Master), `A` (Dolby Atmos), `E` (Explicit) | :white_check_mark:  | :x:  | :x:  | :x: |
 | {AlbumID}  |  | :white_check_mark:  | :x:  | :x:  | :x: |
