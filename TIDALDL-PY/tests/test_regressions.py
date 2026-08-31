@@ -194,6 +194,88 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
 
+    def test_track_artist_tokens_keep_primary_name_and_add_new_tokens(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "albumFolderFormat": paths.SETTINGS.albumFolderFormat,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.albumFolderFormat = "{AlbumTitle}"
+            track = self._track()
+            track.artist = self._artist("Primary/Name", 111)
+            track.artists = [self._artist("Primary/Name", 111), self._artist("Feat", 222)]
+
+            paths.SETTINGS.trackFileFormat = "{TrackNumber} - {ArtistName} - {TrackTitle}{ExplicitFlag}"
+            default_path = paths.getTrackPath(track, self._stream(), self._album())
+            self.assertTrue(default_path.endswith("01 - Primary-Name - Track.m4a"))
+
+            paths.SETTINGS.trackFileFormat = (
+                "{ArtistName}|{ArtistsName}|{ArtistID}|{TrackArtistID}|{TrackArtistName}"
+            )
+            token_path = paths.getTrackPath(track, self._stream(), self._album())
+            self.assertTrue(
+                token_path.endswith("Primary-Name|Primary-Name, Feat|111, 222|111|Primary-Name.m4a")
+            )
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_video_artist_tokens_keep_primary_name_and_add_new_tokens(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            video = self._video()
+            video.artist = self._artist("Primary/Name", 111)
+            video.artists = [self._artist("Primary/Name", 111), self._artist("Feat", 222)]
+
+            paths.SETTINGS.videoFileFormat = "{VideoNumber} - {ArtistName} - {VideoTitle}{ExplicitFlag}"
+            default_path = paths.getVideoPath(video)
+            self.assertTrue(default_path.endswith("01 - Primary-Name - Video.mp4"))
+
+            paths.SETTINGS.videoFileFormat = (
+                "{ArtistName}|{ArtistsName}|{ArtistID}|{VideoArtistID}|{VideoArtistName}"
+            )
+            token_path = paths.getVideoPath(video)
+            self.assertTrue(
+                token_path.endswith("Primary-Name|Primary-Name, Feat|111, 222|111|Primary-Name.mp4")
+            )
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_track_and_video_primary_artist_tokens_omit_missing_fields(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "albumFolderFormat": paths.SETTINGS.albumFolderFormat,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.albumFolderFormat = "{AlbumTitle}"
+            paths.SETTINGS.trackFileFormat = "{TrackArtistID}/{TrackArtistName}/{TrackTitle}"
+            paths.SETTINGS.videoFileFormat = "{VideoArtistID}/{VideoArtistName}/{VideoTitle}"
+
+            track = self._track()
+            track.artist = self._artist(None, None)
+            track_path = paths.getTrackPath(track, self._stream(), self._album())
+            self.assertNotIn("None", track_path)
+            self.assertTrue(track_path.endswith("//Track.m4a"))
+
+            video = self._video()
+            video.artist = self._artist(None, None)
+            video_path = paths.getVideoPath(video)
+            self.assertNotIn("None", video_path)
+            self.assertTrue(video_path.endswith("//Video.mp4"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
     def test_get_album_converts_each_artist_to_model(self):
         api = TidalAPI()
         payload = {
