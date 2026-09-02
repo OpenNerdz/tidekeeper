@@ -129,8 +129,6 @@ class TidalAPI(object):
         self.apiKey = {'clientId': 'fX2JxdmntZWK0ixT',
                        'clientSecret': '1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg='}
         self.session = requests.Session()
-        # Retry transient connection failures at the transport level; HTTP
-        # status handling (401/404/429) stays in the request helpers.
         adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=3)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
@@ -139,27 +137,8 @@ class TidalAPI(object):
         self._streamCache = OrderedDict()
         self._streamCacheLock = Lock()
         self._tokenRefreshLock = Lock()
-        # Serialize stream-manifest resolution so multi-thread downloads do not
-        # stampede playback/OpenAPI endpoints.
         self._streamResolveLock = Lock()
-        # Session caches that cut repeat catalog / Atmos-miss traffic.
         self._artistAlbumsCache = {}
         self._atmosAlbumTwinCache = {}
         self._atmosTrackTwinCache = {}
         self._atmosUnavailableTrackIds = set()
-
-    def __responseBody__(self, response):
-        try:
-            return response.json()
-        except ValueError:
-            return {}
-
-    def __isAssetNotReady__(self, response):
-        if response is None or response.status_code != 401:
-            return False
-        body = self.__responseBody__(response)
-        sub_status = body.get('subStatus', body.get('sub_status'))
-        if sub_status == 4005 or str(sub_status) == '4005':
-            return True
-        message = str(body.get('userMessage', '')).lower()
-        return 'not ready for playback' in message or 'asset is not ready' in message
