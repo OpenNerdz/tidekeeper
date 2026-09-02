@@ -147,3 +147,9 @@ class TidalAPI(object):
         self._atmosAlbumTwinCache = {}
         self._atmosTrackTwinCache = {}
         self._atmosUnavailableTrackIds = set()
+
+    def __responseBody__(self, response):
+        try:
+            return response.json()
+        except ValueError:
+            return {}
