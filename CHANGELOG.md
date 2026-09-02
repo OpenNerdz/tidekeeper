@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026.9.2.0 - 2026-09-02
 
 ### GUI
 
