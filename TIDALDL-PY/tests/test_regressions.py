@@ -801,7 +801,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         playback_get.assert_not_called()
         self.assertEqual(stream.soundQuality, "LOSSLESS")
 
-    def test_manifest_rate_limit_fails_after_max_attempts(self):
+    def test_manifest_rate_limit_fails_after_wait_cap(self):
         api = TidalAPI()
         old_delay = events.SETTINGS.downloadDelay
         try:
@@ -814,13 +814,16 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 json=mock.Mock(return_value={"errors": [{"status": "429"}]}),
             )
             with mock.patch.object(api.session, "get", return_value=response) as get_mock, \
-                 mock.patch("tidal_dl.tidal.time.sleep"), \
+                 mock.patch.object(api, "__applyRateLimitPenalty__", return_value=60.0), \
+                 mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
                  mock.patch("builtins.print"):
                 with self.assertRaises(TidalApiError) as ctx:
                     api.__getOpenApiTrackManifest__(456, ["FLAC"])
 
             self.assertEqual(ctx.exception.statusCode, 429)
-            self.assertEqual(get_mock.call_count, 3)
+            # First 429 waits 60s (under 90s cap); second would exceed the cap.
+            self.assertEqual(sleep.call_count, 1)
+            self.assertEqual(get_mock.call_count, 2)
         finally:
             events.SETTINGS.downloadDelay = old_delay
 
