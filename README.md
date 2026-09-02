@@ -145,18 +145,20 @@ Custom filename formats are supported:
 
 ## Desktop GUI
 
-The GUI provides login, search, queueing, downloads, settings, diagnostics, and
-updates. After installing with the GUI extra above, launch it with
-`tidekeeper-gui` or `tidekeeper --gui`. Update GUI installs with
-`tidekeeper --update-gui`.
+The GUI is a single workspace: find catalog items or paste links at the top,
+queue them, and run the queue below. Session and settings open in a side panel
+so the queue stays in view. After installing with the GUI extra above, launch it
+with `tidekeeper-gui` or `tidekeeper --gui`. Update GUI installs with
+`tidekeeper --update-gui` or the **Update** button in the Account panel.
 
-| Search | Queue |
-| --- | --- |
-| ![Search screen](docs/screenshots/search.png) | ![Queue screen](docs/screenshots/queue.png) |
+Shortcuts: `Ctrl+F` search, `Enter` on a result adds it to the queue, `Delete`
+removes queue rows, `Ctrl+,` opens Settings, `Esc` closes the side panel.
 
-| Settings | Account |
+![Workspace: search, results and queue](docs/screenshots/workspace.png)
+
+| Settings panel | Account panel |
 | --- | --- |
-| ![Settings screen](docs/screenshots/settings.png) | ![Account screen](docs/screenshots/account.png) |
+| ![Settings panel](docs/screenshots/settings.png) | ![Account panel](docs/screenshots/account.png) |
 
 ## Troubleshooting
 

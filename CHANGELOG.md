@@ -4,6 +4,12 @@
 
 ### GUI
 
+- Redesigned as a single workspace: find bar (Search or Links), results and the queue are always visible; Settings and Account open in a side panel instead of separate pages.
+- New dark visual system with one accent, 30px control density, in-table empty states, status dots and slim progress bars in the queue.
+- Queue log is a toggle inside the queue panel and opens automatically when a download fails.
+- Keyboard: `Ctrl+F` focuses search, `Enter` queues selected results, `Delete` removes queue rows, `Ctrl+,` opens Settings, `Esc` closes the panel.
+- Artist drill-down offers **Tracks** and **Videos** buttons when one artist row is selected; double-clicking a non-artist result queues it.
+- Removed the separate "Update terminal" action; **Update** upgrades the full install.
 - Starting a download applies unsaved quality settings in memory instead of saving, so it no longer signs you out when the client changed.
 - Album + video downloads keep the combined progress total instead of jumping to 100% when the video pass begins.
 

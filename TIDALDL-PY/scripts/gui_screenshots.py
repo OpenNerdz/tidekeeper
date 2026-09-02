@@ -53,15 +53,22 @@ def _validate_interactions(window) -> list[str]:
 
     window.direct_text.clear()
     if window.direct_queue_button.isEnabled() or window.direct_download_button.isEnabled():
-        failures.append("search: direct actions are enabled without input")
+        failures.append("links: direct actions are enabled without input")
     window.direct_text.setText("https://tidal.com/browse/track/70973230")
     if not window.direct_queue_button.isEnabled() or not window.direct_download_button.isEnabled():
-        failures.append("search: direct actions are disabled with input")
+        failures.append("links: direct actions are disabled with input")
     window.direct_video_only.setChecked(True)
     direct_item = window.direct_item_from_input()
     if direct_item is None or not direct_item.video_only:
-        failures.append("search: direct videos-only checkbox is not applied")
+        failures.append("links: direct videos-only checkbox is not applied")
     window.direct_video_only.setChecked(False)
+
+    window.show_screen("settings")
+    if not window.inspector.isVisible() or not window.settings_toggle.isChecked():
+        failures.append("inspector: settings toggle does not open the inspector")
+    window.show_screen("workspace")
+    if window.inspector.isVisible() or window.settings_toggle.isChecked() or window.session_toggle.isChecked():
+        failures.append("inspector: workspace does not close the inspector")
 
     if window.results:
         window.results_table.clearSelection()

@@ -328,7 +328,7 @@ class TidekeeperBackend:
             if loginByConfig():
                 self._sync_api_login_key_from_token()
             else:
-                raise RuntimeError("Saved login expired. Sign in again from the Account page.")
+                raise RuntimeError("Saved login expired. Sign in again from Account.")
 
         if not aigpy.string.isNull(TIDAL_API.key.countryCode):
             return
@@ -343,7 +343,7 @@ class TidekeeperBackend:
         self._sync_api_login_key_from_token()
         if aigpy.string.isNull(TIDAL_API.key.countryCode):
             raise RuntimeError(
-                "Saved login is missing country data. Refresh saved login or sign in again from Account."
+                "Saved login is missing country data. Refresh the saved login or sign in again from Account."
             )
 
     def auth_status(self) -> AuthStatus:
