@@ -475,16 +475,9 @@ class TidekeeperBackend:
         if not ok:
             raise RuntimeError(f"Download failed for {item.title}")
 
-    def apply_runtime_settings(self, values: dict):
-        """Apply quality/download options in memory without saving or logout."""
-        return self._apply_settings_values(values, persist=False)
-
-    def save_settings(self, values: dict):
-        return self._apply_settings_values(values, persist=True)
-
-    def _apply_settings_values(self, values: dict, persist: bool):
+    def apply_runtime_settings(self, values: dict, persist_client: bool = True):
+        """Apply GUI settings in memory. Download starts must not persist or logout."""
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
-        previous_api_key_index = SETTINGS.apiKeyIndex
         download_path = str(values.get("downloadPath") or "").strip()
         if not download_path:
             download_path = SETTINGS.downloadPath or "./download/"
@@ -502,22 +495,26 @@ class TidekeeperBackend:
         SETTINGS.downloadDelay = values["downloadDelay"]
         SETTINGS.requestIntervalSeconds = max(0.0, float(values.get("requestIntervalSeconds", 1.0) or 0.0))
         SETTINGS.adaptiveRateLimit = values.get("adaptiveRateLimit", True)
-        SETTINGS.saveAsFlac = values.get("saveAsFlac", False)
+        SETTINGS.saveAsFlac = values.get("saveAsFlac", True)
         SETTINGS.usePlaylistFolder = values["usePlaylistFolder"]
         SETTINGS.showProgress = values["showProgress"]
         SETTINGS.showTrackInfo = values["showTrackInfo"]
+        SETTINGS.language = values["language"]
         SETTINGS.albumFolderFormat = values["albumFolderFormat"]
         SETTINGS.playlistFolderFormat = values["playlistFolderFormat"]
         SETTINGS.trackFileFormat = values["trackFileFormat"]
         SETTINGS.videoFileFormat = values["videoFileFormat"]
-        if persist:
-            SETTINGS.language = values["language"]
+        LANG.setLang(SETTINGS.language)
+        syncPlaybackRateLimiter()
+        if persist_client:
             SETTINGS.apiKeyIndex = values["apiKeyIndex"]
             TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
-            LANG.setLang(SETTINGS.language)
-            SETTINGS.save()
-        syncPlaybackRateLimiter()
-        if persist and SETTINGS.apiKeyIndex != previous_api_key_index:
+
+    def save_settings(self, values: dict):
+        previous_api_key_index = SETTINGS.apiKeyIndex
+        self.apply_runtime_settings(values, persist_client=True)
+        SETTINGS.save()
+        if SETTINGS.apiKeyIndex != previous_api_key_index:
             # Tokens are bound to the client id. Applying a new key to an old
             # token produces 4022 errors on the next search/download.
             logout()
