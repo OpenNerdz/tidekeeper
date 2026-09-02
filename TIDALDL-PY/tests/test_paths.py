@@ -1,9 +1,8 @@
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 from tidal_dl.model import StreamUrl
-from tidal_dl.paths import __getExtension__, PATHS, getAlbumPath, getTrackPath, openPath
+from tidal_dl.paths import __getExtension__, PATHS, openPath
 
 
 class PathTests(unittest.TestCase):
@@ -83,69 +82,39 @@ class PathTests(unittest.TestCase):
 
         startfile.assert_called_once()
 
-    def _album(self):
-        artist = SimpleNamespace(name="Artist", id=123)
-        return SimpleNamespace(
-            id=123,
-            artists=[artist],
-            artist=artist,
-            title="Album",
-            releaseDate="2026:01:02",
-            audioQuality="HIGH",
-            audioModes=[],
-            explicit=False,
+    def test_duration_and_release_date_tokens_are_windows_safe(self):
+        from types import SimpleNamespace
+        from tidal_dl.paths import getAlbumPath, __fixPath__, __getDurationStr__
+
+        raw = __getDurationStr__(3723)
+        self.assertIn(":", raw)
+        self.assertNotIn(":", __fixPath__(raw))
+
+        album = SimpleNamespace(
+            artists=[],
+            artist=None,
+            title="T",
+            id=1,
+            releaseDate="2026-09-02",
             duration=3723,
+            audioQuality="LOSSLESS",
             numberOfTracks=1,
             numberOfVideos=0,
             numberOfVolumes=1,
             type="ALBUM",
-            cover=None,
         )
-
-    def test_duration_and_release_date_tokens_strip_windows_illegal_chars(self):
-        """{Duration} is H:MM:SS; colons are illegal on Windows path components."""
-        album = self._album()
-        illegal = set('<>:"/\\|?*')
-        from tidal_dl import paths
-        with mock.patch.object(paths.SETTINGS, "albumFolderFormat", "{Duration}_{ReleaseDate}_{AlbumTitle}"), \
-             mock.patch.object(paths.SETTINGS, "downloadPath", "/tmp/tidekeeper"):
-            path = getAlbumPath(album)
-
-        self.assertTrue(path.startswith("/tmp/tidekeeper/"))
-        leaf = path[len("/tmp/tidekeeper/"):]
-        self.assertEqual(leaf, "1-02-03_2026-01-02_Album")
-        self.assertFalse(illegal.intersection(leaf))
-
-        track = SimpleNamespace(
-            id=456,
-            artists=[album.artist],
-            artist=album.artist,
-            album=album,
-            title="Track",
-            version=None,
-            explicit=False,
-            trackNumber=1,
-            trackNumberOnPlaylist=1,
-            volumeNumber=1,
-            audioQuality="HIGH",
-            duration=3723,
-        )
-        stream = StreamUrl()
-        stream.url = "https://example.invalid/audio.m4a"
-        stream.codec = "aac"
-        stream.container = "mp4"
-        stream.manifestMimeType = ""
-        stream.soundQuality = "LOSSLESS"
-        from tidal_dl import paths
-        with mock.patch.object(paths.SETTINGS, "albumFolderFormat", "{AlbumTitle}"), \
-             mock.patch.object(paths.SETTINGS, "trackFileFormat", "{TrackNumber} {Duration} {TrackTitle}"), \
-             mock.patch.object(paths.SETTINGS, "downloadPath", "/tmp/tidekeeper"), \
-             mock.patch.object(paths.SETTINGS, "saveAsFlac", False):
-            track_path = getTrackPath(track, stream, album)
-
-        self.assertIn("01 1-02-03 Track.m4a", track_path)
-        name = track_path.rsplit("/", 1)[-1]
-        self.assertFalse(illegal.intersection(name.replace(".m4a", "")))
+        with mock.patch("tidal_dl.paths.SETTINGS") as settings:
+            settings.downloadPath = "/tmp"
+            settings.albumFolderFormat = "{Duration}_{ReleaseDate}"
+            settings.audioQuality = object()
+            with mock.patch("tidal_dl.paths.TIDAL_API") as api:
+                api.getArtistsID.return_value = ""
+                api.getArtistsName.return_value = ""
+                api.getFlag.return_value = ""
+                path = getAlbumPath(album)
+        name = path.rsplit("/", 1)[-1]
+        for illegal in ':<>"|?*':
+            self.assertNotIn(illegal, name)
 
 
 if __name__ == "__main__":

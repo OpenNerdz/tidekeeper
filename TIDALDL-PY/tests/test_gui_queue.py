@@ -114,6 +114,38 @@ class GuiQueueTests(unittest.TestCase):
         self.assertIn("Downloading 4/12", status_cell.text())
         self.assertEqual(progress_cell.text(), "25%")
 
+    def test_nested_album_video_progress_keeps_combined_count(self):
+        from tidal_dl.gui_app.backend import queue_progress_percent
+        from tidal_dl.gui_app.workers import ItemProgressReporter
+
+        reporter = ItemProgressReporter("album", lambda *_: None)
+        reporter.begin_collection(10)
+        for index in range(1, 11):
+            reporter.begin_entry(index, 10)
+            reporter.finish_entry(index, 10, True)
+        reporter.begin_collection(2)
+        reporter.begin_entry(1, 2)
+
+        self.assertEqual(reporter.count, 12)
+        self.assertEqual(reporter.completed, 10)
+        self.assertLess(queue_progress_percent(reporter.snapshot()), 100)
+
+
+    def test_download_apply_does_not_save_or_logout(self):
+        saved = []
+        logged_out = []
+        original_save = self.backend.save_settings
+
+        def wrapped(values):
+            saved.append(values)
+            return original_save(values)
+
+        self.backend.save_settings = wrapped
+        self.backend.logout = lambda: logged_out.append(True)
+        self.window.apply_settings_for_download()
+        self.assertEqual(saved, [])
+        self.assertEqual(logged_out, [])
+
 
 if __name__ == "__main__":
     unittest.main()
