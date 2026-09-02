@@ -509,6 +509,7 @@ class TidekeeperBackend:
         if persist_client:
             SETTINGS.apiKeyIndex = values["apiKeyIndex"]
             TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
+        return {"reauth_required": False}
 
     def save_settings(self, values: dict):
         previous_api_key_index = SETTINGS.apiKeyIndex
