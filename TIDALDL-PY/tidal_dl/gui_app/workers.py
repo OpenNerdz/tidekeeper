@@ -106,11 +106,24 @@ class ItemProgressReporter:
                 self.count += extra
         self._push(force=True)
 
+    def _adopt_entry_total(self, total):
+        extra = int(total or 0)
+        if extra <= 0:
+            return extra
+        # Nested begin_entry/finish_entry pass the inner collection size
+        # (for example video count after album tracks). Never shrink the
+        # combined total or the bar jumps to 100%.
+        if self.count <= 0 or extra > self.count:
+            self.count = extra
+        return extra
+
     def begin_entry(self, index, total, title=""):
         with self._lock:
-            if total:
-                self.count = int(total)
-            self.current = int(index or 0)
+            inner = self._adopt_entry_total(total)
+            if inner > 0 and self.count > inner and self.completed > 0:
+                self.current = min(self.completed + 1, self.count)
+            else:
+                self.current = int(index or 0)
             self.bytes = 0
             self.bytes_total = 0
             self._started = time.monotonic()
@@ -118,10 +131,12 @@ class ItemProgressReporter:
 
     def finish_entry(self, index, total, ok=True):
         with self._lock:
-            if total:
-                self.count = int(total)
+            inner = self._adopt_entry_total(total)
             self.completed = min(self.completed + 1, self.count or self.completed + 1)
-            self.current = int(index or self.current)
+            if inner > 0 and self.count > inner:
+                self.current = min(self.completed, self.count)
+            else:
+                self.current = int(index or self.current)
             self.bytes = 0
             self.bytes_total = 0
         self._push(force=True)
