@@ -475,8 +475,8 @@ class TidekeeperBackend:
         if not ok:
             raise RuntimeError(f"Download failed for {item.title}")
 
-    def apply_runtime_settings(self, values: dict, persist_client: bool = True):
-        """Apply GUI settings in memory. Download starts must not persist or logout."""
+    def apply_runtime_settings(self, values: dict, persist_client: bool = False):
+        """Apply quality/download options in memory. Download starts must not persist or logout."""
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
         download_path = str(values.get("downloadPath") or "").strip()
         if not download_path:
@@ -495,7 +495,7 @@ class TidekeeperBackend:
         SETTINGS.downloadDelay = values["downloadDelay"]
         SETTINGS.requestIntervalSeconds = max(0.0, float(values.get("requestIntervalSeconds", 1.0) or 0.0))
         SETTINGS.adaptiveRateLimit = values.get("adaptiveRateLimit", True)
-        SETTINGS.saveAsFlac = values.get("saveAsFlac", True)
+        SETTINGS.saveAsFlac = values.get("saveAsFlac", False)
         SETTINGS.usePlaylistFolder = values["usePlaylistFolder"]
         SETTINGS.showProgress = values["showProgress"]
         SETTINGS.showTrackInfo = values["showTrackInfo"]
