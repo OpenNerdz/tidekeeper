@@ -1,3 +1,16 @@
+"""Main application window for the Tidekeeper desktop GUI.
+
+Layout
+------
+A fixed dark sidebar on the left hosts navigation, a live session card and
+the version label. A ``QStackedWidget`` on the right holds the four pages
+(search, queue, settings, account). Presentation helpers live in
+:mod:`tidal_dl.gui_app.widgets`; this module owns behaviour.
+
+All public attribute names from the previous version are preserved so the
+tests and ``scripts/gui_screenshots.py`` keep working.
+"""
+
 from __future__ import annotations
 
 import time
@@ -5,7 +18,7 @@ import webbrowser
 from typing import Dict, List, Tuple
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QColor, QPalette, QPainter, QTextCursor
+from PySide6.QtGui import QColor, QPalette, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -15,17 +28,12 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
-    QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPushButton,
-    QScrollArea,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
-    QStyledItemDelegate,
-    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -43,40 +51,40 @@ from .backend import (
     queue_progress_percent,
     with_video_only,
 )
-from .style import APP_STYLESHEET, TABLE_TEXT_COLOR
+from .style import APP_STYLESHEET, TABLE_TEXT_COLOR, TOKENS
+from .widgets import (
+    PROGRESS_PERCENT_ROLE,
+    PROGRESS_STATE_ROLE,
+    Card,
+    Chip,
+    NavButton,
+    QueueProgressDelegate,
+    TableStack,
+    button,
+    configure_table,
+    field_label,
+    fix_columns,
+    hint,
+    label,
+    log_view,
+    scroll_area,
+)
 from .workers import DownloadWorker, TaskWorker
 
-PROGRESS_PERCENT_ROLE = Qt.UserRole + 1
-
-
-class QueueProgressDelegate(QStyledItemDelegate):
-    def paint(self, painter: QPainter, option, index):
-        percent = index.data(PROGRESS_PERCENT_ROLE)
-        try:
-            percent = int(percent)
-        except (TypeError, ValueError):
-            percent = 0
-        percent = max(0, min(100, percent))
-        painter.save()
-        if option.state & QStyle.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
-        track = option.rect.adjusted(8, 8, -8, -8)
-        painter.setPen(QColor("#d0d5dd"))
-        painter.setBrush(QColor("#f2f4f7"))
-        painter.drawRoundedRect(track, 3, 3)
-        if percent > 0:
-            fill = track.adjusted(0, 0, 0, 0)
-            fill.setWidth(max(2, int(track.width() * percent / 100.0)))
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor("#0f766e"))
-            painter.drawRoundedRect(fill, 3, 3)
-        text = index.data() or ""
-        painter.setPen(QColor("#172033"))
-        painter.drawText(track, Qt.AlignCenter, str(text))
-        painter.restore()
-
+__all__ = [
+    "MainWindow",
+    "SCREEN_ORDER",
+    "QueueProgressDelegate",
+    "PROGRESS_PERCENT_ROLE",
+    "configure_application_theme",
+    "run_app",
+]
 
 SCREEN_ORDER = ("search", "queue", "settings", "account")
+NAV_SECTIONS = (
+    ("Library", (("search", "Search"), ("queue", "Queue"))),
+    ("System", (("settings", "Settings"), ("account", "Account"))),
+)
 QUALITY_ORDER = [
     AudioQuality.Atmos,
     AudioQuality.Max,
@@ -93,34 +101,12 @@ PRIORITY_PRESETS = [
     ("Max > Master > HiFi > High > Normal", ["Max", "Master", "HiFi", "High", "Normal"]),
     ("HiFi > High > Normal", ["HiFi", "High", "Normal"]),
 ]
-
-
-def _button(text: str, primary: bool = False, danger: bool = False) -> QPushButton:
-    button = QPushButton(text)
-    if primary:
-        button.setObjectName("Primary")
-    if danger:
-        button.setObjectName("Danger")
-    button.setCursor(Qt.PointingHandCursor)
-    return button
-
-
-def _panel(layout) -> QFrame:
-    frame = QFrame()
-    frame.setObjectName("Panel")
-    frame.setLayout(layout)
-    return frame
-
-
-def _label(text: str, name: str | None = None) -> QLabel:
-    label = QLabel(text)
-    if name:
-        label.setObjectName(name)
-    return label
-
-
-def _panel_title(text: str) -> QLabel:
-    return _label(text, "PanelTitle")
+NAMING_HINT = (
+    "Placeholders: {ArtistName} {AlbumArtistName} {AlbumTitle} {AlbumYear} "
+    "{TrackNumber} {TrackTitle} {PlaylistName} {VideoTitle} {Quality} {Flag}"
+)
+RESULTS_EMPTY = "Search the TIDAL catalog or paste a link above.\nResults appear here."
+QUEUE_EMPTY = "The queue is empty.\nAdd items from Search or paste links into Direct download."
 
 
 class MainWindow(QMainWindow):
@@ -131,12 +117,13 @@ class MainWindow(QMainWindow):
         self.results: List[SearchItem] = []
         self.result_history: List[Tuple[List[SearchItem], str]] = []
         self.queue: List[SearchItem] = []
-        self.nav_buttons: Dict[str, QPushButton] = {}
+        self.nav_buttons: Dict[str, NavButton] = {}
         self.active_workers = set()
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._poll_device_login)
         self.login_polling = False
         self.login_poll_inflight = False
+        self.login_deadline = 0
         self.search_in_progress = False
         self.download_in_progress = False
         self.download_worker = None
@@ -144,7 +131,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Tidekeeper")
         self.setMinimumSize(1040, 680)
-        self.resize(1180, 820)
+        self.resize(1220, 820)
         self.setStyleSheet(APP_STYLESHEET)
         self._build()
         # Keep the interval spin box at its styled hint height even when the
@@ -157,13 +144,14 @@ class MainWindow(QMainWindow):
         self.update_action_states()
         self.show_screen("search")
 
+    # ------------------------------------------------------------------ build
+
     def _build(self):
         root = QWidget()
         root.setObjectName("Root")
         root_layout = QHBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-
         root_layout.addWidget(self._build_sidebar())
 
         self.stack = QStackedWidget()
@@ -181,203 +169,279 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(210)
+        sidebar.setFixedWidth(220)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(18, 22, 18, 18)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 22, 14, 16)
+        layout.setSpacing(4)
 
-        brand = _label("Tidekeeper", "Brand")
-        sub = _label("Desktop", "SubtleDark")
-        layout.addWidget(brand)
-        layout.addWidget(sub)
-        layout.addSpacing(20)
+        brand_box = QVBoxLayout()
+        brand_box.setContentsMargins(12, 0, 12, 0)
+        brand_box.setSpacing(0)
+        brand_box.addWidget(label("Tidekeeper", "Brand"))
+        brand_box.addWidget(label("Desktop downloader", "BrandSub"))
+        layout.addLayout(brand_box)
+        layout.addSpacing(22)
 
-        for name, title in (
-            ("search", "Search"),
-            ("queue", "Queue"),
-            ("settings", "Settings"),
-            ("account", "Account"),
-        ):
-            button = QPushButton(title)
-            button.setObjectName("NavButton")
-            button.setProperty("active", False)
-            button.setCursor(Qt.PointingHandCursor)
-            button.clicked.connect(lambda checked=False, screen=name: self.show_screen(screen))
-            self.nav_buttons[name] = button
-            layout.addWidget(button)
+        for section_title, entries in NAV_SECTIONS:
+            layout.addWidget(label(section_title.upper(), "NavSection"))
+            layout.addSpacing(2)
+            for name, title in entries:
+                nav = NavButton(title)
+                nav.clicked.connect(lambda checked=False, screen=name: self.show_screen(screen))
+                self.nav_buttons[name] = nav
+                layout.addWidget(nav)
+            layout.addSpacing(14)
 
         layout.addStretch(1)
-        self.version_label = _label("Ready", "SubtleDark")
+
+        self.session_card = QFrame()
+        self.session_card.setObjectName("SessionCard")
+        self.session_card.setCursor(Qt.PointingHandCursor)
+        self.session_card.setToolTip("Open the Account page.")
+        self.session_card.mousePressEvent = lambda event: self.show_screen("account")
+        card_layout = QVBoxLayout(self.session_card)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(2)
+        self.session_title = label("Signed out", "SessionTitle")
+        self.session_detail = label("Sign in from Account", "SidebarMuted")
+        card_layout.addWidget(self.session_title)
+        card_layout.addWidget(self.session_detail)
+        layout.addWidget(self.session_card)
+        layout.addSpacing(8)
+
+        self.version_label = label("Ready", "SidebarMuted")
+        self.version_label.setContentsMargins(12, 0, 0, 0)
         layout.addWidget(self.version_label)
         return sidebar
 
-    def _page(self, title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout]:
+    def _page(self, title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout, QHBoxLayout]:
         page = QWidget()
+        page.setObjectName("Page")
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(18)
-        layout.addWidget(_label(title, "PageTitle"))
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(16)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(12)
+        titles = QVBoxLayout()
+        titles.setContentsMargins(0, 0, 0, 0)
+        titles.setSpacing(2)
+        titles.addWidget(label(title, "PageTitle"))
         if subtitle:
-            layout.addWidget(_label(subtitle, "Muted"))
-        return page, layout
+            titles.addWidget(label(subtitle, "PageSubtitle"))
+        header.addLayout(titles, 1)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+        header.addLayout(actions)
+        layout.addLayout(header)
+        return page, layout, actions
+
+    # ----------------------------------------------------------------- search
 
     def _build_search_page(self) -> QWidget:
-        page, layout = self._page("Search", "TIDAL catalog")
+        page, layout, _ = self._page("Search", "Find music in the TIDAL catalog or download links directly")
 
-        search_layout = QGridLayout()
-        search_layout.setContentsMargins(16, 16, 16, 16)
-        search_layout.setHorizontalSpacing(10)
-        search_layout.setVerticalSpacing(10)
+        # -- Catalog search -------------------------------------------------
+        search_card = Card("Catalog search", "Pick a content type, then type a name or paste a TIDAL URL.")
         self.search_type = QComboBox()
         self.search_type.addItem("All", Type.Null)
         for item in (Type.Track, Type.Album, Type.Playlist, Type.Artist, Type.Video):
             self.search_type.addItem(item.name, item)
-        self.search_type.setFixedWidth(150)
+        self.search_type.setFixedWidth(140)
+        self.search_type.setToolTip("Content type to search for.")
         self.search_text = QLineEdit()
-        self.search_text.setPlaceholderText("Search or paste URL")
-        self.search_button = _button("Search", primary=True)
-        self.search_button.setToolTip("Search TIDAL for the selected content type.")
+        self.search_text.setPlaceholderText("Artist, album, track, playlist or TIDAL URL")
+        self.search_text.setClearButtonEnabled(True)
+        self.search_button = button("Search", primary=True, tooltip="Search TIDAL for the selected content type.")
+        self.search_button.setMinimumWidth(110)
         self.search_button.clicked.connect(self.run_search)
         self.search_text.returnPressed.connect(self.run_search)
         self.search_text.textChanged.connect(self.update_search_action)
-        search_layout.addWidget(_panel_title("Catalog search"), 0, 0)
-        search_layout.addWidget(self.search_type, 0, 1)
-        search_layout.addWidget(self.search_text, 0, 2)
-        search_layout.addWidget(self.search_button, 0, 3)
-        search_layout.setColumnStretch(2, 1)
-        layout.addWidget(_panel(search_layout))
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(self.search_type)
+        row.addWidget(self.search_text, 1)
+        row.addWidget(self.search_button)
+        search_card.add_layout(row)
+        search_card.add_widget(hint("Tip: double-click an Artist row to browse their tracks, or use View Videos."))
 
-        direct_layout = QGridLayout()
-        direct_layout.setContentsMargins(16, 16, 16, 16)
-        direct_layout.setHorizontalSpacing(10)
-        direct_layout.setVerticalSpacing(10)
+        # -- Direct download ------------------------------------------------
+        direct_card = Card(
+            "Direct download",
+            "One TIDAL URL or ID per line, comma-separated IDs, or the path to a .txt list.",
+        )
         self.direct_text = QTextEdit()
         self.direct_text.setObjectName("DirectInput")
         self.direct_text.setAcceptRichText(False)
-        self.direct_text.setPlaceholderText(
-            "Direct download: one TIDAL URL or ID per line, comma-separated IDs, or a .txt file"
-        )
-        self.direct_text.setFixedHeight(72)
+        self.direct_text.setPlaceholderText("https://tidal.com/browse/album/...  or  70973230, 70973231")
+        self.direct_text.setFixedHeight(76)
         self.direct_video_only = QCheckBox("Videos only")
-        self.direct_browse_button = _button("File")
-        self.direct_queue_button = _button("Add Direct")
-        self.direct_download_button = _button("Download Direct", primary=True)
         self.direct_video_only.setToolTip(
             "Skip audio tracks for artist, album, playlist, mix, video, or file downloads."
         )
-        self.direct_browse_button.setToolTip("Pick a text file containing TIDAL URLs.")
-        self.direct_queue_button.setToolTip("Add each pasted URL, ID, or file line to the queue.")
-        self.direct_download_button.setToolTip("Queue and start every pasted URL, ID, or file line.")
+        self.direct_browse_button = button("Choose file...", tooltip="Pick a text file containing TIDAL URLs.")
+        self.direct_queue_button = button("Add to Queue", tooltip="Add each pasted URL, ID, or file line to the queue.")
+        self.direct_download_button = button(
+            "Download", primary=True, tooltip="Queue and start every pasted URL, ID, or file line."
+        )
         self.direct_browse_button.clicked.connect(self.browse_direct_file)
         self.direct_queue_button.clicked.connect(self.add_direct_to_queue)
         self.direct_download_button.clicked.connect(self.download_direct)
         self.direct_text.textChanged.connect(self.update_direct_actions)
-        direct_layout.addWidget(_panel_title("Direct input"), 0, 0)
-        direct_layout.addWidget(self.direct_text, 0, 1, 1, 4)
-        direct_layout.addWidget(self.direct_browse_button, 0, 5, Qt.AlignTop)
-        direct_layout.addWidget(self.direct_video_only, 1, 1)
-        direct_layout.addWidget(self.direct_queue_button, 1, 4)
-        direct_layout.addWidget(self.direct_download_button, 1, 5)
-        direct_layout.setColumnStretch(1, 1)
-        layout.addWidget(_panel(direct_layout))
+        direct_card.add_widget(self.direct_text)
+        direct_row = QHBoxLayout()
+        direct_row.setSpacing(8)
+        direct_row.addWidget(self.direct_browse_button)
+        direct_row.addWidget(self.direct_video_only)
+        direct_row.addStretch(1)
+        direct_row.addWidget(self.direct_queue_button)
+        direct_row.addWidget(self.direct_download_button)
+        direct_card.add_layout(direct_row)
 
-        self.results_table = QTableWidget(0, 6)
-        self._setup_table(self.results_table, ["Type", "Title", "Artists", "Quality", "Duration", "ID"])
-        self.results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
-        self.results_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
-        self.results_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Fixed)
-        self.results_table.setColumnWidth(3, 150)
-        self.results_table.setColumnWidth(4, 90)
-        self.results_table.setColumnWidth(5, 120)
-        self.results_table.setSelectionMode(QTableWidget.ExtendedSelection)
-        self.results_table.itemSelectionChanged.connect(self.update_result_actions)
-        self.results_table.itemDoubleClicked.connect(self.open_result_item)
-        layout.addWidget(self.results_table, 1)
+        top = QHBoxLayout()
+        top.setSpacing(14)
+        top.addWidget(search_card, 5)
+        top.addWidget(direct_card, 4)
+        layout.addLayout(top)
 
-        action_layout = QHBoxLayout()
-        self.search_status = _label("No search run yet.", "Muted")
-        action_layout.addWidget(self.search_status, 1)
-        self.back_results_button = _button("Back")
-        self.artist_videos_button = _button("View Videos")
-        self.result_video_only = QCheckBox("Videos only")
-        self.add_queue_button = _button("Add to Queue")
-        self.download_now_button = _button("Download Now", primary=True)
-        self.back_results_button.setToolTip("Return to the previous result list.")
-        self.artist_videos_button.setToolTip("Replace an Artist result with its videos.")
-        self.result_video_only.setToolTip("Queue or download selected rows in videos-only mode.")
-        self.add_queue_button.setToolTip("Add selected rows to the queue.")
-        self.download_now_button.setToolTip("Add selected rows and start downloading.")
+        # -- Results --------------------------------------------------------
+        results_header = QHBoxLayout()
+        results_header.setSpacing(10)
+        results_header.addWidget(label("Results", "CardTitle"))
+        self.results_count_chip = Chip("0 items", "neutral")
+        results_header.addWidget(self.results_count_chip)
+        self.search_status = label("No search run yet.", "Muted")
+        results_header.addWidget(self.search_status, 1)
+        self.back_results_button = button("Back", ghost=True, tooltip="Return to the previous result list.")
+        self.artist_videos_button = button("View Videos", tooltip="Replace an Artist result with its videos.")
         self.back_results_button.clicked.connect(self.show_previous_results)
         self.artist_videos_button.clicked.connect(self.view_selected_artist_videos)
+        results_header.addWidget(self.back_results_button)
+        results_header.addWidget(self.artist_videos_button)
+        layout.addLayout(results_header)
+
+        self.results_table = QTableWidget(0, 6)
+        configure_table(self.results_table, ["Type", "Title", "Artists", "Quality", "Duration", "ID"])
+        fix_columns(self.results_table, {0: 90, 3: 140, 4: 90, 5: 120})
+        self.results_table.itemSelectionChanged.connect(self.update_result_actions)
+        self.results_table.itemDoubleClicked.connect(self.open_result_item)
+        self.results_stack = TableStack(self.results_table, RESULTS_EMPTY)
+        layout.addWidget(self.results_stack, 1)
+
+        action_layout = QHBoxLayout()
+        action_layout.setSpacing(8)
+        self.selection_label = label("Nothing selected", "Muted")
+        action_layout.addWidget(self.selection_label, 1)
+        self.result_video_only = QCheckBox("Videos only")
+        self.result_video_only.setToolTip("Queue or download selected rows in videos-only mode.")
+        self.add_queue_button = button("Add to Queue", tooltip="Add selected rows to the queue.")
+        self.download_now_button = button("Download Now", primary=True, tooltip="Add selected rows and start downloading.")
         self.add_queue_button.clicked.connect(self.add_selected_to_queue)
         self.download_now_button.clicked.connect(self.download_selected)
-        action_layout.addWidget(self.back_results_button)
-        action_layout.addWidget(self.artist_videos_button)
         action_layout.addWidget(self.result_video_only)
         action_layout.addWidget(self.add_queue_button)
         action_layout.addWidget(self.download_now_button)
         layout.addLayout(action_layout)
         return page
 
+    # ------------------------------------------------------------------ queue
+
     def _build_queue_page(self) -> QWidget:
-        page, layout = self._page("Queue", "Download list")
+        page, layout, header_actions = self._page("Queue", "Everything waiting to download, in progress, or finished")
 
-        self.queue_table = QTableWidget(0, 6)
-        self._setup_table(self.queue_table, ["Type", "Title", "Artists", "Quality", "Status", "Progress"])
-        self.queue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
-        self.queue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
-        self.queue_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Fixed)
-        self.queue_table.setColumnWidth(3, 150)
-        self.queue_table.setColumnWidth(4, 260)
-        self.queue_table.setColumnWidth(5, 130)
-        self.queue_table.setItemDelegateForColumn(5, QueueProgressDelegate(self.queue_table))
-        self.queue_table.setSelectionMode(QTableWidget.ExtendedSelection)
-        self.queue_table.itemSelectionChanged.connect(self.update_queue_actions)
-        layout.addWidget(self.queue_table, 1)
-
-        action_layout = QHBoxLayout()
-        self.queue_status = _label("Queue is empty.", "Muted")
-        action_layout.addWidget(self.queue_status, 1)
-        self.remove_queue_button = _button("Remove")
-        self.clear_queue_button = _button("Clear")
-        self.retry_failed_button = _button("Retry Failed")
-        self.cancel_queue_button = _button("Cancel", danger=True)
-        self.start_queue_button = _button("Start Queue", primary=True)
-        self.remove_queue_button.setToolTip("Remove selected queue rows.")
-        self.clear_queue_button.setToolTip("Clear the queue and output log.")
-        self.retry_failed_button.setToolTip("Re-queue items that failed and download them again.")
-        self.cancel_queue_button.setToolTip("Stop after the current item finishes.")
-        self.start_queue_button.setToolTip("Download queued and failed items. Completed rows are skipped.")
+        self.remove_queue_button = button("Remove", ghost=True, tooltip="Remove selected queue rows.")
+        self.clear_queue_button = button("Clear", ghost=True, tooltip="Clear the queue and output log.")
+        self.retry_failed_button = button("Retry Failed", tooltip="Re-queue items that failed and download them again.")
+        self.cancel_queue_button = button("Cancel", danger=True, tooltip="Stop after the current item finishes.")
+        self.start_queue_button = button(
+            "Start Queue", primary=True, tooltip="Download queued and failed items. Completed rows are skipped."
+        )
+        self.start_queue_button.setMinimumWidth(130)
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_items)
         self.clear_queue_button.clicked.connect(self.clear_queue)
         self.retry_failed_button.clicked.connect(self.retry_failed_downloads)
         self.cancel_queue_button.clicked.connect(self.cancel_downloads)
         self.start_queue_button.clicked.connect(self.start_queue_download)
-        action_layout.addWidget(self.remove_queue_button)
-        action_layout.addWidget(self.clear_queue_button)
-        action_layout.addWidget(self.retry_failed_button)
-        action_layout.addWidget(self.cancel_queue_button)
-        action_layout.addWidget(self.start_queue_button)
-        layout.addLayout(action_layout)
+        for widget in (
+            self.remove_queue_button,
+            self.clear_queue_button,
+            self.retry_failed_button,
+            self.cancel_queue_button,
+            self.start_queue_button,
+        ):
+            header_actions.addWidget(widget)
 
-        self.download_log = QTextEdit()
-        self.download_log.setReadOnly(True)
-        self.download_log.setPlaceholderText("Download output")
-        layout.addWidget(_label("Output", "SectionTitle"))
-        layout.addWidget(self.download_log)
+        summary = QHBoxLayout()
+        summary.setSpacing(8)
+        self.queue_chip_total = Chip("0 total", "neutral")
+        self.queue_chip_pending = Chip("0 queued", "info")
+        self.queue_chip_active = Chip("0 downloading", "warning")
+        self.queue_chip_done = Chip("0 done", "success")
+        self.queue_chip_failed = Chip("0 failed", "danger")
+        for chip in (
+            self.queue_chip_total,
+            self.queue_chip_pending,
+            self.queue_chip_active,
+            self.queue_chip_done,
+            self.queue_chip_failed,
+        ):
+            summary.addWidget(chip)
+        self.queue_status = label("Queue is empty.", "Muted")
+        summary.addWidget(self.queue_status, 1)
+        layout.addLayout(summary)
+
+        self.queue_table = QTableWidget(0, 6)
+        configure_table(self.queue_table, ["Type", "Title", "Artists", "Quality", "Status", "Progress"])
+        fix_columns(self.queue_table, {0: 110, 3: 140, 4: 240, 5: 140})
+        self.queue_table.setItemDelegateForColumn(5, QueueProgressDelegate(self.queue_table))
+        self.queue_table.itemSelectionChanged.connect(self.update_queue_actions)
+        self.queue_stack = TableStack(self.queue_table, QUEUE_EMPTY)
+
+        log_box = QWidget()
+        log_layout = QVBoxLayout(log_box)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.setSpacing(6)
+        log_layout.addWidget(label("Output", "CardTitle"))
+        self.download_log = log_view("Download output appears here while the queue runs.")
+        log_layout.addWidget(self.download_log, 1)
+
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(self.queue_stack)
+        splitter.addWidget(log_box)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([520, 190])
+        layout.addWidget(splitter, 1)
         return page
 
-    def _build_settings_page(self) -> QWidget:
-        page, layout = self._page("Settings", "Preferences")
+    # --------------------------------------------------------------- settings
 
+    def _build_settings_page(self) -> QWidget:
+        page, layout, header_actions = self._page("Settings", "Storage, quality, library behaviour and file naming")
+
+        self.settings_status = label("Settings loaded.", "Muted")
+        reload_button = button("Reload", ghost=True, tooltip="Discard unsaved changes and reload from disk.")
+        save_button = button("Save Settings", primary=True, tooltip="Write these settings to disk.")
+        reload_button.clicked.connect(self.refresh_settings)
+        save_button.clicked.connect(self.save_settings)
+        header_actions.addWidget(self.settings_status)
+        header_actions.addSpacing(6)
+        header_actions.addWidget(reload_button)
+        header_actions.addWidget(save_button)
+
+        # Widgets ------------------------------------------------------------
         self.download_path = QLineEdit()
-        browse = _button("Browse")
-        open_folder = _button("Open")
-        open_folder.setToolTip("Open the current download folder.")
+        self.download_path.setPlaceholderText("Folder where downloads are written")
+        browse = button("Browse...", tooltip="Choose a download folder.")
+        open_folder = button("Open", ghost=True, tooltip="Open the current download folder.")
         open_folder.clicked.connect(self.open_download_folder)
         browse.clicked.connect(self.browse_download_path)
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(8)
         path_layout.addWidget(self.download_path, 1)
         path_layout.addWidget(open_folder)
         path_layout.addWidget(browse)
@@ -390,8 +454,8 @@ class MainWindow(QMainWindow):
             self.video_quality.addItem(item.name, item.name)
         self.priority_preset = QComboBox()
         self.priority_preset.setToolTip("Fallback order used when the requested stream is blocked or unavailable.")
-        for label, order in PRIORITY_PRESETS:
-            self.priority_preset.addItem(label, order)
+        for preset_label, order in PRIORITY_PRESETS:
+            self.priority_preset.addItem(preset_label, order)
         self.priority_preset.setMinimumContentsLength(18)
         self.priority_preset.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.priority_preset.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -401,10 +465,7 @@ class MainWindow(QMainWindow):
         self.api_client = QComboBox()
         for item in self.backend.api_clients():
             status = "OK" if item["valid"] else "old"
-            self.api_client.addItem(
-                f'{item["index"]} {status} - {item["platform"]}',
-                item["index"],
-            )
+            self.api_client.addItem(f'{item["index"]} {status} - {item["platform"]}', item["index"])
             self.api_client.setItemData(
                 self.api_client.count() - 1,
                 f'{item["index"]} {status} - {item["platform"]} ({item["formats"]})',
@@ -415,7 +476,7 @@ class MainWindow(QMainWindow):
         self.api_client.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
         self.checks = {}
-        for key, label in (
+        for key, text in (
             ("checkExist", "Skip existing files"),
             ("showProgress", "Show progress"),
             ("showTrackInfo", "Show track info"),
@@ -430,7 +491,7 @@ class MainWindow(QMainWindow):
             ("saveAsFlac", "Save FLAC as .flac files"),
             ("usePlaylistFolder", "Use playlist folders"),
         ):
-            self.checks[key] = QCheckBox(label)
+            self.checks[key] = QCheckBox(text)
 
         self.request_interval = QDoubleSpinBox()
         self.request_interval.setRange(0.0, 300.0)
@@ -445,214 +506,221 @@ class MainWindow(QMainWindow):
         self.track_format = QLineEdit()
         self.video_format = QLineEdit()
 
+        # Layout -------------------------------------------------------------
         content = QWidget()
-        content.setObjectName("ScrollContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(10)
+        content_layout.setSpacing(14)
 
         top_layout = QHBoxLayout()
-        top_layout.setSpacing(10)
+        top_layout.setSpacing(14)
         top_layout.addWidget(self._build_storage_settings_panel(path_layout), 5)
         top_layout.addWidget(self._build_quality_settings_panel(), 4)
         content_layout.addLayout(top_layout)
         content_layout.addWidget(self._build_library_settings_panel())
         content_layout.addWidget(self._build_naming_settings_panel())
         content_layout.addStretch(1)
-
-        scroll = QScrollArea()
-        scroll.setObjectName("PageScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-
-        action_layout = QHBoxLayout()
-        self.settings_status = _label("Settings loaded.", "Muted")
-        action_layout.addWidget(self.settings_status, 1)
-        reset = _button("Reload")
-        save = _button("Save Settings", primary=True)
-        reset.clicked.connect(self.refresh_settings)
-        save.clicked.connect(self.save_settings)
-        action_layout.addWidget(reset)
-        action_layout.addWidget(save)
-        layout.addLayout(action_layout)
+        layout.addWidget(scroll_area(content), 1)
         return page
 
-    def _build_storage_settings_panel(self, path_layout: QHBoxLayout) -> QFrame:
+    @staticmethod
+    def _form_grid() -> QGridLayout:
         grid = QGridLayout()
-        grid.setContentsMargins(12, 12, 12, 12)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(8)
-        grid.addWidget(_panel_title("Storage"), 0, 0, 1, 2)
-        grid.addWidget(_label("Download path", "SectionTitle"), 1, 0)
-        grid.addLayout(path_layout, 1, 1)
-        grid.addWidget(_label("Language", "SectionTitle"), 2, 0)
-        grid.addWidget(self.language, 2, 1)
-        grid.addWidget(_label("TIDAL client", "SectionTitle"), 3, 0)
-        grid.addWidget(self.api_client, 3, 1)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(10)
+        grid.setColumnMinimumWidth(0, 110)
         grid.setColumnStretch(1, 1)
-        return _panel(grid)
+        return grid
+
+    def _build_storage_settings_panel(self, path_layout: QHBoxLayout) -> QFrame:
+        card = Card("Storage & client", "Where files go and which TIDAL client Tidekeeper identifies as.")
+        grid = self._form_grid()
+        grid.addWidget(field_label("Download path"), 0, 0)
+        grid.addLayout(path_layout, 0, 1)
+        grid.addWidget(field_label("Language"), 1, 0)
+        grid.addWidget(self.language, 1, 1)
+        grid.addWidget(field_label("TIDAL client"), 2, 0)
+        grid.addWidget(self.api_client, 2, 1)
+        card.add_layout(grid)
+        card.add_widget(hint("Changing the client requires signing in again."))
+        return card
 
     def _build_quality_settings_panel(self) -> QFrame:
-        grid = QGridLayout()
-        grid.setContentsMargins(12, 12, 12, 12)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(8)
-        grid.addWidget(_panel_title("Quality"), 0, 0, 1, 2)
-        grid.addWidget(_label("Audio", "SectionTitle"), 1, 0)
-        grid.addWidget(self.audio_quality, 1, 1)
-        grid.addWidget(_label("Fallback", "SectionTitle"), 2, 0)
-        grid.addWidget(self.priority_preset, 2, 1)
-        grid.addWidget(_label("Video", "SectionTitle"), 3, 0)
-        grid.addWidget(self.video_quality, 3, 1)
-        grid.setColumnStretch(1, 1)
-        return _panel(grid)
+        card = Card("Quality", "Preferred stream quality and what to fall back to.")
+        grid = self._form_grid()
+        grid.setColumnMinimumWidth(0, 80)
+        grid.addWidget(field_label("Audio"), 0, 0)
+        grid.addWidget(self.audio_quality, 0, 1)
+        grid.addWidget(field_label("Fallback"), 1, 0)
+        grid.addWidget(self.priority_preset, 1, 1)
+        grid.addWidget(field_label("Video"), 2, 0)
+        grid.addWidget(self.video_quality, 2, 1)
+        card.add_layout(grid)
+        card.add_widget(hint("Fallback is used when the requested stream is blocked or unavailable."))
+        return card
 
     def _build_library_settings_panel(self) -> QFrame:
+        card = Card("Library behaviour", "What gets saved alongside the audio and how downloads run.")
         grid = QGridLayout()
-        grid.setContentsMargins(12, 12, 12, 12)
-        grid.setHorizontalSpacing(24)
-        grid.setVerticalSpacing(6)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(28)
+        grid.setVerticalSpacing(4)
         groups = [
             ("Files", ["checkExist", "saveCovers", "lyricFile", "saveAlbumInfo", "usePlaylistFolder"]),
             ("Catalog", ["includeEP", "downloadVideos"]),
-            ("Run behavior", [
-                "multiThread",
-                "downloadDelay",
-                "adaptiveRateLimit",
-                "saveAsFlac",
-                "showProgress",
-                "showTrackInfo",
-            ]),
+            ("Run behaviour", ["multiThread", "downloadDelay", "adaptiveRateLimit", "saveAsFlac"]),
+            ("Console output", ["showProgress", "showTrackInfo"]),
         ]
         for column, (title, keys) in enumerate(groups):
-            grid.addWidget(_label(title, "SectionTitle"), 0, column)
+            grid.addWidget(field_label(title), 0, column)
             for row, key in enumerate(keys, start=1):
                 grid.addWidget(self.checks[key], row, column)
             grid.setColumnStretch(column, 1)
-        grid.addWidget(_label("Request interval", "SectionTitle"), 0, len(groups))
-        grid.addWidget(self.request_interval, 1, len(groups))
-        grid.setColumnStretch(len(groups), 1)
-        return _panel(grid)
+        interval_col = len(groups)
+        grid.addWidget(field_label("Request interval"), 0, interval_col)
+        grid.addWidget(self.request_interval, 1, interval_col)
+        grid.addWidget(hint("Minimum gap between playback requests."), 2, interval_col, 1, 1)
+        grid.setColumnStretch(interval_col, 1)
+        card.add_layout(grid)
+        return card
 
     def _build_naming_settings_panel(self) -> QFrame:
+        card = Card("File naming", "Folder and file name templates.")
         grid = QGridLayout()
-        grid.setContentsMargins(12, 12, 12, 12)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(6)
-        grid.addWidget(_panel_title("Naming"), 0, 0, 1, 2)
         fields = (
-            ("Album folder", self.album_format, 1, 0),
-            ("Playlist folder", self.playlist_format, 1, 1),
-            ("Track file", self.track_format, 3, 0),
-            ("Video file", self.video_format, 3, 1),
+            ("Album folder", self.album_format, 0, 0),
+            ("Playlist folder", self.playlist_format, 0, 1),
+            ("Track file", self.track_format, 2, 0),
+            ("Video file", self.video_format, 2, 1),
         )
-        for label, widget, row, column in fields:
+        for text, widget, row, column in fields:
             widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-            grid.addWidget(_label(label, "SectionTitle"), row, column)
+            grid.addWidget(field_label(text), row, column)
             grid.addWidget(widget, row + 1, column)
             grid.setColumnStretch(column, 1)
-        return _panel(grid)
+        card.add_layout(grid)
+        card.add_widget(hint(NAMING_HINT))
+        return card
+
+    # ---------------------------------------------------------------- account
 
     def _build_account_page(self) -> QWidget:
-        page, layout = self._page("Account", "Session")
+        page, layout, _ = self._page("Account", "TIDAL session, sign-in and maintenance")
 
         content = QWidget()
-        content.setObjectName("ScrollContent")
         panels_layout = QVBoxLayout(content)
         panels_layout.setContentsMargins(0, 0, 0, 0)
-        panels_layout.setSpacing(18)
+        panels_layout.setSpacing(14)
 
-        status_layout = QGridLayout()
-        status_layout.setContentsMargins(16, 16, 16, 16)
-        status_layout.setVerticalSpacing(12)
-        self.auth_label = _label("Signed out", "StatusPill")
-        self.auth_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.country_label = _label("Country: unknown", "Muted")
-        self.expiry_label = _label("Expires: unknown", "Muted")
-        status_layout.addWidget(self.auth_label, 0, 0, 1, 2)
-        status_layout.addWidget(self.country_label, 1, 0)
-        status_layout.addWidget(self.expiry_label, 1, 1)
-        panels_layout.addWidget(_panel(status_layout))
+        # Status ------------------------------------------------------------
+        status_card = Card("Session")
+        self.auth_label = label("Signed out", "StatusPill")
+        self.auth_label.setProperty("state", "out")
+        self.auth_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.country_label = label("Country: unknown", "Muted")
+        self.expiry_label = label("Expires: unknown", "Muted")
+        self.logout_button = button("Log Out", danger=True, tooltip="Remove the saved local login.")
+        self.refresh_login_button = button("Refresh Saved Login", tooltip="Refresh the saved token if possible.")
+        self.logout_button.clicked.connect(self.logout)
+        self.refresh_login_button.clicked.connect(self.refresh_saved_login)
+        status_row = QHBoxLayout()
+        status_row.setSpacing(16)
+        status_row.addWidget(self.auth_label)
+        details = QVBoxLayout()
+        details.setSpacing(2)
+        details.addWidget(self.country_label)
+        details.addWidget(self.expiry_label)
+        status_row.addLayout(details, 1)
+        status_row.addWidget(self.refresh_login_button)
+        status_row.addWidget(self.logout_button)
+        status_card.add_layout(status_row)
+        panels_layout.addWidget(status_card)
 
-        login_layout = QGridLayout()
-        login_layout.setContentsMargins(16, 16, 16, 16)
-        login_layout.setVerticalSpacing(12)
+        # Sign in -----------------------------------------------------------
+        signin_row = QHBoxLayout()
+        signin_row.setSpacing(14)
+
+        login_card = Card("Device login", "Recommended. Sign in through tidal.com with a one-time code.")
         self.login_url = QLineEdit()
         self.login_url.setReadOnly(True)
-        self.login_url.setPlaceholderText("Device login URL")
-        self.device_login_button = _button("Start Device Login", primary=True)
-        self.open_login_button = _button("Open Login")
-        self.refresh_login_button = _button("Refresh Saved Login")
-        self.logout_button = _button("Log Out", danger=True)
-        self.device_login_button.setToolTip("Start TIDAL device login.")
-        self.open_login_button.setToolTip("Open the device login URL in your browser.")
-        self.refresh_login_button.setToolTip("Refresh the saved token if possible.")
-        self.logout_button.setToolTip("Remove the saved local login.")
+        self.login_url.setPlaceholderText("Device login URL appears here")
+        self.login_code_label = label("", "Code")
+        self.login_code_label.setAlignment(Qt.AlignCenter)
+        self.login_code_label.hide()
+        self.device_login_button = button("Start Device Login", primary=True, tooltip="Start TIDAL device login.")
+        self.open_login_button = button("Open in Browser", tooltip="Open the device login URL in your browser.")
         self.device_login_button.clicked.connect(self.start_device_login)
         self.open_login_button.clicked.connect(self.open_login_url)
-        self.refresh_login_button.clicked.connect(self.refresh_saved_login)
-        self.logout_button.clicked.connect(self.logout)
-        login_layout.addWidget(_label("Device login", "SectionTitle"), 0, 0)
-        login_layout.addWidget(self.login_url, 0, 1, 1, 3)
-        login_layout.addWidget(self.device_login_button, 1, 0)
-        login_layout.addWidget(self.open_login_button, 1, 1)
-        login_layout.addWidget(self.refresh_login_button, 1, 2)
-        login_layout.addWidget(self.logout_button, 1, 3)
-        panels_layout.addWidget(_panel(login_layout))
+        login_card.add_widget(self.login_url)
+        login_card.add_widget(self.login_code_label)
+        login_buttons = QHBoxLayout()
+        login_buttons.setSpacing(8)
+        login_buttons.addWidget(self.device_login_button)
+        login_buttons.addWidget(self.open_login_button)
+        login_buttons.addStretch(1)
+        login_card.add_layout(login_buttons)
+        signin_row.addWidget(login_card, 1)
 
-        token_layout = QGridLayout()
-        token_layout.setContentsMargins(16, 16, 16, 16)
-        token_layout.setVerticalSpacing(12)
+        token_card = Card("Manual token", "Advanced. Paste tokens copied from another signed-in client.")
         self.access_token = QLineEdit()
         self.access_token.setEchoMode(QLineEdit.Password)
         self.access_token.setPlaceholderText("Access token")
         self.refresh_token = QLineEdit()
         self.refresh_token.setEchoMode(QLineEdit.Password)
-        self.refresh_token.setPlaceholderText("Refresh token, optional")
-        self.token_login_button = _button("Save Token", primary=True)
-        self.token_login_button.setToolTip("Save a manually supplied TIDAL token.")
+        self.refresh_token.setPlaceholderText("Refresh token (optional)")
+        self.token_login_button = button("Save Token", tooltip="Save a manually supplied TIDAL token.")
         self.token_login_button.clicked.connect(self.login_with_token)
-        token_layout.addWidget(_label("Manual token", "SectionTitle"), 0, 0)
-        token_layout.addWidget(self.access_token, 0, 1)
-        token_layout.addWidget(self.refresh_token, 1, 1)
-        token_layout.addWidget(self.token_login_button, 1, 2)
-        panels_layout.addWidget(_panel(token_layout))
+        token_card.add_widget(self.access_token)
+        token_card.add_widget(self.refresh_token)
+        token_buttons = QHBoxLayout()
+        token_buttons.addStretch(1)
+        token_buttons.addWidget(self.token_login_button)
+        token_card.add_layout(token_buttons)
+        signin_row.addWidget(token_card, 1)
+        panels_layout.addLayout(signin_row)
 
-        maintenance_layout = QGridLayout()
-        maintenance_layout.setContentsMargins(16, 16, 16, 16)
-        maintenance_layout.setVerticalSpacing(12)
-        self.doctor_button = _button("Run Doctor")
-        self.update_terminal_button = _button("Update Terminal")
-        self.update_gui_button = _button("Update GUI", primary=True)
-        self.doctor_button.setToolTip("Check auth, download path, client, and local tools.")
-        self.update_terminal_button.setToolTip("Update the terminal install from GitHub.")
-        self.update_gui_button.setToolTip("Update the terminal and GUI install from GitHub.")
+        # Maintenance -------------------------------------------------------
+        maintenance_card = Card("Maintenance", "Diagnose the install or pull the latest version from GitHub.")
+        self.doctor_button = button("Run Doctor", tooltip="Check auth, download path, client, and local tools.")
+        self.update_terminal_button = button("Update Terminal", tooltip="Update the terminal install from GitHub.")
+        self.update_gui_button = button(
+            "Update Terminal + GUI", primary=True, tooltip="Update the terminal and GUI install from GitHub."
+        )
         self.doctor_button.clicked.connect(self.run_doctor)
         self.update_terminal_button.clicked.connect(lambda: self.update_tidekeeper(False))
         self.update_gui_button.clicked.connect(lambda: self.update_tidekeeper(True))
-        maintenance_layout.addWidget(_label("Maintenance", "SectionTitle"), 0, 0)
-        maintenance_layout.addWidget(self.doctor_button, 0, 1)
-        maintenance_layout.addWidget(self.update_terminal_button, 0, 2)
-        maintenance_layout.addWidget(self.update_gui_button, 0, 3)
-        panels_layout.addWidget(_panel(maintenance_layout))
+        maintenance_row = QHBoxLayout()
+        maintenance_row.setSpacing(8)
+        maintenance_row.addWidget(self.doctor_button)
+        maintenance_row.addStretch(1)
+        maintenance_row.addWidget(self.update_terminal_button)
+        maintenance_row.addWidget(self.update_gui_button)
+        maintenance_card.add_layout(maintenance_row)
+        panels_layout.addWidget(maintenance_card)
 
-        scroll = QScrollArea()
-        scroll.setObjectName("PageScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setWidget(content)
-        layout.addWidget(scroll)
+        log_box = QWidget()
+        log_layout = QVBoxLayout(log_box)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.setSpacing(6)
+        log_layout.addWidget(label("Output", "CardTitle"))
+        self.account_log = log_view("Login, doctor and update output appears here.")
+        log_layout.addWidget(self.account_log, 1)
 
-        self.account_log = QTextEdit()
-        self.account_log.setReadOnly(True)
-        self.account_log.setPlaceholderText("Account output")
-        layout.addWidget(_label("Output", "SectionTitle"))
-        layout.addWidget(self.account_log, 1)
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(scroll_area(content))
+        splitter.addWidget(log_box)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([460, 220])
+        layout.addWidget(splitter, 1)
         return page
+
+    # ---------------------------------------------------------------- helpers
 
     def _table_cell(self, value, item=None) -> QTableWidgetItem:
         cell = QTableWidgetItem(str(value))
@@ -664,27 +732,22 @@ class MainWindow(QMainWindow):
     def _update_request_interval_enabled(self, enabled: bool):
         self.request_interval.setEnabled(enabled)
 
-    def _setup_table(self, table: QTableWidget, headers: List[str]):
-        table.setHorizontalHeaderLabels(headers)
-        table.verticalHeader().setVisible(False)
-        table.setAlternatingRowColors(True)
-        table.setShowGrid(False)
-        table.setSortingEnabled(True)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    def _row_item(self, table: QTableWidget, row: int):
+        cell = table.item(row, 0)
+        if cell is None:
+            return None
+        return cell.data(Qt.UserRole)
+
+    @staticmethod
+    def _plural(count: int, word: str) -> str:
+        return f"{count} {word}{'' if count == 1 else 's'}"
 
     def show_screen(self, name: str):
         if name not in self.pages:
             return
         self.stack.setCurrentWidget(self.pages[name])
-        for key, button in self.nav_buttons.items():
-            button.setProperty("active", key == name)
-            button.style().unpolish(button)
-            button.style().polish(button)
+        for key, nav in self.nav_buttons.items():
+            nav.set_active(key == name)
 
     def start_worker(self, worker):
         self.active_workers.add(worker)
@@ -698,6 +761,8 @@ class MainWindow(QMainWindow):
 
         worker.signals.finished.connect(cleanup)
         self.thread_pool.start(worker)
+
+    # ----------------------------------------------------------------- search
 
     def run_search(self):
         text = self.search_text.text().strip()
@@ -730,7 +795,11 @@ class MainWindow(QMainWindow):
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.results_table.setItem(row, col, cell)
         self.results_table.setSortingEnabled(True)
-        self.search_status.setText(status_text or f"{len(items)} result{'s' if len(items) != 1 else ''}.")
+        self.results_stack.set_empty(not items)
+        if not items:
+            self.results_stack.set_empty_text("No results.\nTry another term or content type.")
+        self.results_count_chip.setText(self._plural(len(items), "item"))
+        self.search_status.setText(status_text or f"{self._plural(len(items), 'result')}.")
         self.update_result_actions()
 
     def _search_finished(self):
@@ -742,6 +811,22 @@ class MainWindow(QMainWindow):
         self.search_status.setText(message)
         QMessageBox.warning(self, "Search failed", message)
 
+    def _load_artist_children(self, item: SearchItem, loader, noun: str):
+        self.result_history.append((list(self.results), self.search_status.text()))
+        self.search_in_progress = True
+        self.search_status.setText(f"Loading {noun}s by {item.title}...")
+        self.update_search_action()
+        self.update_result_actions()
+        worker = TaskWorker(loader, item)
+        worker.signals.result.connect(
+            lambda items, artist=item.title: self.set_search_results(
+                items, f"{self._plural(len(items), noun)} by {artist}."
+            )
+        )
+        worker.signals.error.connect(self.show_search_error)
+        worker.signals.finished.connect(self._search_finished)
+        self.start_worker(worker)
+
     def open_result_item(self, cell: QTableWidgetItem):
         item = self._row_item(self.results_table, cell.row())
         if item is None:
@@ -751,22 +836,7 @@ class MainWindow(QMainWindow):
             return
         if self.search_in_progress:
             return
-
-        self.result_history.append((list(self.results), self.search_status.text()))
-        self.search_in_progress = True
-        self.search_status.setText(f"Loading tracks by {item.title}...")
-        self.update_search_action()
-        self.update_result_actions()
-        worker = TaskWorker(self.backend.artist_tracks, item)
-        worker.signals.result.connect(
-            lambda items, artist=item.title: self.set_search_results(
-                items,
-                f"{len(items)} track{'s' if len(items) != 1 else ''} by {artist}.",
-            )
-        )
-        worker.signals.error.connect(self.show_search_error)
-        worker.signals.finished.connect(self._search_finished)
-        self.start_worker(worker)
+        self._load_artist_children(item, self.backend.artist_tracks, "track")
 
     def view_selected_artist_videos(self):
         items = self.selected_result_items()
@@ -775,23 +845,7 @@ class MainWindow(QMainWindow):
             return
         if self.search_in_progress:
             return
-
-        item = items[0]
-        self.result_history.append((list(self.results), self.search_status.text()))
-        self.search_in_progress = True
-        self.search_status.setText(f"Loading videos by {item.title}...")
-        self.update_search_action()
-        self.update_result_actions()
-        worker = TaskWorker(self.backend.artist_videos, item)
-        worker.signals.result.connect(
-            lambda videos, artist=item.title: self.set_search_results(
-                videos,
-                f"{len(videos)} video{'s' if len(videos) != 1 else ''} by {artist}.",
-            )
-        )
-        worker.signals.error.connect(self.show_search_error)
-        worker.signals.finished.connect(self._search_finished)
-        self.start_worker(worker)
+        self._load_artist_children(items[0], self.backend.artist_videos, "video")
 
     def show_previous_results(self):
         if not self.result_history or self.search_in_progress:
@@ -808,12 +862,6 @@ class MainWindow(QMainWindow):
                 items.append(item)
         return items
 
-    def _row_item(self, table: QTableWidget, row: int):
-        cell = table.item(row, 0)
-        if cell is None:
-            return None
-        return cell.data(Qt.UserRole)
-
     def add_selected_to_queue(self):
         items = self.video_mode_items(self.selected_result_items(), self.result_video_only.isChecked())
         if not items:
@@ -821,7 +869,9 @@ class MainWindow(QMainWindow):
             return
         self.queue.extend(items)
         self.refresh_queue_table()
-        self.search_status.setText(f"Added {len(items)} item{'s' if len(items) != 1 else ''} to queue.")
+        self.search_status.setText(f"Added {self._plural(len(items), 'item')} to queue.")
+
+    # ----------------------------------------------------------------- direct
 
     def browse_direct_file(self):
         current = self.direct_text.toPlainText().strip().splitlines()
@@ -849,9 +899,7 @@ class MainWindow(QMainWindow):
             return
         self.queue.extend(items)
         self.refresh_queue_table()
-        self.search_status.setText(
-            f"Added {len(items)} direct item{'s' if len(items) != 1 else ''} to queue."
-        )
+        self.search_status.setText(f"Added {self._plural(len(items), 'direct item')} to queue.")
 
     def download_direct(self):
         if self.download_in_progress:
@@ -878,6 +926,8 @@ class MainWindow(QMainWindow):
         self.show_screen("queue")
         self.start_downloads(items)
 
+    # ------------------------------------------------------------------ queue
+
     def _queue_kind_label(self, item: SearchItem) -> str:
         kind = "Direct" if item.kind == Type.Null else item.kind.name
         if item.video_only and item.kind != Type.Video:
@@ -899,6 +949,16 @@ class MainWindow(QMainWindow):
             return "0%"
         return ""
 
+    @staticmethod
+    def _queue_progress_state(item: SearchItem) -> str:
+        if item.status == "Done":
+            return "done"
+        if item.status == "Failed":
+            return "failed"
+        if item.status == "Downloading":
+            return "active"
+        return ""
+
     def _set_queue_row(self, row: int, item: SearchItem):
         values = [
             self._queue_kind_label(item),
@@ -917,10 +977,20 @@ class MainWindow(QMainWindow):
                 cell.setText(str(value))
                 if col == 0:
                     cell.setData(Qt.UserRole, item)
+        status_cell = self.queue_table.item(row, 4)
+        if status_cell is not None:
+            colour = {
+                "Done": TOKENS["success"],
+                "Failed": TOKENS["danger"],
+                "Downloading": TOKENS["accent"],
+                "Cancelled": TOKENS["warning"],
+            }.get(item.status or "", TABLE_TEXT_COLOR)
+            status_cell.setForeground(QColor(colour))
         progress_cell = self.queue_table.item(row, 5)
         if progress_cell is not None:
             percent = 100 if item.status == "Done" else int(item.progress_percent or 0)
             progress_cell.setData(PROGRESS_PERCENT_ROLE, percent)
+            progress_cell.setData(PROGRESS_STATE_ROLE, self._queue_progress_state(item))
 
     def refresh_queue_table(self):
         self.queue_table.setSortingEnabled(False)
@@ -928,7 +998,10 @@ class MainWindow(QMainWindow):
         for row, item in enumerate(self.queue):
             self._set_queue_row(row, item)
         self.queue_table.setSortingEnabled(True)
-        self.queue_status.setText(f"{len(self.queue)} item{'s' if len(self.queue) != 1 else ''} in queue.")
+        self.queue_stack.set_empty(not self.queue)
+        self.queue_status.setText(
+            "Queue is empty." if not self.queue else f"{self._plural(len(self.queue), 'item')} in queue."
+        )
         self.update_queue_actions()
 
     def _refresh_queue_row(self, item: SearchItem):
@@ -936,6 +1009,7 @@ class MainWindow(QMainWindow):
             if self._row_item(self.queue_table, row) is item:
                 self._set_queue_row(row, item)
                 break
+        self._update_queue_summary()
 
     def remove_selected_queue_items(self):
         rows = sorted({index.row() for index in self.queue_table.selectionModel().selectedRows()})
@@ -997,6 +1071,7 @@ class MainWindow(QMainWindow):
         self.download_in_progress = True
         self._cancel_requested = False
         self.update_action_states()
+        self.queue_status.setText(f"Downloading {self._plural(len(items), 'item')}...")
         self.download_log.append("Starting downloads")
         worker = DownloadWorker(self.backend, items)
         self.download_worker = worker
@@ -1040,6 +1115,19 @@ class MainWindow(QMainWindow):
         if item.status == "Downloading":
             self._refresh_queue_row(item)
 
+    def append_download_log(self, text: str):
+        cursor = self.download_log.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text)
+        self.download_log.setTextCursor(cursor)
+        self.download_log.ensureCursorVisible()
+
+    def show_download_error(self, message: str):
+        self.queue_status.setText(message)
+        QMessageBox.warning(self, "Download failed", message)
+
+    # ---------------------------------------------------------- action states
+
     def update_action_states(self):
         self.update_search_action()
         self.update_direct_actions()
@@ -1059,14 +1147,33 @@ class MainWindow(QMainWindow):
         has_selection = bool(selected)
         has_single_artist = len(selected) == 1 and selected[0].kind == Type.Artist
         self.back_results_button.setEnabled(bool(self.result_history) and not self.search_in_progress)
+        self.back_results_button.setVisible(bool(self.result_history))
         self.artist_videos_button.setEnabled(has_single_artist and not self.search_in_progress)
         self.add_queue_button.setEnabled(has_selection)
         self.download_now_button.setEnabled(has_selection and not self.download_in_progress)
+        self.selection_label.setText(
+            f"{self._plural(len(selected), 'row')} selected" if has_selection else "Select rows to queue or download"
+        )
 
     def video_mode_items(self, items: List[SearchItem], video_only: bool) -> List[SearchItem]:
         if not video_only:
             return items
         return [with_video_only(item, True) for item in items]
+
+    def _update_queue_summary(self):
+        total = len(self.queue)
+        done = sum(1 for item in self.queue if item.status == "Done")
+        failed = len(self.failed_queue_items())
+        active = sum(1 for item in self.queue if item.status == "Downloading")
+        pending = total - done - failed - active
+        self.queue_chip_total.setText(self._plural(total, "item"))
+        self.queue_chip_pending.setText(f"{pending} queued")
+        self.queue_chip_active.setText(f"{active} downloading")
+        self.queue_chip_done.setText(f"{done} done")
+        self.queue_chip_failed.setText(f"{failed} failed")
+        self.queue_chip_active.setVisible(active > 0)
+        self.queue_chip_failed.setVisible(failed > 0)
+        self.nav_buttons["queue"].set_badge(pending + active)
 
     def update_queue_actions(self):
         has_queue = bool(self.queue)
@@ -1076,19 +1183,13 @@ class MainWindow(QMainWindow):
         self.remove_queue_button.setEnabled(has_selection and not self.download_in_progress)
         self.clear_queue_button.setEnabled(has_queue and not self.download_in_progress)
         self.retry_failed_button.setEnabled(has_failed and not self.download_in_progress)
+        self.retry_failed_button.setVisible(has_failed)
         self.cancel_queue_button.setEnabled(self.download_in_progress and not self._cancel_requested)
+        self.cancel_queue_button.setVisible(self.download_in_progress)
         self.start_queue_button.setEnabled(has_pending and not self.download_in_progress)
+        self._update_queue_summary()
 
-    def append_download_log(self, text: str):
-        cursor = self.download_log.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.insertText(text)
-        self.download_log.setTextCursor(cursor)
-        self.download_log.ensureCursorVisible()
-
-    def show_download_error(self, message: str):
-        self.queue_status.setText(message)
-        QMessageBox.warning(self, "Download failed", message)
+    # --------------------------------------------------------------- settings
 
     def refresh_settings(self):
         self.download_path.setText(SETTINGS.downloadPath)
@@ -1102,7 +1203,9 @@ class MainWindow(QMainWindow):
         self.api_client.setCurrentIndex(client_index if client_index >= 0 else 0)
         for key, checkbox in self.checks.items():
             checkbox.setChecked(bool(getattr(SETTINGS, key)))
-        self.request_interval.setValue(max(0.0, float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0.0)))
+        self.request_interval.setValue(
+            max(0.0, float(getattr(SETTINGS, "requestIntervalSeconds", 1.0) or 0.0))
+        )
         self._update_request_interval_enabled(self.checks["downloadDelay"].isChecked())
         self.album_format.setText(SETTINGS.albumFolderFormat)
         self.playlist_format.setText(SETTINGS.playlistFolderFormat)
@@ -1156,8 +1259,8 @@ class MainWindow(QMainWindow):
                 self.priority_preset.setCurrentIndex(index)
                 return
 
-        label = "Custom saved: " + " > ".join(order)
-        self.priority_preset.addItem(label, order)
+        text = "Custom saved: " + " > ".join(order)
+        self.priority_preset.addItem(text, order)
         self.priority_preset.setCurrentIndex(self.priority_preset.count() - 1)
 
     def remove_custom_priority_preset(self):
@@ -1190,15 +1293,29 @@ class MainWindow(QMainWindow):
         result = self.backend.save_settings(self.collect_settings_values()) or {}
         if result.get("reauth_required"):
             self.refresh_auth_status()
-            self.settings_status.setText("Settings saved. Sign in again — the TIDAL client changed.")
+            self.settings_status.setText("Settings saved. Sign in again: the TIDAL client changed.")
         else:
             self.settings_status.setText("Settings saved.")
 
+    # ---------------------------------------------------------------- account
+
     def refresh_auth_status(self):
         status = self.backend.auth_status()
+        signed_in = bool(getattr(status, "has_token", False))
         self.auth_label.setText(status.label)
+        self.auth_label.setProperty("state", "in" if signed_in else "out")
+        self.auth_label.style().unpolish(self.auth_label)
+        self.auth_label.style().polish(self.auth_label)
         self.country_label.setText(f"Country: {status.country_code or 'unknown'}")
         self.expiry_label.setText(f"Expires: {status.expires_label}")
+        self.session_title.setText(status.label)
+        self.session_detail.setText(
+            f"{status.country_code or 'Unknown region'} \u00b7 expires {status.expires_label}"
+            if signed_in
+            else "Sign in from Account"
+        )
+        self.logout_button.setEnabled(signed_in)
+        self.refresh_login_button.setEnabled(signed_in)
 
     def on_auth_result(self, status):
         """Refresh the account panel after a login/refresh worker succeeds."""
@@ -1224,6 +1341,9 @@ class MainWindow(QMainWindow):
 
     def _device_login_started(self, challenge):
         self.login_url.setText(challenge.url)
+        code = getattr(challenge, "user_code", "") or ""
+        self.login_code_label.setText(code)
+        self.login_code_label.setVisible(bool(code))
         self.account_log.append(f"Open {challenge.url}")
         self.account_log.append(f"Code: {challenge.user_code}")
         self.login_polling = True
@@ -1237,6 +1357,7 @@ class MainWindow(QMainWindow):
         self.login_poll_inflight = False
         self.login_deadline = 0
         self.device_login_button.setEnabled(True)
+        self.login_code_label.hide()
         if message:
             self.account_log.append(message)
 
@@ -1287,11 +1408,7 @@ class MainWindow(QMainWindow):
             return
         self.token_login_button.setEnabled(False)
         self.account_log.append("Saving manual token...")
-        worker = TaskWorker(
-            self.backend.login_by_access_token,
-            access_token,
-            self.refresh_token.text(),
-        )
+        worker = TaskWorker(self.backend.login_by_access_token, access_token, self.refresh_token.text())
         worker.signals.result.connect(self.on_auth_result)
         worker.signals.error.connect(self.account_log.append)
         worker.signals.finished.connect(lambda: self.token_login_button.setEnabled(True))
@@ -1319,6 +1436,8 @@ class MainWindow(QMainWindow):
         self.update_terminal_button.setEnabled(True)
         self.update_gui_button.setEnabled(True)
 
+    # ------------------------------------------------------------------- demo
+
     def prepare_demo_state(self):
         self.search_text.setText("midnight")
         self.direct_text.setPlainText("https://tidal.com/browse/track/70973230")
@@ -1326,16 +1445,24 @@ class MainWindow(QMainWindow):
         if self.results:
             self.results_table.selectRow(0)
             self.queue = self.results[:28]
+            for index, item in enumerate(self.queue):
+                if index < 3:
+                    item.status = "Done"
+                    item.progress_percent = 100
+                elif index == 3:
+                    item.status = "Downloading"
+                    item.progress_percent = 42
+                    item.progress_label = "7/16 tracks"
+                elif index == 4:
+                    item.status = "Failed"
             self.refresh_queue_table()
             self.queue_table.selectRow(0)
             self.download_log.setPlainText(
-                "\n".join(
-                    f"Queued {item.title} - waiting for download slot"
-                    for item in self.queue
-                )
-                + "\n"
+                "\n".join(f"Queued {item.title} - waiting for download slot" for item in self.queue) + "\n"
             )
         self.login_url.setText("https://login.tidal.com/DEMO-CODE")
+        self.login_code_label.setText("DEMO-CODE")
+        self.login_code_label.show()
         self.account_log.setPlainText(
             self.backend.run_doctor()
             + "\n"
@@ -1346,19 +1473,20 @@ class MainWindow(QMainWindow):
 def configure_application_theme(app: QApplication):
     app.setStyle("Fusion")
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor("#f5f7fb"))
-    palette.setColor(QPalette.WindowText, QColor("#172033"))
-    palette.setColor(QPalette.Base, QColor("#ffffff"))
-    palette.setColor(QPalette.AlternateBase, QColor("#f8fafc"))
-    palette.setColor(QPalette.Text, QColor("#172033"))
-    palette.setColor(QPalette.Button, QColor("#ffffff"))
-    palette.setColor(QPalette.ButtonText, QColor("#172033"))
-    palette.setColor(QPalette.Highlight, QColor("#0f766e"))
+    palette.setColor(QPalette.Window, QColor(TOKENS["bg"]))
+    palette.setColor(QPalette.WindowText, QColor(TOKENS["text"]))
+    palette.setColor(QPalette.Base, QColor(TOKENS["surface"]))
+    palette.setColor(QPalette.AlternateBase, QColor(TOKENS["surface_alt"]))
+    palette.setColor(QPalette.Text, QColor(TOKENS["text"]))
+    palette.setColor(QPalette.Button, QColor(TOKENS["surface"]))
+    palette.setColor(QPalette.ButtonText, QColor(TOKENS["text"]))
+    palette.setColor(QPalette.Highlight, QColor(TOKENS["accent"]))
     palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
-    palette.setColor(QPalette.ToolTipText, QColor("#172033"))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor("#98a2b3"))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor("#98a2b3"))
+    palette.setColor(QPalette.ToolTipBase, QColor(TOKENS["text"]))
+    palette.setColor(QPalette.ToolTipText, QColor("#ffffff"))
+    palette.setColor(QPalette.PlaceholderText, QColor(TOKENS["muted"]))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(TOKENS["disabled"]))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(TOKENS["disabled"]))
     app.setPalette(palette)
     hints = app.styleHints()
     if hasattr(hints, "setColorScheme"):
