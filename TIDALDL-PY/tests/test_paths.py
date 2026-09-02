@@ -82,6 +82,40 @@ class PathTests(unittest.TestCase):
 
         startfile.assert_called_once()
 
+    def test_duration_and_release_date_tokens_are_windows_safe(self):
+        from types import SimpleNamespace
+        from tidal_dl.paths import getAlbumPath, __fixPath__, __getDurationStr__
+
+        raw = __getDurationStr__(3723)
+        self.assertIn(":", raw)
+        self.assertNotIn(":", __fixPath__(raw))
+
+        album = SimpleNamespace(
+            artists=[],
+            artist=None,
+            title="T",
+            id=1,
+            releaseDate="2026-09-02",
+            duration=3723,
+            audioQuality="LOSSLESS",
+            numberOfTracks=1,
+            numberOfVideos=0,
+            numberOfVolumes=1,
+            type="ALBUM",
+        )
+        with mock.patch("tidal_dl.paths.SETTINGS") as settings:
+            settings.downloadPath = "/tmp"
+            settings.albumFolderFormat = "{Duration}_{ReleaseDate}"
+            settings.audioQuality = object()
+            with mock.patch("tidal_dl.paths.TIDAL_API") as api:
+                api.getArtistsID.return_value = ""
+                api.getArtistsName.return_value = ""
+                api.getFlag.return_value = ""
+                path = getAlbumPath(album)
+        name = path.rsplit("/", 1)[-1]
+        for illegal in ':<>"|?*':
+            self.assertNotIn(illegal, name)
+
 
 if __name__ == "__main__":
     unittest.main()

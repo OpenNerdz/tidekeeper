@@ -475,9 +475,9 @@ class TidekeeperBackend:
         if not ok:
             raise RuntimeError(f"Download failed for {item.title}")
 
-    def save_settings(self, values: dict):
+    def apply_runtime_settings(self, values: dict, persist_client: bool = False):
+        """Apply quality/download options in memory. Download starts must not persist or logout."""
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
-        previous_api_key_index = SETTINGS.apiKeyIndex
         download_path = str(values.get("downloadPath") or "").strip()
         if not download_path:
             download_path = SETTINGS.downloadPath or "./download/"
@@ -504,11 +504,17 @@ class TidekeeperBackend:
         SETTINGS.playlistFolderFormat = values["playlistFolderFormat"]
         SETTINGS.trackFileFormat = values["trackFileFormat"]
         SETTINGS.videoFileFormat = values["videoFileFormat"]
-        SETTINGS.apiKeyIndex = values["apiKeyIndex"]
-        TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
         LANG.setLang(SETTINGS.language)
-        SETTINGS.save()
         syncPlaybackRateLimiter()
+        if persist_client:
+            SETTINGS.apiKeyIndex = values["apiKeyIndex"]
+            TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
+        return {"reauth_required": False}
+
+    def save_settings(self, values: dict):
+        previous_api_key_index = SETTINGS.apiKeyIndex
+        self.apply_runtime_settings(values, persist_client=True)
+        SETTINGS.save()
         if SETTINGS.apiKeyIndex != previous_api_key_index:
             # Tokens are bound to the client id. Applying a new key to an old
             # token produces 4022 errors on the next search/download.

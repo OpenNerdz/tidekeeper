@@ -1181,8 +1181,8 @@ class MainWindow(QMainWindow):
         return values
 
     def apply_settings_for_download(self):
-        """Push current GUI quality/settings into the download backend."""
-        self.backend.save_settings(self.collect_settings_values())
+        """Honor unsaved quality for this run without saving or logging out."""
+        self.backend.apply_runtime_settings(self.collect_settings_values(), persist_client=False)
 
     def save_settings(self):
         result = self.backend.save_settings(self.collect_settings_values()) or {}

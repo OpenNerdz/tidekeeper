@@ -39,9 +39,26 @@ jobs:
           python -m build --outdir dist .
           python -m twine check --strict dist/*
 
-      - name: Publish
+      - name: Choose PyPI authentication
+        id: pypi-auth
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -n "${PYPI_TOKEN}" ]; then
+            echo "mode=token" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish with API token
+        if: steps.pypi-auth.outputs.mode == 'token'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: TIDALDL-PY/dist
-          # Prefer API token when set; otherwise fall back to OIDC trusted publishing.
           password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Publish with OIDC trusted publishing
+        if: steps.pypi-auth.outputs.mode == 'oidc'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: TIDALDL-PY/dist

@@ -202,6 +202,9 @@ class Settings(aigpy.model.ModelBase):
             self.downloadPath = getDefaultDownloadPath()
             self.audioQuality = AudioQuality.Max
             self.audioQualityPriority = getDefaultAudioQualityPriority()
+            # New installs remux HiFi/Max to .flac when ffmpeg is available.
+            # Existing configs keep their stored value (legacy default False).
+            self.saveAsFlac = True
 
         LANG.setLang(self.language)
         syncPlaybackRateLimiter()
