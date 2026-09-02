@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### GUI
+
+- Starting a download applies unsaved quality settings in memory instead of saving, so it no longer signs you out when the client changed.
+- Album + video downloads keep the combined progress total instead of jumping to 100% when the video pass begins.
+
+### Reliability
+
+- HTTP 429 retries no longer consume the normal attempt budget; instead the total rate-limit wait per request is capped at 90s. Catalog, playback, and OpenAPI manifest requests share one back-off implementation.
+- OpenAPI manifest requests again stop after six "asset not ready" retries instead of up to 64.
+- Artist lookup during album search reads a full page (50) of artists instead of 10.
+- `{Duration}` and `{ReleaseDate}` path tokens strip Windows-illegal characters.
+- Progress callback failures and size-probe fallbacks are logged at debug level instead of being silently discarded.
+
+### Packaging
+
+- PyPI publish uses OIDC trusted publishing when `PYPI_API_TOKEN` is not set.
+
 ## 2026.8.31.0 - 2026-08-31
 
 ### Path tokens

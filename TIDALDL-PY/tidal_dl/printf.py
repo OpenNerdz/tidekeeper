@@ -148,6 +148,14 @@ class Printf(object):
     @staticmethod
     def settings():
         data = SETTINGS
+        qualityPriority = ",".join(
+            item.name for item in data.getAudioQualityPriority(data.audioQualityPriority)
+        ) or "off"
+
+        def label(key, fallback):
+            # Newer settings may not be translated in every language pack yet.
+            return getattr(LANG.select, key, fallback)
+
         tb = Printf.__gettable__([LANG.select.SETTING, LANG.select.VALUE], [
             #settings - path and format
             [LANG.select.SETTING_PATH, PATHS.getProfilePath()],
@@ -159,7 +167,7 @@ class Printf(object):
 
             #settings - quality
             [LANG.select.SETTING_AUDIO_QUALITY, data.audioQuality],
-            ["Audio quality priority", ",".join(item.name for item in data.getAudioQualityPriority(data.audioQualityPriority)) or "off"],
+            ["Audio quality priority", qualityPriority],
             [LANG.select.SETTING_VIDEO_QUALITY, data.videoQuality],
 
             #settings - else
@@ -176,9 +184,12 @@ class Printf(object):
             [LANG.select.SETTING_MULITHREAD_DOWNLOAD, data.multiThread],
             [LANG.select.SETTING_APIKEY, f"[{data.apiKeyIndex}]" + apiKey.getItem(data.apiKeyIndex)['formats']],
             [LANG.select.SETTING_DOWNLOAD_DELAY, data.downloadDelay],
-            [getattr(LANG.select, "SETTING_REQUEST_INTERVAL_SECONDS", "Request delay seconds"), data.requestIntervalSeconds],
-            [getattr(LANG.select, "SETTING_ADAPTIVE_RATE_LIMIT", "Automatically adapt request delay"), getattr(data, "adaptiveRateLimit", True)],
-            [getattr(LANG.select, "SETTING_SAVE_AS_FLAC", "Save FLAC streams as .flac files"), data.saveAsFlac],
+            [label("SETTING_REQUEST_INTERVAL_SECONDS", "Request delay seconds"), data.requestIntervalSeconds],
+            [
+                label("SETTING_ADAPTIVE_RATE_LIMIT", "Automatically adapt request delay"),
+                getattr(data, "adaptiveRateLimit", True),
+            ],
+            [label("SETTING_SAVE_AS_FLAC", "Save FLAC streams as .flac files"), data.saveAsFlac],
         ])
         print(tb)
 

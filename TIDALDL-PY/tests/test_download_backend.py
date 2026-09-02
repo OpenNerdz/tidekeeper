@@ -624,6 +624,26 @@ class DirectInputAndProgressTests(unittest.TestCase):
         self.assertEqual(format_queue_progress(single), "1.0 KB/4.0 KB · 1.0 KB/s · 3s")
         self.assertEqual(queue_progress_percent(single), 25)
 
+    def test_progress_sink_failures_are_logged_not_raised(self):
+        broken = SimpleNamespace(addCurCount=mock.Mock(side_effect=RuntimeError("widget gone")))
+        healthy = SimpleNamespace(addCurNum=mock.Mock())
+        with self.assertLogs(level="DEBUG") as logs:
+            download.__noteProgress__(broken, healthy, 512, threading.Lock())
+        healthy.addCurNum.assert_called_once_with(512)
+        self.assertTrue(any("addCurCount" in line and "widget gone" in line for line in logs.output))
+
+    def test_progress_helpers_ignore_missing_sinks_and_zero_sizes(self):
+        sink = SimpleNamespace(setMaxNum=mock.Mock(), addCurNum=mock.Mock())
+        download.__setUserProgressMax__(None, 10)
+        download.__setUserProgressMax__(sink, 0)
+        download.__addUserProgress__(sink, -1)
+        download.__noteProgress__(None, None, 10)
+        sink.setMaxNum.assert_not_called()
+        sink.addCurNum.assert_not_called()
+        # Sinks missing a method are skipped rather than raising AttributeError.
+        download.__noteProgress__(SimpleNamespace(), sink, 8)
+        sink.addCurNum.assert_called_once_with(8)
+
 
 if __name__ == "__main__":
     unittest.main()

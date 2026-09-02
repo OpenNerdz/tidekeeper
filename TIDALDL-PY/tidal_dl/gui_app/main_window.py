@@ -262,7 +262,9 @@ class MainWindow(QMainWindow):
         self.direct_browse_button = _button("File")
         self.direct_queue_button = _button("Add Direct")
         self.direct_download_button = _button("Download Direct", primary=True)
-        self.direct_video_only.setToolTip("Skip audio tracks for artist, album, playlist, mix, video, or file downloads.")
+        self.direct_video_only.setToolTip(
+            "Skip audio tracks for artist, album, playlist, mix, video, or file downloads."
+        )
         self.direct_browse_button.setToolTip("Pick a text file containing TIDAL URLs.")
         self.direct_queue_button.setToolTip("Add each pasted URL, ID, or file line to the queue.")
         self.direct_download_button.setToolTip("Queue and start every pasted URL, ID, or file line.")
@@ -1198,12 +1200,17 @@ class MainWindow(QMainWindow):
         self.country_label.setText(f"Country: {status.country_code or 'unknown'}")
         self.expiry_label.setText(f"Expires: {status.expires_label}")
 
+    def on_auth_result(self, status):
+        """Refresh the account panel after a login/refresh worker succeeds."""
+        self.refresh_auth_status()
+        self.account_log.append(status.label)
+
     def refresh_saved_login(self):
         self.refresh_login_button.setEnabled(False)
         self.account_log.append("Refreshing saved login...")
         worker = TaskWorker(self.backend.refresh_saved_login)
-        worker.signals.result.connect(lambda status: (self.refresh_auth_status(), self.account_log.append(status.label)))
-        worker.signals.error.connect(lambda message: self.account_log.append(message))
+        worker.signals.result.connect(self.on_auth_result)
+        worker.signals.error.connect(self.account_log.append)
         worker.signals.finished.connect(lambda: self.refresh_login_button.setEnabled(True))
         self.start_worker(worker)
 
@@ -1285,8 +1292,8 @@ class MainWindow(QMainWindow):
             access_token,
             self.refresh_token.text(),
         )
-        worker.signals.result.connect(lambda status: (self.refresh_auth_status(), self.account_log.append(status.label)))
-        worker.signals.error.connect(lambda message: self.account_log.append(message))
+        worker.signals.result.connect(self.on_auth_result)
+        worker.signals.error.connect(self.account_log.append)
         worker.signals.finished.connect(lambda: self.token_login_button.setEnabled(True))
         self.start_worker(worker)
 

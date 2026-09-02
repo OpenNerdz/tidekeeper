@@ -44,8 +44,11 @@ from .settings import SETTINGS, TOKEN, Settings, syncPlaybackRateLimiter
 REQUEST_TIMEOUT = (5, 60)
 API_BASE_PRIMARY = 'https://api.tidal.com/v1/'
 API_BASE_LEGACY = 'https://api.tidalhifi.com/v1/'
+CATALOG_MAX_ATTEMPTS = 3
 PLAYBACK_ASSET_NOT_READY_ATTEMPTS = 6
-RATE_LIMIT_MAX_ATTEMPTS = 3
+AUTH_MAX_ATTEMPTS = 3
+# HTTP 429 retries never consume the attempt budget above. Instead the total
+# time spent waiting on rate limits for one logical request is capped here.
 RATE_LIMIT_MAX_WAIT_SECONDS = 90
 # Keep short: signed CDN URLs often expire well under 10 minutes.
 STREAM_CACHE_TTL_SECONDS = 90
@@ -110,6 +113,27 @@ class RequestRateLimiter:
 
 
 PLAYBACK_RATE_LIMITER = RequestRateLimiter()
+
+
+class RateLimitWaitBudget:
+    """Cumulative HTTP 429 back-off allowance for a single logical request.
+
+    Rate-limited responses are retried without consuming the caller's normal
+    attempt budget; instead the total time slept is capped so a persistently
+    throttled client eventually fails instead of hanging forever.
+    """
+
+    def __init__(self, maxWaitSeconds=RATE_LIMIT_MAX_WAIT_SECONDS):
+        self.maxWaitSeconds = maxWaitSeconds
+        self.waited = 0.0
+        self.attempts = 0
+
+    def allows(self, delay):
+        return self.waited + delay <= self.maxWaitSeconds
+
+    def record(self, delay):
+        self.waited += delay
+        self.attempts += 1
 
 
 class TidalApiError(Exception):
@@ -270,6 +294,27 @@ class TidalAPI(object):
                 delay = penalize(delay)
         return delay
 
+    def __backOffForRateLimit__(self, action, response, budget):
+        """Sleep after an HTTP 429, or raise once the cumulative wait cap is reached.
+
+        Shared by the catalog and OpenAPI manifest request loops so both apply
+        the same adaptive penalty, logging, and wait-cap semantics.
+        """
+        delay = self.__applyRateLimitPenalty__(response, budget.attempts)
+        if not budget.allows(delay):
+            raise self.__httpError__(action, response)
+        print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
+        response.close()
+        time.sleep(delay)
+        budget.record(delay)
+
+    def __backOffForAssetNotReady__(self, response, attempt):
+        """Sleep with a linear, capped delay while TIDAL finishes preparing an asset."""
+        delay = min(5 * (attempt + 1), 30)
+        print(f"Asset not ready for playback, waiting {delay:g} seconds before retry.")
+        response.close()
+        time.sleep(delay)
+
     def __rewardStreamRequest__(self):
         if not getattr(SETTINGS, 'adaptiveRateLimit', True):
             return
@@ -366,11 +411,11 @@ class TidalAPI(object):
         refreshedToken = False
         url = urlpre + path
         playbackRequest = self.__isPlaybackPath__(path)
-        maxAttempts = PLAYBACK_ASSET_NOT_READY_ATTEMPTS if playbackRequest else 3
+        maxAttempts = PLAYBACK_ASSET_NOT_READY_ATTEMPTS if playbackRequest else CATALOG_MAX_ATTEMPTS
         index = 0
-        rate_limit_waited = 0.0
+        rateLimitBudget = RateLimitWaitBudget()
         while index < maxAttempts:
-            consume_attempt = True
+            consumeAttempt = True
             try:
                 header = {'authorization': f'Bearer {self.key.accessToken}'}
                 if playbackRequest:
@@ -384,21 +429,12 @@ class TidalAPI(object):
                 if respond.status_code == 429:
                     # Always apply adaptive penalty (catalog and playback) so one
                     # storm cools the whole client, not only stream endpoints.
-                    delay = self.__applyRateLimitPenalty__(respond, index)
-                    if rate_limit_waited + delay > RATE_LIMIT_MAX_WAIT_SECONDS:
-                        raise self.__httpError__("Get operation", respond)
-                    print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
-                    respond.close()
-                    time.sleep(delay)
-                    rate_limit_waited += delay
-                    consume_attempt = False
+                    self.__backOffForRateLimit__("Get operation", respond, rateLimitBudget)
+                    consumeAttempt = False
                     continue
 
                 if respond.status_code == 401 and self.__isAssetNotReady__(respond):
-                    delay = min(5 * (index + 1), 30)
-                    print(f"Asset not ready for playback, waiting {delay:g} seconds before retry.")
-                    respond.close()
-                    time.sleep(delay)
+                    self.__backOffForAssetNotReady__(respond, index)
                     continue
 
                 if respond.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():
@@ -452,7 +488,7 @@ class TidalAPI(object):
                 if index >= maxAttempts - 1 and respond is not None:
                     errmsg += respond.text
             finally:
-                if consume_attempt:
+                if consumeAttempt:
                     index += 1
 
         if respond is not None and self.__isAssetNotReady__(respond):
@@ -526,7 +562,8 @@ class TidalAPI(object):
 
     def __post__(self, path, data, auth=None, urlpre='https://auth.tidal.com/v1/oauth2'):
         url = urlpre + path
-        for attempt in range(3):
+        lastAttempt = AUTH_MAX_ATTEMPTS - 1
+        for attempt in range(AUTH_MAX_ATTEMPTS):
             response = None
             try:
                 response = self.session.post(url, data=data, auth=auth, timeout=REQUEST_TIMEOUT)
@@ -547,7 +584,7 @@ class TidalAPI(object):
                 if not isinstance(result, dict):
                     raise TidalApiError("Auth endpoint returned an invalid JSON payload.", response.status_code)
                 if response.status_code == 429 or response.status_code >= 500:
-                    if attempt == 2:
+                    if attempt == lastAttempt:
                         raise self.__httpError__("Auth operation", response)
                     delay = self.__retryAfter__(response, attempt)
                     response.close()
@@ -559,7 +596,7 @@ class TidalAPI(object):
             except TidalApiError:
                 raise
             except requests.RequestException:
-                if attempt == 2:
+                if attempt == lastAttempt:
                     raise
                 time.sleep(min(2 ** attempt, 10))
             finally:
@@ -834,7 +871,8 @@ class TidalAPI(object):
 
     def searchAlbumsForQuery(self, text, includeEP=True):
         """Album search that also loads a matching artist's full album list."""
-        artists = self.getSearchResultItems(self.search(text, Type.Artist, offset=0, limit=SEARCH_PAGE_SIZE), Type.Artist)
+        artistResult = self.search(text, Type.Artist, offset=0, limit=SEARCH_PAGE_SIZE)
+        artists = self.getSearchResultItems(artistResult, Type.Artist)
         if self.findMatchingSearchArtists(text, artists):
             result = self.search(text, Type.Album, offset=0, limit=SEARCH_PAGE_SIZE)
         else:
@@ -1039,9 +1077,11 @@ class TidalAPI(object):
 
         response = None
         refreshedToken = False
-        rateLimitAttempts = 0
-        rate_limit_waited = 0.0
-        for attempt in range(64):
+        rateLimitBudget = RateLimitWaitBudget()
+        # Mirrors __getOnce__: only asset-not-ready responses consume attempts;
+        # 429s are bounded by the wait budget and token refresh happens once.
+        attempt = 0
+        while attempt < PLAYBACK_ASSET_NOT_READY_ATTEMPTS:
             self.__waitForStreamRequestQuota__()
             response = self.session.get(
                 f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
@@ -1054,21 +1094,12 @@ class TidalAPI(object):
             )
 
             if response.status_code == 429:
-                rateLimitAttempts += 1
-                delay = self.__applyRateLimitPenalty__(response, rateLimitAttempts - 1)
-                if rate_limit_waited + delay > RATE_LIMIT_MAX_WAIT_SECONDS:
-                    raise self.__httpError__("Track manifest request", response)
-                print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
-                response.close()
-                time.sleep(delay)
-                rate_limit_waited += delay
+                self.__backOffForRateLimit__("Track manifest request", response, rateLimitBudget)
                 continue
 
             if response.status_code == 401 and self.__isAssetNotReady__(response):
-                delay = min(5 * (attempt + 1), 30)
-                print(f"Asset not ready for playback, waiting {delay:g} seconds before retry.")
-                response.close()
-                time.sleep(delay)
+                self.__backOffForAssetNotReady__(response, attempt)
+                attempt += 1
                 continue
 
             if response.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():

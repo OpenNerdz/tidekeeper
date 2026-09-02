@@ -61,7 +61,8 @@ def mainCommand():
                                        "update", "update-gui",
                                        "paths", "open-output",
                                        "video-only", "videos-only",
-                                       "link=", "output=", "quality=", "quality-priority=", "resolution=", "configPathOverride="
+                                       "link=", "output=", "quality=", "quality-priority=",
+                                       "resolution=", "configPathOverride=",
                                    ])
     except getopt.GetoptError as errmsg:
         Printf.err(vars(errmsg)['msg'] + ". Use 'tidekeeper -h' for usage.")

@@ -342,7 +342,9 @@ class TidekeeperBackend:
 
         self._sync_api_login_key_from_token()
         if aigpy.string.isNull(TIDAL_API.key.countryCode):
-            raise RuntimeError("Saved login is missing country data. Refresh saved login or sign in again from Account.")
+            raise RuntimeError(
+                "Saved login is missing country data. Refresh saved login or sign in again from Account."
+            )
 
     def auth_status(self) -> AuthStatus:
         return AuthStatus(

@@ -206,8 +206,8 @@ def __contentLength__(url):
                 return size
         finally:
             response.close()
-    except Exception:
-        pass
+    except Exception as error:
+        logging.debug("HEAD size probe failed for %s, trying ranged GET: %s", url, error)
 
     # Some CDNs reject HEAD; a tiny ranged GET still exposes total size.
     try:
@@ -226,7 +226,8 @@ def __contentLength__(url):
             return size if size > 0 else -1
         finally:
             response.close()
-    except Exception:
+    except Exception as error:
+        logging.debug("Ranged GET size probe failed for %s: %s", url, error)
         return -1
 
 
@@ -291,26 +292,37 @@ def __verifyLocalSize__(path, expectedSize, label="download"):
     return actual
 
 
-def __setUserProgressMax__(userProgress, size):
-    if userProgress is None or size <= 0:
+def __callProgressSink__(sink, methodName, value):
+    """Invoke a progress callback without letting UI errors abort a download.
+
+    Progress sinks are caller-supplied (CLI bar, GUI reporter, test doubles);
+    a broken sink is logged at debug level and otherwise ignored.
+    """
+    if sink is None:
+        return
+    method = getattr(sink, methodName, None)
+    if method is None:
         return
     try:
-        userProgress.setMaxNum(size)
-    except Exception:
-        pass
+        method(value)
+    except Exception as error:
+        logging.debug("Progress sink %s.%s failed: %s", type(sink).__name__, methodName, error)
+
+
+def __setUserProgressMax__(userProgress, size):
+    if size <= 0:
+        return
+    __callProgressSink__(userProgress, "setMaxNum", size)
 
 
 def __addUserProgress__(userProgress, size, progressLock=None):
-    if userProgress is None or size <= 0:
+    if size <= 0:
         return
-    try:
-        if progressLock is not None:
-            with progressLock:
-                userProgress.addCurNum(size)
-        else:
-            userProgress.addCurNum(size)
-    except Exception:
-        pass
+    if progressLock is not None:
+        with progressLock:
+            __callProgressSink__(userProgress, "addCurNum", size)
+        return
+    __callProgressSink__(userProgress, "addCurNum", size)
 
 
 def __noteProgress__(progress, userProgress, size, progressLock=None):
@@ -318,19 +330,11 @@ def __noteProgress__(progress, userProgress, size, progressLock=None):
         return
     if progressLock is not None:
         with progressLock:
-            if progress is not None:
-                try:
-                    progress.addCurCount(size)
-                except Exception:
-                    pass
-            __addUserProgress__(userProgress, size)
+            __callProgressSink__(progress, "addCurCount", size)
+            __callProgressSink__(userProgress, "addCurNum", size)
         return
-    if progress is not None:
-        try:
-            progress.addCurCount(size)
-        except Exception:
-            pass
-    __addUserProgress__(userProgress, size)
+    __callProgressSink__(progress, "addCurCount", size)
+    __callProgressSink__(userProgress, "addCurNum", size)
 
 
 def __downloadSingleUrl__(
@@ -591,7 +595,10 @@ def __downloadErrorHint__(err):
     if any(item in text for item in ("4022", "client referenced", "log in again")):
         return " (hint: your saved login session is stale; log out, log in again, then retry)"
     if "prerequisite" in text:
-        return " (hint: this quality may be unavailable to this app for your account; set a fallback order, e.g. --quality-priority Max,HiFi,High,Normal)"
+        return (
+            " (hint: this quality may be unavailable to this app for your account; "
+            "set a fallback order, e.g. --quality-priority Max,HiFi,High,Normal)"
+        )
     if any(item in text for item in ("403", "entitled", "not allowed", "client_not_entitled")):
         return " (hint: stream may be unavailable for this account or quality; try a lower quality/fallback order)"
     if "incomplete" in text and "expected" in text:
@@ -672,7 +679,10 @@ def __exportFlacFromContainer__(path, stream):
     __removeFile__(tempPath)
     try:
         completed = subprocess.run(
-            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'flac', tempPath],
+            [
+                ffmpeg, '-y', '-hide_banner', '-loglevel', 'error',
+                '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'flac', tempPath,
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -776,7 +786,9 @@ def __lyricsCandidateScore__(track, candidate):
     if getattr(candidate, 'id', None) == getattr(track, 'id', None):
         return -1
 
-    if __normalizeLyricsMatchText__(getattr(track, 'title', '')) != __normalizeLyricsMatchText__(getattr(candidate, 'title', '')):
+    trackTitle = __normalizeLyricsMatchText__(getattr(track, 'title', ''))
+    candidateTitle = __normalizeLyricsMatchText__(getattr(candidate, 'title', ''))
+    if trackTitle != candidateTitle:
         return -1
 
     trackArtists = set(__artistNames__(getattr(track, 'artists', [])))
@@ -801,13 +813,16 @@ def __lyricsCandidateScore__(track, candidate):
         score += 50 if trackIsrc == candidateIsrc else -5
 
     try:
-        durationDelta = abs(int(getattr(track, 'duration', 0) or 0) - int(getattr(candidate, 'duration', 0) or 0))
+        trackDuration = int(getattr(track, 'duration', 0) or 0)
+        candidateDuration = int(getattr(candidate, 'duration', 0) or 0)
+    except (TypeError, ValueError):
+        trackDuration = candidateDuration = None
+    if trackDuration is not None:
+        durationDelta = abs(trackDuration - candidateDuration)
         if durationDelta <= 2:
             score += 20
         elif durationDelta <= 5:
             score += 10
-    except Exception:
-        pass
 
     trackAlbum = __albumTitle__(track)
     candidateAlbum = __albumTitle__(candidate)
@@ -827,11 +842,14 @@ def __mergeLyrics__(primary, timed):
     if timed is None or not __hasTimedLyrics__(timed):
         return primary
 
+    def firstPresent(attribute):
+        return getattr(primary, attribute, None) or getattr(timed, attribute, None)
+
     merged = Lyrics()
-    merged.trackId = getattr(primary, 'trackId', None) or getattr(timed, 'trackId', None)
-    merged.lyricsProvider = getattr(primary, 'lyricsProvider', None) or getattr(timed, 'lyricsProvider', None)
-    merged.providerCommontrackId = getattr(primary, 'providerCommontrackId', None) or getattr(timed, 'providerCommontrackId', None)
-    merged.providerLyricsId = getattr(primary, 'providerLyricsId', None) or getattr(timed, 'providerLyricsId', None)
+    merged.trackId = firstPresent('trackId')
+    merged.lyricsProvider = firstPresent('lyricsProvider')
+    merged.providerCommontrackId = firstPresent('providerCommontrackId')
+    merged.providerLyricsId = firstPresent('providerLyricsId')
     merged.lyrics = __lyricsText__(getattr(primary, 'lyrics', None)) or __lyricsText__(getattr(timed, 'lyrics', None))
     merged.subtitles = getattr(timed, 'subtitles', None)
     return merged

@@ -294,7 +294,8 @@ def changeSettings():
     SETTINGS.saveAsFlac = Printf.enterBool(getattr(
         LANG.select,
         "CHANGE_SAVE_AS_FLAC",
-        "Save FLAC streams as .flac files when the stream is FLAC and ffmpeg can remux it (High quality remains M4A)('0'-No,'1'-Yes):",
+        "Save FLAC streams as .flac files when the stream is FLAC and ffmpeg can remux it "
+        "(High quality remains M4A)('0'-No,'1'-Yes):",
     ))
     SETTINGS.language = Printf.enter(LANG.select.CHANGE_LANGUAGE + "(" + LANG.getLangChoicePrint() + "):")
     LANG.setLang(SETTINGS.language)
