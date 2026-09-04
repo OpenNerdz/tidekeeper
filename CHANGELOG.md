@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.9.4.0 - 2026-09-04
+
+### GUI
+
+- Queue items added while a download is already active are processed in the same run instead of being left pending.
+- The desktop app now advertises its Tidekeeper application and desktop-file identity and uses the installed theme icon when available.
+
 ## 2026.9.2.0 - 2026-09-02
 
 ### GUI

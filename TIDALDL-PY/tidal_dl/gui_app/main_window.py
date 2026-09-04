@@ -24,7 +24,7 @@ import webbrowser
 from typing import List, Tuple
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QColor, QFont, QKeySequence, QPalette, QShortcut, QTextCursor
+from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPalette, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -1474,8 +1474,16 @@ def configure_application_theme(app: QApplication):
 
 def run_app(backend: TidekeeperBackend):
     app = QApplication.instance() or QApplication([])
+    app.setApplicationName("Tidekeeper")
+    app.setApplicationDisplayName("Tidekeeper")
+    app.setDesktopFileName("tidekeeper")
+    icon = QIcon.fromTheme("tidekeeper")
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     configure_application_theme(app)
     backend.initialize()
     window = MainWindow(backend)
+    if not icon.isNull():
+        window.setWindowIcon(icon)
     window.show()
     return app.exec()
