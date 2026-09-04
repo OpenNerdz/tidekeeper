@@ -160,39 +160,59 @@ class ItemProgressReporter:
 
 
 class DownloadWorker(QRunnable):
-    def __init__(self, backend, items):
+    def __init__(self, backend, items, more_items=None):
         super().__init__()
         self.setAutoDelete(False)
         self.backend = backend
         self.items = items
+        self.more_items = more_items
         self.signals = WorkerSignals()
         self._cancelled = False
 
     def cancel(self):
         self._cancelled = True
 
+    def _next_items(self, processed):
+        extra = self.more_items() if self.more_items else []
+        return [item for item in extra if id(item) not in processed]
+
     @Slot()
     def run(self):
         failed = []
         cancelled = False
+        processed = set()
         try:
-            for item in self.items:
-                if self._cancelled:
-                    cancelled = True
-                    self.signals.item_status.emit(item, "Cancelled")
-                    continue
-                self.signals.item_status.emit(item, "Downloading")
-                self.signals.log.emit(f"Starting {item.title}\n")
-                reporter = ItemProgressReporter(item, self.signals.item_progress.emit)
-                try:
-                    self.backend.download(item, self.signals.log.emit, progress=reporter)
-                except Exception as exc:
-                    failed.append(item.title)
-                    self.signals.item_status.emit(item, "Failed")
-                    self.signals.log.emit(f"Failed {item.title}: {exc}\n")
-                    continue
-                self.signals.item_status.emit(item, "Done")
-                self.signals.log.emit(f"Finished {item.title}\n")
+            items = list(self.items)
+            idx = 0
+            while True:
+                while idx < len(items):
+                    item = items[idx]
+                    idx += 1
+                    if id(item) in processed:
+                        continue
+                    processed.add(id(item))
+                    if self._cancelled:
+                        cancelled = True
+                        self.signals.item_status.emit(item, "Cancelled")
+                        continue
+                    self.signals.item_status.emit(item, "Downloading")
+                    self.signals.log.emit(f"Starting {item.title}\n")
+                    reporter = ItemProgressReporter(item, self.signals.item_progress.emit)
+                    try:
+                        self.backend.download(item, self.signals.log.emit, progress=reporter)
+                    except Exception as exc:
+                        failed.append(item.title)
+                        self.signals.item_status.emit(item, "Failed")
+                        self.signals.log.emit(f"Failed {item.title}: {exc}\n")
+                        continue
+                    self.signals.item_status.emit(item, "Done")
+                    self.signals.log.emit(f"Finished {item.title}\n")
+                if cancelled:
+                    break
+                extra = self._next_items(processed)
+                if not extra:
+                    break
+                items.extend(extra)
             if cancelled:
                 self.signals.log.emit("Remaining downloads cancelled.\n")
             if failed:
@@ -202,7 +222,7 @@ class DownloadWorker(QRunnable):
                     f"{len(failed)} download{'s' if len(failed) != 1 else ''} failed: {shown}{more}"
                 )
             elif not cancelled:
-                self.signals.result.emit(self.items)
+                self.signals.result.emit(items)
         except Exception as exc:
             self.signals.error.emit(str(exc))
         finally:

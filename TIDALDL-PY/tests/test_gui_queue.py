@@ -76,6 +76,44 @@ class GuiQueueTests(unittest.TestCase):
         self.window.start_queue_download()
         self.assertEqual(started, [queued])
 
+    def test_live_queued_items_ignore_active_failed_and_done(self):
+        done = self.SearchItem(self.Type.Track, "Done", "", "", "1", "", SimpleNamespace(id=1), status="Done")
+        failed = self.SearchItem(self.Type.Track, "Failed", "", "", "2", "", SimpleNamespace(id=2), status="Failed")
+        downloading = self.SearchItem(self.Type.Track, "Downloading", "", "", "3", "", SimpleNamespace(id=3), status="Downloading")
+        queued = self.SearchItem(self.Type.Track, "Queued", "", "", "4", "", SimpleNamespace(id=4), status="Queued")
+        self.window.queue = [done, failed, downloading, queued]
+        self.assertEqual(self.window._live_queued_items(), [queued])
+
+    def test_start_downloads_asks_worker_for_items_added_later(self):
+        queued = self.SearchItem(self.Type.Track, "Queued", "", "", "3", "", SimpleNamespace(id=3), status="Queued")
+        captured = {}
+
+        class FakeWorker:
+            def __init__(self, backend, items, more_items=None):
+                captured["items"] = list(items)
+                captured["more_items"] = more_items
+                self.signals = SimpleNamespace(
+                    log=SimpleNamespace(connect=lambda *_: None),
+                    item_status=SimpleNamespace(connect=lambda *_: None),
+                    item_progress=SimpleNamespace(connect=lambda *_: None),
+                    result=SimpleNamespace(connect=lambda *_: None),
+                    error=SimpleNamespace(connect=lambda *_: None),
+                    finished=SimpleNamespace(connect=lambda *_: None),
+                )
+
+        self.window.start_worker = lambda worker: None
+        import tidal_dl.gui_app.main_window as main_window
+
+        original = main_window.DownloadWorker
+        main_window.DownloadWorker = FakeWorker
+        try:
+            self.window.start_downloads([queued])
+        finally:
+            main_window.DownloadWorker = original
+
+        self.assertEqual(captured["items"], [queued])
+        self.assertEqual(captured["more_items"], self.window._live_queued_items)
+
     def test_device_login_poll_ignores_preexisting_token(self):
         from tidal_dl.gui_app.backend import AuthStatus
 

@@ -997,6 +997,9 @@ class MainWindow(QMainWindow):
     def pending_queue_items(self) -> List[SearchItem]:
         return [item for item in self.queue if item.status not in ("Done", "Downloading")]
 
+    def _live_queued_items(self) -> List[SearchItem]:
+        return [item for item in list(self.queue) if (item.status or "Queued") == "Queued"]
+
     def failed_queue_items(self) -> List[SearchItem]:
         return [item for item in self.queue if item.status == "Failed"]
 
@@ -1039,7 +1042,7 @@ class MainWindow(QMainWindow):
         self.update_action_states()
         self._set_queue_message(f"Downloading {self._plural(len(items), 'item')}…")
         self.download_log.append("Starting downloads")
-        worker = DownloadWorker(self.backend, items)
+        worker = DownloadWorker(self.backend, items, more_items=self._live_queued_items)
         self.download_worker = worker
         worker.signals.log.connect(self.append_download_log)
         worker.signals.item_status.connect(self._set_queue_item_status)
