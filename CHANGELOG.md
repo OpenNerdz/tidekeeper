@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Reliability
+
+- Interrupted downloads no longer mix segments from a different stream, and completed files are skipped only with a matching checksum receipt.
+- Truncated FLACs, failed video remuxes, and videos that ignore “Skip existing files” are no longer treated as successful.
+- A finished `.download` sidecar that gets HTTP 416 is promoted instead of failing the retry.
+- Fresh settings keep 720p, invalid numeric settings no longer crash startup, and `--configPathOverride=/path` is recognized.
+- Token verification treats HTTP failures as errors instead of a valid login, and logout cancels in-flight device login and session caches.
+- HLS/DASH parsers resolve relative segment URLs and inherited DASH timelines.
+
+### GUI
+
+- Queue rows are independent of search results, restore as Interrupted after restart, and keep progress on the correct row after sorting.
+- Selecting Atmos (or another audio quality) is the effective download quality even when a fallback preset is selected.
+- The Quality column can show the downloaded result.
+- Settings and account controls are locked during an active download; closing the window cancels the transfer first.
+
+### Packaging
+
+- Tag releases now run CI, then build, then publish through a reusable workflow instead of a `GITHUB_TOKEN` release event that GitHub would ignore.
+- Local `build.sh` installs the GUI extra and runs tests before building executables.
+- Current credential and queue filenames are ignored by git and Docker.
+
 ## 2026.9.4.0 - 2026-09-04
 
 ### GUI

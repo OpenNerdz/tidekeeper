@@ -29,6 +29,9 @@ tidal-dl.ini
 settings.json
 usersettings.json
 .tidal-dl.log
+.tidal-dl.json
+.tidal-dl.token.json
+.tidekeeper-queue.json
 download/
 TIDALDL-PY/download/
 TIDALDL-PY/settings.json

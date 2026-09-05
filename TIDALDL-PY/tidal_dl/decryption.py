@@ -12,6 +12,7 @@ import base64
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
+from .runtime import check_cancelled
 
 
 def decrypt_security_token(security_token):
@@ -57,6 +58,7 @@ def decrypt_file(efile, dfile, key, nonce):
     # Decrypt in chunks so large tracks are not loaded fully into memory
     with open(efile, 'rb') as eflac, open(dfile, 'wb') as dflac:
         while True:
+            check_cancelled()
             chunk = eflac.read(1024 * 1024)
             if not chunk:
                 break

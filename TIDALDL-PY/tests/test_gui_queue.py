@@ -1,5 +1,7 @@
 import os
 import unittest
+import copy
+from unittest import mock
 from types import SimpleNamespace
 
 try:
@@ -16,6 +18,8 @@ class GuiQueueTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        from tidal_dl.settings import SETTINGS
+        self.old_settings = copy.deepcopy(SETTINGS.__dict__)
         from tidal_dl.enums import Type
         from tidal_dl.gui_app.backend import DemoBackend, SearchItem
         from tidal_dl.gui_app.main_window import MainWindow
@@ -27,7 +31,11 @@ class GuiQueueTests(unittest.TestCase):
         self.Type = Type
 
     def tearDown(self):
+        from tidal_dl.settings import SETTINGS
+        self.window.download_in_progress = False
         self.window.close()
+        SETTINGS.__dict__.clear()
+        SETTINGS.__dict__.update(self.old_settings)
 
     def test_direct_paste_creates_separate_queue_rows(self):
         self.window.direct_text.setPlainText(
@@ -183,6 +191,130 @@ class GuiQueueTests(unittest.TestCase):
         self.window.apply_settings_for_download()
         self.assertEqual(saved, [])
         self.assertEqual(logged_out, [])
+
+    def test_completed_result_can_be_queued_again(self):
+        item = self.backend.search('song', self.Type.Track)[0]
+        self.window.set_search_results([item])
+        self.window.results_table.selectRow(0)
+        self.window.add_selected_to_queue()
+        self.window.queue[0].status = 'Done'
+        self.window.clear_queue()
+        self.window.add_selected_to_queue()
+        self.assertEqual(item.status, 'Queued')
+        self.assertEqual(len(self.window.pending_queue_items()), 1)
+        self.assertIsNot(self.window.queue[0], item)
+
+    def test_sorted_status_update_keeps_progress_with_correct_job(self):
+        from PySide6.QtCore import Qt
+        first, second = self.backend.search('song', self.Type.Track)[:2]
+        self.window.queue = [first, second]
+        self.window.refresh_queue_table()
+        self.window.queue_table.sortItems(4, Qt.AscendingOrder)
+        self.window._set_queue_item_status(second, 'Done')
+        for row in range(2):
+            item = self.window._row_item(self.window.queue_table, row)
+            expected = '100%' if item is second else ''
+            self.assertEqual(self.window.queue_table.item(row, 5).text(), expected)
+
+    def test_audio_selection_controls_effective_priority(self):
+        from tidal_dl.enums import AudioQuality
+        from tidal_dl.gui_app.backend import TidekeeperBackend
+        from tidal_dl.settings import SETTINGS
+        from tidal_dl.tidal import TIDAL_API
+        self.window.audio_quality.setCurrentText('Atmos')
+        values = self.window.collect_settings_values()
+        self.assertEqual(values['audioQualityPriority'][0], 'Atmos')
+        self.assertIn('Atmos', self.window.priority_preview.text())
+        with mock.patch.object(SETTINGS, 'save'), mock.patch.object(TIDAL_API, 'apiKey'), \
+             mock.patch('tidal_dl.gui_app.backend.logout'):
+            TidekeeperBackend().save_settings(values)
+        self.assertEqual(SETTINGS.audioQuality, AudioQuality.Atmos)
+        self.assertEqual(SETTINGS.getDownloadAudioQualityPriority()[0], AudioQuality.Atmos)
+
+    def test_applying_download_options_does_not_save_or_change_client(self):
+        from tidal_dl.gui_app.backend import TidekeeperBackend
+        from tidal_dl.settings import SETTINGS
+        from tidal_dl.tidal import TIDAL_API
+        values = self.window.collect_settings_values()
+        values['apiKeyIndex'] = SETTINGS.apiKeyIndex
+        with mock.patch.object(SETTINGS, 'save') as save, mock.patch.object(TIDAL_API, 'apiKey'):
+            TidekeeperBackend().apply_download_settings(values)
+            save.assert_not_called()
+            values['apiKeyIndex'] += 1
+            with self.assertRaisesRegex(ValueError, 'sign in again'):
+                TidekeeperBackend().apply_download_settings(values)
+
+    def test_album_and_video_progress_share_totals(self):
+        from tidal_dl.gui_app.workers import ItemProgressReporter
+        from tidal_dl.gui_app.backend import queue_progress_percent
+        reporter = ItemProgressReporter(None, lambda *args: None)
+        reporter.plan_collection(12)
+        reporter.begin_collection(10)
+        for index in range(1, 11):
+            reporter.begin_entry(index, 10)
+            reporter.finish_entry(index, 10)
+        self.assertEqual(queue_progress_percent(reporter.snapshot()), 83)
+        reporter.begin_collection(2)
+        reporter.begin_entry(1, 2)
+        reporter.for_entry(1).setMaxNum(10)
+        reporter.for_entry(1).addCurNum(5)
+        self.assertEqual(reporter.snapshot()['count'], 12)
+        self.assertEqual(reporter.snapshot()['completed'], 10)
+        self.assertEqual(queue_progress_percent(reporter.snapshot()), 87)
+
+    def test_parallel_progress_keeps_separate_file_counters(self):
+        from tidal_dl.gui_app.workers import ItemProgressReporter
+        from tidal_dl.gui_app.backend import queue_progress_percent
+        reporter = ItemProgressReporter(None, lambda *args: None)
+        reporter.begin_collection(2)
+        reporter.begin_entry(1, 2)
+        first = reporter.for_entry(1)
+        reporter.begin_entry(2, 2)
+        second = reporter.for_entry(2)
+        first.setMaxNum(10)
+        second.setMaxNum(100)
+        first.addCurNum(10)
+        second.addCurNum(50)
+        self.assertEqual(queue_progress_percent(reporter.snapshot()), 75)
+        reporter.finish_entry(1, 2)
+        self.assertEqual(queue_progress_percent(reporter.snapshot()), 75)
+        self.assertEqual(reporter.snapshot()['bytes_total'], 100)
+
+    def test_logout_stops_polling_and_ignores_late_success(self):
+        from tidal_dl.gui_app.backend import AuthStatus
+        self.window.login_polling = True
+        self.window.poll_timer.start(10000)
+        self.window.logout()
+        self.assertFalse(self.window.poll_timer.isActive())
+        self.assertFalse(self.window.login_polling)
+        self.window._device_login_polled(AuthStatus('late', 'US', 0, True, fresh_login=True))
+        self.assertNotIn('Login complete.', self.window.account_log.toPlainText())
+
+    def test_active_download_locks_settings_and_account_controls(self):
+        self.window.download_in_progress = True
+        self.window.update_action_states()
+        self.assertFalse(self.window.pages['settings'].isEnabled())
+        self.assertFalse(self.window.pages['account'].isEnabled())
+        self.window._download_finished()
+        self.assertTrue(self.window.pages['settings'].isEnabled())
+        self.assertTrue(self.window.pages['account'].isEnabled())
+
+    def test_queue_displays_downloaded_quality(self):
+        item = self.backend.search('song', self.Type.Track)[0]
+        self.window.queue = [item]
+        self.window.refresh_queue_table()
+        self.window._set_queue_item_status(item, 'Downloading')
+        self.window._set_queue_item_progress(item, {'actual_quality': 'HIGH (aac)'})
+        self.assertEqual(self.window.queue_table.item(0, 3).text(), 'HIGH (aac)')
+
+    def test_close_cancels_transfer_before_exiting(self):
+        self.window.download_in_progress = True
+        self.window.download_worker = mock.Mock()
+        event = mock.Mock()
+        self.window.closeEvent(event)
+        self.window.download_worker.cancel.assert_called_once()
+        event.ignore.assert_called_once()
+        event.accept.assert_not_called()
 
 
 if __name__ == "__main__":

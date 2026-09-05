@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -112,6 +113,11 @@ jobs:
 
       - name: Compile package
         run: python -m compileall -q tidal_dl scripts/gui_screenshots.py
+
+      - name: Run tests with Qt installed
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests
 
       - name: Capture GUI screenshots
         env:

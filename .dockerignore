@@ -10,3 +10,9 @@ install.sh
 **/*.egg-info
 **/dist
 **/build
+**/.tidal-dl.*
+**/.tidekeeper-queue.json
+**/.venv
+**/venv
+**/exe
+**/download

@@ -8,6 +8,7 @@
 @Contact :   yaronhuang@foxmail.com
 @Desc    :
 '''
+from .runtime import configure_logging, print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import sys
 import os
 import getopt
@@ -35,7 +36,8 @@ def preMainCommand():
     preArgs = []
     previousArg = ""
     for arg in sys.argv[1:]:
-        if arg == "-c" or arg == "--configPathOverride" or previousArg == "-c" or previousArg == "--configPathOverride":
+        if (arg.startswith('--configPathOverride=') or arg.startswith('-c')
+                or arg == "--configPathOverride" or previousArg in ('-c', '--configPathOverride')):
             preArgs.append(arg)
         previousArg = arg
 
@@ -225,6 +227,7 @@ def main():
             Printf.err(str(exc) + ". Use 'tidekeeper -h' for usage.")
             return 1
 
+    configure_logging(PATHS.getLogPath())
     SETTINGS.read(PATHS.getProfilePath())
     TOKEN.read(PATHS.getTokenPath())
     if not apiKey.isItemValid(SETTINGS.apiKeyIndex):
@@ -278,4 +281,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

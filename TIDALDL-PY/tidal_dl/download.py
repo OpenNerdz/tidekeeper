@@ -9,11 +9,14 @@
 @Desc    :
 '''
 
+from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
 import os
 import shutil
 import subprocess
 import time
+import tempfile
+from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock, local
 
@@ -23,6 +26,9 @@ import requests
 from .decryption import *
 from .printf import *
 from .tidal import *
+from .manifests import hls_segments
+from .transfer_state import prepare_transfer, audio_identity, video_identity, record_completion, is_completed
+from .runtime import run_process, redact
 
 
 DOWNLOAD_TIMEOUT = (5, 60)
@@ -106,7 +112,9 @@ def __logFailedTrack__(track, album=None, playlist=None, reason=""):
 
         with failed_track_log_lock:
             with open(path, "a", encoding="utf-8") as output:
-                output.write(entry)
+                output.write(redact(entry))
+    except DownloadCancelled:
+        raise
     except Exception as e:
         logging.warning("Unable to log failed track %s: %s", track_id, e)
 
@@ -137,12 +145,13 @@ def __shouldRetryDownload__(error=None):
 def __httpRequest__(method, url, **kwargs):
     last_error = None
     for attempt in range(DOWNLOAD_RETRIES):
+        check_cancelled()
         response = None
         try:
             response = __httpSession__().request(method, url, timeout=DOWNLOAD_TIMEOUT, **kwargs)
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < DOWNLOAD_RETRIES - 1:
                 response.close()
-                time.sleep(__retryDelay__(response, attempt))
+                cancellable_sleep(__retryDelay__(response, attempt))
                 continue
             response.raise_for_status()
             return response
@@ -152,7 +161,7 @@ def __httpRequest__(method, url, **kwargs):
             if response is not None:
                 response.close()
             if retry:
-                time.sleep(__retryDelay__(getattr(e, "response", None), attempt))
+                cancellable_sleep(__retryDelay__(getattr(e, "response", None), attempt))
                 continue
             raise
     raise last_error
@@ -206,6 +215,8 @@ def __contentLength__(url):
                 return size
         finally:
             response.close()
+    except DownloadCancelled:
+        raise
     except Exception as error:
         logging.debug("HEAD size probe failed for %s, trying ranged GET: %s", url, error)
 
@@ -226,6 +237,8 @@ def __contentLength__(url):
             return size if size > 0 else -1
         finally:
             response.close()
+    except DownloadCancelled:
+        raise
     except Exception as error:
         logging.debug("Ranged GET size probe failed for %s: %s", url, error)
         return -1
@@ -305,6 +318,8 @@ def __callProgressSink__(sink, methodName, value):
         return
     try:
         method(value)
+    except DownloadCancelled:
+        raise
     except Exception as error:
         logging.debug("Progress sink %s.%s failed: %s", type(sink).__name__, methodName, error)
 
@@ -345,7 +360,8 @@ def __downloadSingleUrl__(
         chunkSize=DOWNLOAD_CHUNK_SIZE,
         progressLock=None,
         expectedSize=-1,
-        allowUnknownSizeReuse=False):
+        allowUnknownSizeReuse=False,
+        reuseExisting=True):
     """Download one CDN URL to outputPath with HTTP Range resume.
 
     Partial progress is kept in ``outputPath + '.download'`` until the transfer
@@ -366,7 +382,7 @@ def __downloadSingleUrl__(
         )
     else:
         reusable = False
-    if reusable:
+    if reusable and reuseExisting:
         __noteProgress__(
             progress, userProgress, __localFileSize__(outputPath), progressLock
         )
@@ -378,6 +394,7 @@ def __downloadSingleUrl__(
     knownTotal = expectedSize if expectedSize and expectedSize > 0 else -1
 
     for attempt in range(DOWNLOAD_RETRIES):
+        check_cancelled()
         resumeSize = __localFileSize__(tempOutputPath)
         headers = {"Range": f"bytes={resumeSize}-"} if resumeSize > 0 else {}
         response = None
@@ -416,6 +433,7 @@ def __downloadSingleUrl__(
 
             with open(tempOutputPath, mode) as output:
                 for chunk in response.iter_content(chunk_size=chunkSize):
+                    check_cancelled()
                     if not chunk:
                         continue
                     output.write(chunk)
@@ -426,10 +444,21 @@ def __downloadSingleUrl__(
             os.replace(tempOutputPath, outputPath)
             return __localFileSize__(outputPath)
         except (requests.RequestException, OSError, IOError) as error:
+            failed_response = getattr(error, 'response', None)
+            if getattr(failed_response, 'status_code', None) == 416:
+                remote_total = __contentTotalSize__(failed_response)
+                if remote_total > 0 and resumeSize == remote_total and knownTotal in (-1, remote_total):
+                    __verifyLocalSize__(tempOutputPath, remote_total)
+                    os.replace(tempOutputPath, outputPath)
+                    return remote_total
+                # A stale or overlong sidecar cannot be resumed.
+                __removeFile__(tempOutputPath)
+                if attempt < DOWNLOAD_RETRIES - 1:
+                    continue
             lastError = error
             if attempt >= DOWNLOAD_RETRIES - 1 or not __shouldRetryDownload__(error):
                 raise
-            time.sleep(__retryDelay__(response, attempt))
+            cancellable_sleep(__retryDelay__(response, attempt))
         finally:
             if response is not None:
                 response.close()
@@ -447,6 +476,8 @@ def __concatenateFiles__(partPaths, outputPath, expectedSize=-1):
                     shutil.copyfileobj(inputFile, output)
         __verifyLocalSize__(tempOutputPath, expectedSize, label="assembled media")
         os.replace(tempOutputPath, outputPath)
+    except DownloadCancelled:
+        raise
     except Exception:
         __removeFile__(tempOutputPath)
         raise
@@ -491,6 +522,7 @@ def __downloadUrls__(
         return False, "URL list is empty."
 
     __ensureParentDir__(outputPath)
+    source_matches = prepare_transfer(outputPath, urls)
 
     if expectedSize is not None:
         totalSize = expectedSize
@@ -507,7 +539,7 @@ def __downloadUrls__(
     # Already-complete assembled file (e.g. decrypt failed after CDN success).
     # Only reuse when the remote size is known and matches — never skip a
     # download solely because a local file happens to exist.
-    if __isReusableAssembledFile__(outputPath, totalSize):
+    if source_matches and __isReusableAssembledFile__(outputPath, totalSize):
         __noteProgress__(progress, userProgress, __localFileSize__(outputPath))
         __removeDir__(__partsDirectory__(outputPath))
         return True, ''
@@ -521,8 +553,11 @@ def __downloadUrls__(
                 userProgress,
                 chunkSize,
                 expectedSize=totalSize,
+                reuseExisting=source_matches,
             )
             return True, ''
+        except DownloadCancelled:
+            raise
         except Exception as e:
             return False, str(e)
 
@@ -548,7 +583,7 @@ def __downloadUrls__(
             with ThreadPoolExecutor(max_workers=workers) as thread_pool:
                 futures = {
                     thread_pool.submit(
-                        __downloadSegment__,
+                        copy_context().run, __downloadSegment__,
                         url,
                         partPath,
                         progress,
@@ -561,6 +596,8 @@ def __downloadUrls__(
                 try:
                     for future in as_completed(futures):
                         future.result()
+                except DownloadCancelled:
+                    raise
                 except Exception:
                     for pending in futures:
                         pending.cancel()
@@ -569,6 +606,8 @@ def __downloadUrls__(
         __concatenateFiles__(partPaths, outputPath, expectedSize=totalSize)
         __removeDir__(partsDir)
         return True, ''
+    except DownloadCancelled:
+        raise
     except Exception as e:
         # Keep complete segments under outputPath.parts for the next attempt.
         return False, str(e)
@@ -616,11 +655,13 @@ def __downloadErrorHint__(err):
 
 def __encrypted__(stream, srcPath, descPath):
     if aigpy.string.isNull(stream.encryptionKey):
-        os.replace(srcPath, descPath)
+        with open(srcPath, 'rb') as source, open(descPath, 'wb') as output:
+            for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                check_cancelled()
+                output.write(chunk)
     else:
         key, nonce = decrypt_security_token(stream.encryptionKey)
         decrypt_file(srcPath, descPath, key, nonce)
-        os.remove(srcPath)
 
 
 def __isFlacInM4a__(stream):
@@ -634,31 +675,15 @@ def __containerFallbackPath__(path):
     return path.rsplit('.', 1)[0] + '.m4a'
 
 
-def __looksLikeCompleteAudio__(path, minimum=1024):
-    size = aigpy.file.getSize(path)
-    if size < minimum:
-        return False
-    try:
-        with open(path, "rb") as handle:
-            header = handle.read(4)
-    except OSError:
-        return False
-    if path.lower().endswith(".flac"):
-        return header == b"fLaC"
-    return True
-
-
 def __skipPath__(path, stream):
-    if __isSkip__(path, stream.urls):
-        return path
-
     if not SETTINGS.checkExist:
         return None
-
+    candidates = [path]
     if SETTINGS.saveAsFlac and __isFlacInM4a__(stream):
-        for candidate in (path, __containerFallbackPath__(path)):
-            if __looksLikeCompleteAudio__(candidate):
-                return candidate
+        candidates.append(__containerFallbackPath__(path))
+    for candidate in candidates:
+        if is_completed(candidate, audio_identity(stream)):
+            return candidate
     return None
 
 
@@ -678,22 +703,22 @@ def __exportFlacFromContainer__(path, stream):
     tempPath = f"{flacPath}.tmp.{os.getpid()}.flac"
     __removeFile__(tempPath)
     try:
-        completed = subprocess.run(
-            [
-                ffmpeg, '-y', '-hide_banner', '-loglevel', 'error',
-                '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'flac', tempPath,
-            ],
+        completed = run_process(
+            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'flac', tempPath],
             capture_output=True,
+            timeout=300,
             text=True,
             check=False,
         )
-        if completed.returncode != 0:
+        if completed.returncode != 0 or __localFileSize__(tempPath) <= 0:
             detail = (completed.stderr or completed.stdout or '').strip()
             raise RuntimeError(detail or f"ffmpeg exited with code {completed.returncode}")
         os.replace(tempPath, flacPath)
         if os.path.abspath(path) != os.path.abspath(flacPath):
             __removeFile__(path)
         return flacPath
+    except DownloadCancelled:
+        raise
     except Exception as e:
         __removeFile__(tempPath)
         logging.warning("Unable to export FLAC for %s: %s; saving container as %s", path, e, fallbackPath)
@@ -735,6 +760,8 @@ def __writeTextFile__(path, content):
         with open(tempPath, 'w', encoding='utf-8', newline='') as output:
             output.write(content)
         os.replace(tempPath, path)
+    except DownloadCancelled:
+        raise
     except Exception:
         __removeFile__(tempPath)
         raise
@@ -873,6 +900,8 @@ def __findTimedLyricsForTrack__(track):
         try:
             result = TIDAL_API.search(query, Type.Track, limit=10)
             candidates = TIDAL_API.getSearchResultItems(result, Type.Track)
+        except DownloadCancelled:
+            raise
         except Exception as e:
             logging.info("Unable to search timed lyrics fallback for track %s: %s", getattr(track, 'id', ''), e)
             continue
@@ -896,6 +925,8 @@ def __findTimedLyricsForTrack__(track):
     for score, candidate in scoredCandidates:
         try:
             lyrics = TIDAL_API.getLyrics(candidate.id)
+        except DownloadCancelled:
+            raise
         except Exception:
             continue
         if __hasTimedLyrics__(lyrics):
@@ -907,6 +938,8 @@ def __getLyricsForTrack__(track):
     primary = None
     try:
         primary = TIDAL_API.getLyrics(track.id)
+    except DownloadCancelled:
+        raise
     except Exception as e:
         logging.info("Unable to get lyrics for track %s: %s", getattr(track, 'id', ''), e)
 
@@ -919,6 +952,8 @@ def __getLyricsForTrack__(track):
 def __saveLyricsForTrack__(track, trackPath):
     try:
         return __writeLyricsFile__(trackPath, __getLyricsForTrack__(track))
+    except DownloadCancelled:
+        raise
     except Exception as e:
         logging.info("Unable to save lyrics for track %s: %s", getattr(track, 'id', ''), e)
         return ''
@@ -981,9 +1016,22 @@ def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
         obj.totaltrack = int(getattr(album, 'numberOfTracks', 0) or 0)
     coverpath = TIDAL_API.getCoverUrl(album.cover, "1280", "1280")
     __ensureMetadataTags__(obj)
-    error = __metadataSaveError__(obj.save(coverpath))
-    if error is not None:
-        raise Exception(error)
+    artwork = None
+    try:
+        if coverpath:
+            response = __httpRequest__('GET', coverpath)
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as output:
+                    artwork = output.name
+                    output.write(response.content)
+            finally:
+                response.close()
+        error = __metadataSaveError__(obj.save(artwork or ''))
+        if error is not None:
+            raise RuntimeError(error)
+    finally:
+        if artwork:
+            __removeFile__(artwork)
 
 
 def downloadCover(album):
@@ -1033,63 +1081,45 @@ def downloadAlbumInfo(album, tracks):
 def __finalizeVideoFile__(partPath, path):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        logging.warning("ffmpeg not found; saving concatenated MPEG-TS as %s", path)
-        os.replace(partPath, path)
-        Printf.info("Install ffmpeg to remux videos into playable MP4 files.")
-        return path
-
+        raise RuntimeError('Install ffmpeg to finalize video downloads as MP4; the downloaded parts were kept.')
     tempPath = f"{path}.tmp.{os.getpid()}.mp4"
-    __removeFile__(tempPath)
-    command = [
-        ffmpeg,
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        partPath,
-        "-c",
-        "copy",
-        "-movflags",
-        "+faststart",
-        tempPath,
-    ]
     try:
-        completed = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
+        check_cancelled()
+        completed = run_process(
+            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', partPath,
+             '-c', 'copy', '-movflags', '+faststart', tempPath],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=300,
         )
-        if completed.returncode == 0 and __localFileSize__(tempPath) > 0:
-            os.replace(tempPath, path)
-            __removeFile__(partPath)
-            return path
-        logging.warning(
-            "ffmpeg remux failed (%s); keeping concatenated stream as %s",
-            (completed.stderr or b"").decode("utf-8", "ignore").strip(),
-            path,
-        )
-    except OSError as error:
-        logging.warning("ffmpeg remux failed: %s", error)
-    __removeFile__(tempPath)
-    os.replace(partPath, path)
-    return path
+        check_cancelled()
+        if completed.returncode != 0 or __localFileSize__(tempPath) <= 0:
+            detail = (completed.stderr or b'').decode('utf-8', 'replace').strip()
+            raise RuntimeError('Video conversion failed: ' + (detail or 'ffmpeg produced no output'))
+        os.replace(tempPath, path)
+        __removeFile__(partPath)
+        return path
+    finally:
+        __removeFile__(tempPath)
 
 
 def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, userProgress=None):
     title = getattr(video, 'title', None) or str(getattr(video, 'id', 'unknown'))
     partPath = ''
     try:
-        stream = TIDAL_API.getVideoStreamUrl(video.id, SETTINGS.videoQuality)
+        check_cancelled()
         path = getVideoPath(video, album, playlist)
+        identity = video_identity(video, SETTINGS.videoQuality)
+        if SETTINGS.checkExist and is_completed(path, identity):
+            Printf.success(title + ' (skip:already exists!)')
+            return True, ''
+        stream = TIDAL_API.getVideoStreamUrl(video.id, SETTINGS.videoQuality)
         partPath = path + '.part'
 
+        if userProgress is not None:
+            userProgress.updateStream(stream)
         Printf.video(video, stream)
         logging.info("[DL Video] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.m3u8Url)
 
         __ensureParentDir__(path)
-        __removeFile__(partPath)
 
         response = __httpRequest__("GET", stream.m3u8Url, allow_redirects=True)
         try:
@@ -1100,7 +1130,7 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
         finally:
             response.close()
 
-        urls = aigpy.m3u8.parseTsUrls(m3u8content)
+        urls = hls_segments(m3u8content, stream.m3u8Url)
         if len(urls) <= 0:
             Printf.err(f"DL Video[{title}] getTsUrls failed.")
             return False, "GetTsUrls failed."
@@ -1115,14 +1145,16 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
         )
         if check:
             path = __finalizeVideoFile__(partPath, path)
+            record_completion(path, identity)
+            __removeFile__(partPath + '.source.json')
             Printf.success(title)
             return True, ''
         else:
-            __removeFile__(partPath)
             Printf.err(f"DL Video[{title}] failed.{msg}")
             return False, msg
+    except DownloadCancelled:
+        raise
     except Exception as e:
-        __removeFile__(partPath)
         Printf.err(f"DL Video[{title}] failed.{str(e)}")
         return False, str(e)
 
@@ -1161,6 +1193,8 @@ def __resolveTrackForAtmosDownload__(track: Track, album=None):
     if atmos_album_id is not None and str(atmos_album_id) != str(album_id or ''):
         try:
             atmos_album = TIDAL_API.getAlbum(atmos_album_id)
+        except DownloadCancelled:
+            raise
         except Exception:
             atmos_album = album
     return atmos, atmos_album
@@ -1178,18 +1212,21 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
     Pipeline:
       1. Quality priority + OpenAPI/playback fallback (``getStreamUrlByPriority``)
-      2. Skip if a complete file already exists (size vs remote Content-Length)
+      2. Skip only when a completion receipt matches the file and requested media
       3. Download to ``path.part`` with Range resume / multi-segment concat
       4. AES-CTR decrypt when encryptionKey is present (chunked, not whole-file)
       5. Optional ffmpeg FLAC remux, lyrics sidecar, metadata tags
     """
     title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
     partPath = ''
+    processingPath = ''
     try:
+        check_cancelled()
         track, album = __resolveTrackForAtmosDownload__(track, album)
         title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
         __ensureTrackStreamable__(track)
         stream = __getTrackStream__(track.id)
+        stream.trackid = track.id
         path = getTrackPath(track, stream, album, playlist)
         partPath = path + '.part'
         partsDir = __partsDirectory__(partPath)
@@ -1213,26 +1250,12 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         __ensureParentDir__(path)
 
-        # Reuse a complete assembled part from a previous attempt (e.g. decrypt
-        # failed after a successful CDN transfer). Otherwise download/resume.
         expectedSize = __remoteSize__(stream.urls)
-        if __isReusableAssembledFile__(partPath, expectedSize):
-            check, err = True, ''
-        else:
-            # Incomplete assembled part is not useful; resume lives in sidecars /
-            # outputPath.parts instead.
-            if __localFileSize__(partPath) > 0 and not __isReusableAssembledFile__(partPath, expectedSize):
-                __removeFile__(partPath)
-            check, err = __downloadUrls__(
-                stream.urls,
-                partPath,
-                SETTINGS.showProgress and not SETTINGS.multiThread,
-                userProgress,
-                TRACK_THREAD_COUNT if SETTINGS.multiThread else 1,
-                max(int(partSize), 64 * 1024),
-                False,
-                expectedSize,
-            )
+        check, err = __downloadUrls__(
+            stream.urls, partPath, SETTINGS.showProgress and not SETTINGS.multiThread,
+            userProgress, TRACK_THREAD_COUNT if SETTINGS.multiThread else 1,
+            max(int(partSize), 64 * 1024), False, expectedSize,
+        )
         if not check:
             __logFailedTrack__(track, album, playlist, err)
             Printf.err(f"DL Track '{title}' failed: {str(err)}{__downloadErrorHint__(err)}")
@@ -1240,26 +1263,42 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         # encrypted -> decrypt and remove encrypted file.
         # On failure, the outer handler keeps a complete partPath for retry.
-        __encrypted__(stream, partPath, path)
+        stem, extension = os.path.splitext(path)
+        processingPath = f'{stem}.processing.{os.getpid()}{extension}'
+        __encrypted__(stream, partPath, processingPath)
         __removeDir__(partsDir)
-        path = __exportFlacFromContainer__(path, stream)
+        processingPath = __exportFlacFromContainer__(processingPath, stream)
+        path = stem + os.path.splitext(processingPath)[1]
 
         # contributors
         try:
             contributors = TIDAL_API.getTrackContributors(track.id)
+        except DownloadCancelled:
+            raise
         except Exception:
             contributors = None
 
         lyrics = __saveLyricsForTrack__(track, path)
 
         try:
-            __setMetaData__(track, album, path, contributors, lyrics)
+            __setMetaData__(track, album, processingPath, contributors, lyrics)
+        except DownloadCancelled:
+            raise
         except Exception as e:
             logging.warning("Unable to write metadata for %s: %s", path, e)
             Printf.info(f"Downloaded '{title}', but metadata tagging was skipped: {str(e)}")
+            if hasattr(userProgress, 'note_warning'):
+                userProgress.note_warning(f'Metadata could not be saved for {title}')
+        check_cancelled()
+        os.replace(processingPath, path)
+        record_completion(path, audio_identity(stream))
+        __removeFile__(partPath)
+        __removeFile__(partPath + '.source.json')
         Printf.success(title)
 
         return True, ''
+    except DownloadCancelled:
+        raise
     except Exception as e:
         # Preserve complete/partial transfer state for resume; only drop empty parts.
         if partPath and __localFileSize__(partPath) <= 0:
@@ -1267,6 +1306,9 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         __logFailedTrack__(track, album, playlist, e)
         Printf.err(f"DL Track '{title}' failed: {str(e)}{__downloadErrorHint__(e)}")
         return False, str(e)
+    finally:
+        if processingPath:
+            __removeFile__(processingPath)
 
 
 def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progress=None):
@@ -1285,6 +1327,8 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
         if albumId not in albumCache:
             try:
                 albumCache[albumId] = TIDAL_API.getAlbum(albumId)
+            except DownloadCancelled:
+                raise
             except Exception as error:
                 logging.warning("Unable to load album %s for playlist track: %s", albumId, error)
                 albumCache[albumId] = None
@@ -1295,21 +1339,22 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
             downloadedCovers.add(albumId)
         return itemAlbum
 
-    def __trackProgressKwargs__():
+    def __trackProgressKwargs__(index):
         if progress is None:
             return {}
-        return {"userProgress": progress}
+        return {"userProgress": progress.for_entry(index + 1) if hasattr(progress, "for_entry") else progress}
 
     if not SETTINGS.multiThread:
         success = True
         for index, item in enumerate(tracks):
+            check_cancelled()
             itemAlbum = album
             if itemAlbum is None:
                 itemAlbum = __getAlbum__(item)
                 item.trackNumberOnPlaylist = index + 1
             if progress is not None:
                 progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
-            check, _ = downloadTrack(item, itemAlbum, playlist, **__trackProgressKwargs__())
+            check, _ = downloadTrack(item, itemAlbum, playlist, **__trackProgressKwargs__(index))
             if progress is not None:
                 progress.finish_entry(index + 1, total, check)
             success = success and check
@@ -1318,6 +1363,7 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
         futures = {}
         with ThreadPoolExecutor(max_workers=TRACK_THREAD_COUNT) as thread_pool:
             for index, item in enumerate(tracks):
+                check_cancelled()
                 itemAlbum = album
                 if itemAlbum is None:
                     itemAlbum = __getAlbum__(item)
@@ -1325,11 +1371,11 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
                 if progress is not None:
                     progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
                 futures[thread_pool.submit(
-                    downloadTrack,
+                    copy_context().run, downloadTrack,
                     item,
                     itemAlbum,
                     playlist,
-                    **__trackProgressKwargs__(),
+                    **__trackProgressKwargs__(index),
                 )] = index
 
             success = True
@@ -1351,11 +1397,12 @@ def downloadVideos(videos, album: Album, playlist=None, progress=None):
         progress.begin_collection(total)
     success = True
     for index, item in enumerate(videos):
+        check_cancelled()
         if progress is not None:
             progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
         kwargs = {}
         if progress is not None:
-            kwargs["userProgress"] = progress
+            kwargs["userProgress"] = progress.for_entry(index + 1) if hasattr(progress, "for_entry") else progress
         check, _ = downloadVideo(item, album, playlist, **kwargs)
         if progress is not None:
             progress.finish_entry(index + 1, total, check)

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${TIDEKEEPER_REPO_URL:-https://github.com/OpenNerdz/tidekeeper.git}"
 PACKAGE_SUBDIR="TIDALDL-PY"
 INSTALL_ROOT="${TIDEKEEPER_INSTALL_ROOT:-$HOME/.local/share/tidekeeper}"
 BIN_DIR="${TIDEKEEPER_BIN_DIR:-$HOME/.local/bin}"
