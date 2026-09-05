@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.5.0 - 2026-09-05
+
 ### Reliability
 
 - Interrupted downloads no longer mix segments from a different stream, and completed files are skipped only with a matching checksum receipt.
@@ -19,6 +21,9 @@
 - Settings and account controls are locked during an active download; closing the window cancels the transfer first.
 
 ### Packaging
+
+- CLI startup regression tests use a real isolated configuration directory and verify file logging.
+- Development uses `working`, with verified changes merged into `main` before tagging releases.
 
 - Tag releases now run CI, then build, then publish through a reusable workflow instead of a `GITHUB_TOKEN` release event that GitHub would ignore.
 - Local `build.sh` installs the GUI extra and runs tests before building executables.
