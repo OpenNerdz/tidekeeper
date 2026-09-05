@@ -235,6 +235,7 @@ class DownloadBackendTests(unittest.TestCase):
         download.prepare_transfer(str(output_file), ["https://example.invalid/media.bin"])
         payload = b"already-downloaded-bytes"
         output_file.write_bytes(payload)
+        download.complete_transfer(str(output_file))
 
         with mock.patch.object(download, "__httpRequest__") as request, \
              mock.patch.object(download, "__remoteSize__", return_value=len(payload)):

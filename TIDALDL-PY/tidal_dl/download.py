@@ -27,7 +27,7 @@ from .decryption import *
 from .printf import *
 from .tidal import *
 from .manifests import hls_segments
-from .transfer_state import prepare_transfer, audio_identity, video_identity, record_completion, is_completed
+from .transfer_state import prepare_transfer, complete_transfer, audio_identity, video_identity, record_completion, is_completed
 from .runtime import run_process, redact
 
 
@@ -555,6 +555,7 @@ def __downloadUrls__(
                 expectedSize=totalSize,
                 reuseExisting=source_matches,
             )
+            complete_transfer(outputPath)
             return True, ''
         except DownloadCancelled:
             raise
@@ -604,6 +605,7 @@ def __downloadUrls__(
                     raise
 
         __concatenateFiles__(partPaths, outputPath, expectedSize=totalSize)
+        complete_transfer(outputPath)
         __removeDir__(partsDir)
         return True, ''
     except DownloadCancelled:

@@ -6,6 +6,8 @@
 
 ### Reliability
 
+- Failed stream replacements cannot cause retries to reuse an old file of the same size.
+
 - Interrupted downloads no longer mix segments from a different stream, and completed files are skipped only with a matching checksum receipt.
 - Truncated FLACs, failed video remuxes, and videos that ignore “Skip existing files” are no longer treated as successful.
 - A finished `.download` sidecar that gets HTTP 416 is promoted instead of failing the retry.
@@ -24,7 +26,6 @@
 
 - CLI startup regression tests use a real isolated configuration directory and verify file logging.
 - Development uses `working`, with verified changes merged into `main` before tagging releases.
-
 - Tag releases now run CI, then build, then publish through a reusable workflow instead of a `GITHUB_TOKEN` release event that GitHub would ignore.
 - Local `build.sh` installs the GUI extra and runs tests before building executables.
 - Current credential and queue filenames are ignored by git and Docker.

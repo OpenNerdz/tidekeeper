@@ -80,6 +80,25 @@ class ReliabilityTests(unittest.TestCase):
         self.assertTrue(ok, message)
         self.assertEqual(Path(path).read_bytes(), b'NEWDATA')
 
+    def test_failed_changed_stream_does_not_reuse_old_output_on_retry(self):
+        for segmented in (False, True):
+            with self.subTest(segmented=segmented):
+                path = str(self.root / ('segmented' if segmented else 'single'))
+                Path(path).write_bytes(b'OLD-DATA')
+                urls = ['https://cdn.invalid/new0']
+                if segmented:
+                    urls.append('https://cdn.invalid/new1')
+                error = requests.HTTPError('404', response=Response(status=404))
+                with mock.patch.object(download, '__httpRequest__', side_effect=error):
+                    ok, _ = download.__downloadUrls__(urls, path, probeSize=False, expectedSize=8)
+                self.assertFalse(ok)
+                self.assertEqual(Path(path).read_bytes(), b'OLD-DATA')
+                responses = [Response(b'NEW-'), Response(b'DATA')] if segmented else [Response(b'NEW-DATA')]
+                with mock.patch.object(download, '__httpRequest__', side_effect=responses):
+                    ok, message = download.__downloadUrls__(urls, path, probeSize=False, expectedSize=8)
+                self.assertTrue(ok, message)
+                self.assertEqual(Path(path).read_bytes(), b'NEW-DATA')
+
     def test_signed_urls_are_hashed_on_disk(self):
         path = str(self.root / 'part')
         prepare_transfer(path, ['https://cdn.invalid/file?signature=dummy-secret'])

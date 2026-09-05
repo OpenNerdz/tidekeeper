@@ -27,18 +27,28 @@ def _read(path):
 
 
 def prepare_transfer(path, urls):
+    """Prepare resumable parts; return whether the assembled output is reusable."""
     # Include the complete URLs: query parameters can select different media.
     # A refreshed signature may restart a transfer, but must never mix streams.
     identity = hashlib.sha256(json.dumps(list(urls)).encode()).hexdigest()
     marker = path + '.source.json'
-    matches = _read(marker).get('source') == identity
+    state = _read(marker)
+    matches = state.get('source') == identity
     if not matches:
         Path(path + '.download').unlink(missing_ok=True)
         parts = Path(path + '.parts')
         if parts.exists():
             shutil.rmtree(parts)
-        _atomicWrite(marker, json.dumps({'source': identity}))
-    return matches
+        _atomicWrite(marker, json.dumps({'source': identity, 'complete': False}))
+    return matches and state.get('complete') is True
+
+
+def complete_transfer(path):
+    """Mark the assembled output only after it has been successfully replaced."""
+    marker = path + '.source.json'
+    state = _read(marker)
+    state['complete'] = True
+    _atomicWrite(marker, json.dumps(state))
 
 
 def audio_identity(stream):
