@@ -1,4 +1,6 @@
 import io
+import logging
+from pathlib import Path
 import sys
 import tempfile
 import unittest
@@ -26,6 +28,19 @@ class CliUiTests(unittest.TestCase):
         """
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
+        root_logger = logging.getLogger()
+        original_handlers = list(root_logger.handlers)
+        original_level = root_logger.level
+
+        def restore_logging():
+            for handler in list(root_logger.handlers):
+                if handler not in original_handlers:
+                    root_logger.removeHandler(handler)
+                    handler.close()
+            root_logger.setLevel(original_level)
+
+        # Close log files before removing the temporary config directory.
+        self.addCleanup(restore_logging)
         PATHS.homePathOverride = tmpdir.name
         self._restoreGlobalSettings()
         return tmpdir.name
@@ -233,16 +248,15 @@ class CliUiTests(unittest.TestCase):
         mock_choices.assert_not_called()
 
     def test_sys_argvs_enable_entering_while_loop(self):
-        self._restoreGlobalSettings()
-        with mock.patch("sys.argv", ["tidekeeper", "-c", "/home/user/tidekeeper/config"]):
-            with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
-                mock_isdir.return_value = True
-                with mock.patch("tidal_dl.loginByWeb"):
-                    with mock.patch("tidal_dl.Printf.choices") as mock_choices:
-                        mock_choices.side_effect = KeyboardInterrupt
-                        with self.assertRaises(KeyboardInterrupt):
-                            tidal_dl.main()
-        mock_choices.assert_called()
+        config_home = self._isolateConfigHome()
+        with mock.patch("sys.argv", ["tidekeeper", "-c", config_home]), \
+             mock.patch("tidal_dl.loginByWeb"), \
+             mock.patch("tidal_dl.Printf.choices", side_effect=KeyboardInterrupt) as choices:
+            with self.assertRaises(KeyboardInterrupt):
+                tidal_dl.main()
+        choices.assert_called()
+        self.assertEqual(PATHS.__getHomePath__(), config_home)
+        self.assertTrue(Path(PATHS.getLogPath()).is_file())
 
 
 if __name__ == "__main__":

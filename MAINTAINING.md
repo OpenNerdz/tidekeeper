@@ -38,12 +38,21 @@ Keep `TIDALDL-PY/setup.py` `install_requires` aligned with
 Build outputs are written under `TIDALDL-PY/dist` (Python distributions and
 PyInstaller work) and `TIDALDL-PY/exe` (terminal and GUI executables).
 
+## Branch workflow
+
+Keep exactly two branches in `OpenNerdz/tidekeeper`: `main` for verified releases
+and `working` for new features and fixes. Start changes from an up-to-date
+`working`, push there, and verify CI and all platform builds before merging to
+`main`. Keep `working` after merging and fast-forward it to `main` when needed.
+Delete obsolete branches only after confirming their commits are merged.
+
 ## Release checklist
 
 1. Update the version in `TIDALDL-PY/tidal_dl/printf.py` (format `YYYY.M.D.N`).
 2. Move `CHANGELOG.md` entries from Unreleased into a new version section.
 3. Run the local development checks and the test suite.
-4. Push to `main` and confirm GitHub Actions CI passes.
+4. Push to `working` and confirm GitHub Actions CI and all platform builds pass.
+   Merge `working` into `main`, then confirm the checks on `main` pass.
 5. Confirm the GitHub `pypi` environment exists and the `PYPI_API_TOKEN` repository
    secret is set (PyPI API token with upload rights for project `tidekeeper`).
    Optional: also register a trusted publisher on PyPI for OIDC fallback

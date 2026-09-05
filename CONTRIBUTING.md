@@ -14,6 +14,13 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
+## Branches
+
+The repository keeps `main` and `working`. Add features and fixes on `working`
+and open a pull request from `working` into `main` after local checks pass.
+Merge only after CI and all platform builds succeed, and retain `working` for
+subsequent development.
+
 ## Checks
 
 Run these before opening a pull request:
