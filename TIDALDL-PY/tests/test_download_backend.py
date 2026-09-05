@@ -89,6 +89,7 @@ class DownloadBackendTests(unittest.TestCase):
 
     def test_single_url_download_resumes_existing_partial_file(self):
         output_file = self.root / "resumed.out"
+        download.prepare_transfer(str(output_file), ["https://example.invalid/media.bin"])
         partial_file = Path(str(output_file) + ".download")
         partial_file.write_bytes(b"first-")
 
@@ -157,6 +158,7 @@ class DownloadBackendTests(unittest.TestCase):
     def test_single_url_mismatched_partial_rerequests_full_body(self):
         """If a Range response is not a matching 206, do not write its body as complete."""
         output_file = self.root / "mismatch.out"
+        download.prepare_transfer(str(output_file), ["https://example.invalid/media.bin"])
         partial_file = Path(str(output_file) + ".download")
         partial_file.write_bytes(b"partial")
 
@@ -230,6 +232,7 @@ class DownloadBackendTests(unittest.TestCase):
 
     def test_reuses_complete_output_without_redownload(self):
         output_file = self.root / "cached.out"
+        download.prepare_transfer(str(output_file), ["https://example.invalid/media.bin"])
         payload = b"already-downloaded-bytes"
         output_file.write_bytes(payload)
 
@@ -319,7 +322,7 @@ class DownloadBackendTests(unittest.TestCase):
         self.assertIn("-f", run.call_args.args[0])
         self.assertIn("flac", run.call_args.args[0])
 
-    def test_save_as_flac_skip_accepts_existing_remuxed_file(self):
+    def test_save_as_flac_skip_accepts_verified_remuxed_file(self):
         old_values = {
             "saveAsFlac": download.SETTINGS.saveAsFlac,
             "checkExist": download.SETTINGS.checkExist,
@@ -332,6 +335,7 @@ class DownloadBackendTests(unittest.TestCase):
             container="mp4",
             manifestMimeType="application/dash+xml",
         )
+        download.record_completion(str(existing), download.audio_identity(stream))
         try:
             download.SETTINGS.saveAsFlac = True
             download.SETTINGS.checkExist = True
@@ -515,7 +519,7 @@ class GuiDownloadStatusTests(unittest.TestCase):
                      mock.patch.object(download, "__isReusableAssembledFile__", return_value=False), \
                      mock.patch.object(download, "__localFileSize__", return_value=0), \
                      mock.patch.object(download, "__downloadUrls__", return_value=(True, "")) as downloaded, \
-                     mock.patch.object(download, "__encrypted__"), \
+                     mock.patch.object(download, "__encrypted__", side_effect=lambda _stream, _src, out: Path(out).write_bytes(b"media")), \
                      mock.patch.object(download, "__removeDir__"), \
                      mock.patch.object(download, "__exportFlacFromContainer__", side_effect=lambda out, _stream: out), \
                      mock.patch.object(download.TIDAL_API, "getTrackContributors", return_value=None), \

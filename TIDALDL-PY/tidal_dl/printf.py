@@ -10,7 +10,9 @@
 '''
 import threading
 import aigpy
+from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
+import requests
 import prettytable
 import shutil
 
@@ -33,10 +35,7 @@ print_mutex = threading.Lock()
 
 def _plain_table_style():
     """Return a non-deprecated plain column style for PrettyTable."""
-    table_style = getattr(prettytable, "TableStyle", None)
-    if table_style is not None:
-        return table_style.PLAIN_COLUMNS
-    return prettytable.PLAIN_COLUMNS
+    return prettytable.TableStyle.PLAIN_COLUMNS
 
 
 class Printf(object):
@@ -139,11 +138,14 @@ class Printf(object):
 
     @staticmethod
     def checkVersion():
-        onlineVer = aigpy.pip.getLastVersion('tidekeeper')
-        if onlineVer is not None:
-            icmp = aigpy.system.cmpVersion(onlineVer, VERSION)
-            if icmp > 0:
+        try:
+            with requests.get('https://pypi.org/pypi/tidekeeper/json', timeout=(3, 5)) as response:
+                response.raise_for_status()
+                onlineVer = response.json()['info']['version']
+            if aigpy.system.cmpVersion(onlineVer, VERSION) > 0:
                 Printf.info(LANG.select.PRINT_LATEST_VERSION + ' ' + onlineVer)
+        except (requests.RequestException, KeyError, TypeError, ValueError):
+            logging.debug('Version check unavailable')
 
     @staticmethod
     def settings():
@@ -277,7 +279,7 @@ class Printf(object):
     def err(string):
         print_mutex.acquire()
         print(aigpy.cmd.red(LANG.select.PRINT_ERR + " ") + string)
-        # logging.error(string)
+        logging.info("Download error: %s", string)
         print_mutex.release()
 
     @staticmethod

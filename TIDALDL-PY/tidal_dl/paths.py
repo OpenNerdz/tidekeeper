@@ -22,6 +22,12 @@ def __fixPath__(name: str):
     return aigpy.path.replaceLimitChar(name, '-').strip()
 
 
+
+def __safeTemplatePath__(path):
+    if not sys.platform.startswith('win'):
+        return path
+    return '/'.join(__fixPath__(part) for part in path.split('/'))
+
 def __getYear__(releaseDate: str):
     if releaseDate is None or releaseDate == '':
         return ''
@@ -121,8 +127,8 @@ def getAlbumPath(album):
     retpath = retpath.replace(R"{ReleaseDate}", __tokenValue__(album.releaseDate))
     retpath = retpath.replace(R"{RecordType}", __tokenValue__(album.type))
     retpath = retpath.replace(R"{None}", "")
-    retpath = retpath.strip()
-    return f"{SETTINGS.downloadPath}/{retpath}"
+    retpath = __safeTemplatePath__(retpath.strip())
+    return f"{SETTINGS.downloadPath}/{__safeTemplatePath__(retpath)}"
 
 def getPlaylistPath(playlist):
     playlistName = __fixPath__(playlist.title)
@@ -133,7 +139,7 @@ def getPlaylistPath(playlist):
         retpath = SETTINGS.getDefaultPathFormat(Type.Playlist)
     retpath = retpath.replace(R"{PlaylistUUID}", str(playlist.uuid))
     retpath = retpath.replace(R"{PlaylistName}", playlistName)
-    return f"{SETTINGS.downloadPath}/{retpath}"
+    return f"{SETTINGS.downloadPath}/{__safeTemplatePath__(retpath)}"
 
 
 def getTrackPath(track, stream, album=None, playlist=None):
@@ -190,7 +196,7 @@ def getTrackPath(track, stream, album=None, playlist=None):
     retpath = retpath.replace(R"{DurationSeconds}", __tokenValue__(track.duration or 0))
     retpath = retpath.replace(R"{Duration}", __getDurationStr__(track.duration or 0))
     retpath = retpath.replace(R"{TrackID}", __tokenValue__(track.id))
-    retpath = retpath.strip()
+    retpath = __safeTemplatePath__(retpath.strip())
     if __isAtmosStream__(stream) and SETTINGS.audioQuality == AudioQuality.Atmos and not hasStreamIdentifier:
         retpath += " [Dolby Atmos]"
     return f"{base}/{retpath}{extension}"
@@ -234,7 +240,7 @@ def getVideoPath(video, album=None, playlist=None):
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{VideoYear}", year)
     retpath = retpath.replace(R"{VideoID}", str(video.id))
-    retpath = retpath.strip()
+    retpath = __safeTemplatePath__(retpath.strip())
     return f"{base}/{retpath}{extension}"
 
 def openPath(path):

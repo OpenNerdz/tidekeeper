@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time
-from threading import Lock
+from threading import RLock, Event
+
+from ..runtime import DownloadCancelled
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
@@ -35,113 +37,122 @@ class TaskWorker(QRunnable):
             self.signals.finished.emit()
 
 
-class ItemProgressReporter:
-    """Thread-safe download progress adapter for one queue row."""
+class EntryProgress:
+    """Byte counters owned by a single file, including its segment workers."""
+    def __init__(self, parent, key):
+        self.parent = parent
+        self.key = key
+        self.cancel_event = parent.cancel_event
 
-    def __init__(self, item, emit):
+    def setMaxNum(self, size):
+        self.parent._update(self.key, total=max(0, int(size or 0)))
+
+    def addCurNum(self, size):
+        self.parent._update(self.key, delta=int(size or 0))
+
+    def updateStream(self, stream):
+        self.parent.updateStream(stream)
+
+    def note_warning(self, message):
+        self.parent.note_warning(message)
+
+
+class ItemProgressReporter:
+    """Aggregate completed entries and independent active transfer counters."""
+    def __init__(self, item, emit, cancel_event=None):
         self.item = item
         self._emit = emit
-        self._lock = Lock()
+        self._lock = RLock()
+        self.cancel_event = cancel_event
         self.completed = 0
         self.count = 0
         self.current = 0
-        self.bytes = 0
-        self.bytes_total = 0
-        self._started = None
+        self._offset = 0
+        self._allocated = 0
+        self._entries = {}
+        self._finished = set()
+        self._started = time.monotonic()
         self._last_emit = 0.0
+        self._transferred = 0
+        self._qualities = set()
+        self.warnings = []
 
-    def snapshot(self) -> dict:
-        speed, eta = self._speed_eta()
-        return {
-            "completed": self.completed,
-            "count": self.count,
-            "current": self.current,
-            "bytes": self.bytes,
-            "bytes_total": self.bytes_total,
-            "speed": speed,
-            "eta": eta,
-        }
-
-    def _speed_eta(self):
-        if self._started is None:
-            return 0.0, None
-        elapsed = time.monotonic() - self._started
-        if elapsed <= 0.05:
-            return 0.0, None
-        if self.bytes_total > 0 and self.bytes > 0:
-            speed = self.bytes / elapsed
-            remain = max(self.bytes_total - self.bytes, 0)
-            eta = remain / speed if speed > 0 else None
-            return speed, eta
-        if self.count > 1 and self.completed > 0:
-            item_speed = self.completed / elapsed
-            remain = max(self.count - self.completed, 0)
-            eta = remain / item_speed if item_speed > 0 else None
-            return 0.0, eta
-        return 0.0, None
+    def snapshot(self):
+        with self._lock:
+            active = [value for key, value in self._entries.items() if key not in self._finished]
+            current = sum(value['bytes'] for value in active)
+            total = sum(value['total'] for value in active)
+            fraction = sum(min(value['bytes'] / value['total'], 1) for value in active if value['total'] > 0)
+            elapsed = max(time.monotonic() - self._started, 0.05)
+            return {'completed': self.completed, 'count': self.count, 'current': self.current,
+                    'bytes': current, 'bytes_total': total, 'file_fraction': fraction,
+                    'speed': self._transferred / elapsed, 'eta': None,
+                    'actual_quality': ', '.join(sorted(self._qualities)), 'active': True}
 
     def _push(self, force=False):
-        now = time.monotonic()
-        if not force and now - self._last_emit < 0.1:
-            return
-        self._last_emit = now
-        self._emit(self.item, self.snapshot())
+        with self._lock:
+            now = time.monotonic()
+            if not force and now - self._last_emit < 0.1:
+                return
+            self._last_emit = now
+            self._emit(self.item, self.snapshot())
 
     def begin_collection(self, total):
-        extra = max(int(total or 0), 0)
-        if extra <= 0:
-            return
         with self._lock:
-            # Nested collections (album audio then videos) add to the total
-            # instead of resetting the bar back to 0%.
-            if self.count == 0:
-                self.count = extra
-                self.completed = 0
-                self.current = 0
-                self.bytes = 0
-                self.bytes_total = 0
-                if self._started is None:
-                    self._started = time.monotonic()
-            else:
-                self.count += extra
-        self._push(force=True)
+            self._offset = self._allocated
+            self._allocated += max(0, int(total or 0))
+            self.count = max(self.count, self._allocated)
+        self._push(True)
 
-    def begin_entry(self, index, total, title=""):
+    def plan_collection(self, total):
         with self._lock:
-            if total:
-                self.count = int(total)
-            self.current = int(index or 0)
-            self.bytes = 0
-            self.bytes_total = 0
-            self._started = time.monotonic()
-        self._push(force=True)
+            self.count = max(self.count, self._allocated + total)
+        self._push(True)
+
+    def begin_entry(self, index, total, title=''):
+        with self._lock:
+            if not self.count:
+                self.count = int(total or 1)
+            self.current = self._offset + int(index or 1)
+            self._entries[self.current] = {'bytes': 0, 'total': 0}
+        self._push(True)
+
+    def for_entry(self, index):
+        return EntryProgress(self, self._offset + index)
 
     def finish_entry(self, index, total, ok=True):
         with self._lock:
-            if total:
-                self.count = int(total)
-            self.completed = min(self.completed + 1, self.count or self.completed + 1)
-            self.current = int(index or self.current)
-            self.bytes = 0
-            self.bytes_total = 0
-        self._push(force=True)
+            key = self._offset + index
+            self._finished.add(key)
+            self.completed = len(self._finished)
+        self._push(True)
+
+    def _update(self, key, total=None, delta=0):
+        with self._lock:
+            value = self._entries.setdefault(key, {'bytes': 0, 'total': 0})
+            if total is not None:
+                value['total'] = total
+            value['bytes'] += delta
+            self._transferred += max(0, delta)
+        self._push(total is not None)
 
     def setMaxNum(self, size):
-        with self._lock:
-            self.bytes_total = int(size or 0)
-            if self._started is None:
-                self._started = time.monotonic()
-        self._push(force=True)
+        self._update(self.current, total=max(0, int(size or 0)))
 
     def addCurNum(self, size):
-        with self._lock:
-            self.bytes += int(size or 0)
-            if self._started is None:
-                self._started = time.monotonic()
-        self._push()
+        self._update(self.current, delta=int(size or 0))
 
     def updateStream(self, stream):
-        return
+        label = getattr(stream, 'soundQuality', '') or getattr(stream, 'resolution', '')
+        codec = getattr(stream, 'codec', '')
+        with self._lock:
+            if label:
+                self._qualities.add(f'{label} ({codec})' if codec else label)
+        self._push(True)
+
+    def note_warning(self, message):
+        with self._lock:
+            self.warnings.append(message)
 
 
 class DownloadWorker(QRunnable):
@@ -151,10 +162,10 @@ class DownloadWorker(QRunnable):
         self.backend = backend
         self.items = items
         self.signals = WorkerSignals()
-        self._cancelled = False
+        self._cancelled = Event()
 
     def cancel(self):
-        self._cancelled = True
+        self._cancelled.set()
 
     @Slot()
     def run(self):
@@ -162,21 +173,26 @@ class DownloadWorker(QRunnable):
         cancelled = False
         try:
             for item in self.items:
-                if self._cancelled:
+                if self._cancelled.is_set():
                     cancelled = True
                     self.signals.item_status.emit(item, "Cancelled")
                     continue
                 self.signals.item_status.emit(item, "Downloading")
                 self.signals.log.emit(f"Starting {item.title}\n")
-                reporter = ItemProgressReporter(item, self.signals.item_progress.emit)
+                reporter = ItemProgressReporter(item, self.signals.item_progress.emit, self._cancelled)
                 try:
                     self.backend.download(item, self.signals.log.emit, progress=reporter)
+                except DownloadCancelled:
+                    cancelled = True
+                    self._cancelled.set()
+                    self.signals.item_status.emit(item, "Cancelled")
+                    continue
                 except Exception as exc:
                     failed.append(item.title)
                     self.signals.item_status.emit(item, "Failed")
                     self.signals.log.emit(f"Failed {item.title}: {exc}\n")
                     continue
-                self.signals.item_status.emit(item, "Done")
+                self.signals.item_status.emit(item, "Partial" if reporter.warnings else "Done")
                 self.signals.log.emit(f"Finished {item.title}\n")
             if cancelled:
                 self.signals.log.emit("Remaining downloads cancelled.\n")

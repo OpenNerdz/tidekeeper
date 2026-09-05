@@ -41,6 +41,7 @@ from .backend import (
     format_queue_progress,
     parse_direct_inputs,
     queue_progress_percent,
+    queue_item,
     with_video_only,
 )
 from .style import APP_STYLESHEET, TABLE_TEXT_COLOR
@@ -141,6 +142,8 @@ class MainWindow(QMainWindow):
         self.download_in_progress = False
         self.download_worker = None
         self._cancel_requested = False
+        self._close_pending = False
+        self._login_generation = 0
 
         self.setWindowTitle("Tidekeeper")
         self.setMinimumSize(1040, 680)
@@ -154,6 +157,8 @@ class MainWindow(QMainWindow):
         self.version_label.setText(f"v{self.backend.version()}")
         self.refresh_settings()
         self.refresh_auth_status()
+        self.queue = self.backend.load_queue()
+        self.refresh_queue_table()
         self.update_action_states()
         self.show_screen("search")
 
@@ -344,7 +349,7 @@ class MainWindow(QMainWindow):
         self.remove_queue_button.setToolTip("Remove selected queue rows.")
         self.clear_queue_button.setToolTip("Clear the queue and output log.")
         self.retry_failed_button.setToolTip("Re-queue items that failed and download them again.")
-        self.cancel_queue_button.setToolTip("Stop after the current item finishes.")
+        self.cancel_queue_button.setToolTip("Stop active transfers and keep partial downloads for retry.")
         self.start_queue_button.setToolTip("Download queued and failed items. Completed rows are skipped.")
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_items)
         self.clear_queue_button.clicked.connect(self.clear_queue)
@@ -385,7 +390,7 @@ class MainWindow(QMainWindow):
             self.audio_quality.addItem(item.name, item.name)
         self.video_quality = QComboBox()
         for item in VideoQuality:
-            self.video_quality.addItem(item.name, item.name)
+            self.video_quality.addItem(f"{item.value}p", item.name)
         self.priority_preset = QComboBox()
         self.priority_preset.setToolTip("Fallback order used when the requested stream is blocked or unavailable.")
         for label, order in PRIORITY_PRESETS:
@@ -396,6 +401,7 @@ class MainWindow(QMainWindow):
         self.language = QComboBox()
         for index, name in self.backend.language_choices():
             self.language.addItem(name, index)
+        self.language.setToolTip("Language of terminal and download messages. The desktop interface is English.")
         self.api_client = QComboBox()
         for item in self.backend.api_clients():
             status = "OK" if item["valid"] else "old"
@@ -442,6 +448,8 @@ class MainWindow(QMainWindow):
         self.playlist_format = QLineEdit()
         self.track_format = QLineEdit()
         self.video_format = QLineEdit()
+        for field in (self.album_format, self.playlist_format, self.track_format, self.video_format):
+            field.setToolTip("Use naming tokens such as {ArtistName}, {TrackTitle}, {AlbumTitle}, {TrackNumber}. See README for all tokens.")
 
         content = QWidget()
         content.setObjectName("ScrollContent")
@@ -467,7 +475,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(scroll, 1)
 
         action_layout = QHBoxLayout()
-        self.settings_status = _label("Settings loaded.", "Muted")
+        self.settings_status = _label("Save persists settings. Downloads apply current options for this session.", "Muted")
+        self.settings_status.setWordWrap(True)
         action_layout.addWidget(self.settings_status, 1)
         reset = _button("Reload")
         save = _button("Save Settings", primary=True)
@@ -486,7 +495,7 @@ class MainWindow(QMainWindow):
         grid.addWidget(_panel_title("Storage"), 0, 0, 1, 2)
         grid.addWidget(_label("Download path", "SectionTitle"), 1, 0)
         grid.addLayout(path_layout, 1, 1)
-        grid.addWidget(_label("Language", "SectionTitle"), 2, 0)
+        grid.addWidget(_label("Output language", "SectionTitle"), 2, 0)
         grid.addWidget(self.language, 2, 1)
         grid.addWidget(_label("TIDAL client", "SectionTitle"), 3, 0)
         grid.addWidget(self.api_client, 3, 1)
@@ -505,6 +514,11 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.priority_preset, 2, 1)
         grid.addWidget(_label("Video", "SectionTitle"), 3, 0)
         grid.addWidget(self.video_quality, 3, 1)
+        self.priority_preview = _label("", "Muted")
+        self.priority_preview.setWordWrap(True)
+        grid.addWidget(self.priority_preview, 4, 0, 1, 2)
+        self.audio_quality.currentIndexChanged.connect(self._update_priority_preview)
+        self.priority_preset.currentIndexChanged.connect(self._update_priority_preview)
         grid.setColumnStretch(1, 1)
         return _panel(grid)
 
@@ -898,11 +912,13 @@ class MainWindow(QMainWindow):
         return ""
 
     def _set_queue_row(self, row: int, item: SearchItem):
+        sorting = self.queue_table.isSortingEnabled()
+        self.queue_table.setSortingEnabled(False)
         values = [
             self._queue_kind_label(item),
             item.title,
             item.artists,
-            item.quality,
+            item.actual_quality or "Pending",
             self._queue_status_text(item),
             self._queue_progress_text(item),
         ]
@@ -919,6 +935,8 @@ class MainWindow(QMainWindow):
         if progress_cell is not None:
             percent = 100 if item.status == "Done" else int(item.progress_percent or 0)
             progress_cell.setData(PROGRESS_PERCENT_ROLE, percent)
+        self.queue_table.item(row, 3).setToolTip(f"Catalog: {item.quality}\nDownloaded: {item.actual_quality or 'not yet resolved'}")
+        self.queue_table.setSortingEnabled(sorting)
 
     def refresh_queue_table(self):
         self.queue_table.setSortingEnabled(False)
@@ -928,6 +946,13 @@ class MainWindow(QMainWindow):
         self.queue_table.setSortingEnabled(True)
         self.queue_status.setText(f"{len(self.queue)} item{'s' if len(self.queue) != 1 else ''} in queue.")
         self.update_queue_actions()
+        self._save_queue()
+
+    def _save_queue(self):
+        try:
+            self.backend.save_queue(self.queue)
+        except OSError as error:
+            self.queue_status.setText(f"Unable to save queue: {error}")
 
     def _refresh_queue_row(self, item: SearchItem):
         for row in range(self.queue_table.rowCount()):
@@ -991,7 +1016,14 @@ class MainWindow(QMainWindow):
             self.queue_status.setText("Nothing left to download.")
             return
         # Honor the Settings screen even if the user did not click Save first.
-        self.apply_settings_for_download()
+        if self.login_polling or self.login_poll_inflight:
+            self.queue_status.setText("Finish or cancel device login before downloading.")
+            return
+        try:
+            self.apply_settings_for_download()
+        except (ValueError, RuntimeError, OSError) as error:
+            self.queue_status.setText(str(error))
+            return
         self.download_in_progress = True
         self._cancel_requested = False
         self.update_action_states()
@@ -1013,6 +1045,9 @@ class MainWindow(QMainWindow):
             self._cancel_requested = False
             self.queue_status.setText("Downloads cancelled.")
         self.update_action_states()
+        self._save_queue()
+        if self._close_pending:
+            self.close()
 
     def cancel_downloads(self):
         if self.download_worker is None:
@@ -1020,7 +1055,7 @@ class MainWindow(QMainWindow):
         self._cancel_requested = True
         self.download_worker.cancel()
         self.cancel_queue_button.setEnabled(False)
-        self.queue_status.setText("Cancelling after the current item...")
+        self.queue_status.setText("Cancelling downloads; partial transfers will be kept for retry...")
 
     def _set_queue_item_status(self, item, status: str):
         item.status = status
@@ -1031,10 +1066,13 @@ class MainWindow(QMainWindow):
             item.progress_percent = 0
             item.progress_label = ""
         self._refresh_queue_row(item)
+        self._save_queue()
+        self.update_queue_actions()
 
     def _set_queue_item_progress(self, item, snapshot: dict):
         item.progress_label = format_queue_progress(snapshot)
         item.progress_percent = queue_progress_percent(snapshot)
+        item.actual_quality = snapshot.get("actual_quality", item.actual_quality)
         if item.status == "Downloading":
             self._refresh_queue_row(item)
 
@@ -1043,6 +1081,8 @@ class MainWindow(QMainWindow):
         self.update_direct_actions()
         self.update_result_actions()
         self.update_queue_actions()
+        self.pages["settings"].setEnabled(not self.download_in_progress)
+        self.pages["account"].setEnabled(not self.download_in_progress)
 
     def update_search_action(self):
         self.search_button.setEnabled(bool(self.search_text.text().strip()) and not self.search_in_progress)
@@ -1062,9 +1102,7 @@ class MainWindow(QMainWindow):
         self.download_now_button.setEnabled(has_selection and not self.download_in_progress)
 
     def video_mode_items(self, items: List[SearchItem], video_only: bool) -> List[SearchItem]:
-        if not video_only:
-            return items
-        return [with_video_only(item, True) for item in items]
+        return [queue_item(item, video_only) for item in items]
 
     def update_queue_actions(self):
         has_queue = bool(self.queue)
@@ -1091,7 +1129,7 @@ class MainWindow(QMainWindow):
     def refresh_settings(self):
         self.download_path.setText(SETTINGS.downloadPath)
         self.audio_quality.setCurrentText(SETTINGS.audioQuality.name)
-        self.video_quality.setCurrentText(SETTINGS.videoQuality.name)
+        self.video_quality.setCurrentIndex(self.video_quality.findData(SETTINGS.videoQuality.name))
         priority = SETTINGS.getAudioQualityPriority(SETTINGS.audioQualityPriority)
         self.set_priority_preset([item.name for item in priority])
         index = self.language.findData(SETTINGS.language)
@@ -1128,8 +1166,14 @@ class MainWindow(QMainWindow):
         if data == "__selected__":
             return self.selected_quality_then_lower()
         if isinstance(data, list):
-            return list(data)
+            selected = self.audio_quality.currentData()
+            return [selected] + [name for name in data if name != selected] if data else []
         return []
+
+    def _update_priority_preview(self):
+        order = self.selected_priority_order() or [self.audio_quality.currentData()]
+        self.priority_preview.setText("Try: " + " → ".join(name for name in order if name))
+        self.priority_preset.setToolTip(self.priority_preview.text())
 
     def selected_quality_then_lower(self) -> List[str]:
         selected = AudioQuality[self.audio_quality.currentData()]
@@ -1182,10 +1226,14 @@ class MainWindow(QMainWindow):
 
     def apply_settings_for_download(self):
         """Push current GUI quality/settings into the download backend."""
-        self.backend.save_settings(self.collect_settings_values())
+        self.backend.apply_download_settings(self.collect_settings_values())
 
     def save_settings(self):
-        result = self.backend.save_settings(self.collect_settings_values()) or {}
+        try:
+            result = self.backend.save_settings(self.collect_settings_values()) or {}
+        except (ValueError, RuntimeError, OSError) as error:
+            self.settings_status.setText(str(error))
+            return
         if result.get("reauth_required"):
             self.refresh_auth_status()
             self.settings_status.setText("Settings saved. Sign in again — the TIDAL client changed.")
@@ -1208,11 +1256,13 @@ class MainWindow(QMainWindow):
         self.start_worker(worker)
 
     def start_device_login(self):
+        self._login_generation += 1
+        generation = self._login_generation
         self.device_login_button.setEnabled(False)
         self.account_log.append("Requesting device login...")
         worker = TaskWorker(self.backend.start_device_login)
-        worker.signals.result.connect(self._device_login_started)
-        worker.signals.error.connect(self._device_login_error)
+        worker.signals.result.connect(lambda result: self._device_login_started(result) if generation == self._login_generation else None)
+        worker.signals.error.connect(lambda error: self._device_login_error(error) if generation == self._login_generation else None)
         self.start_worker(worker)
 
     def _device_login_started(self, challenge):
@@ -1225,6 +1275,7 @@ class MainWindow(QMainWindow):
         self.poll_timer.start(max(1, challenge.interval) * 1000)
 
     def _stop_device_login(self, message: str):
+        self._login_generation += 1
         self.poll_timer.stop()
         self.login_polling = False
         self.login_poll_inflight = False
@@ -1250,6 +1301,8 @@ class MainWindow(QMainWindow):
         self.start_worker(worker)
 
     def _device_login_polled(self, status):
+        if not self.login_polling:
+            return
         self.refresh_auth_status()
         if getattr(status, "fresh_login", False):
             self._stop_device_login("Login complete.")
@@ -1269,9 +1322,23 @@ class MainWindow(QMainWindow):
             webbrowser.open(self.login_url.text())
 
     def logout(self):
+        self._stop_device_login("")
+        self.login_url.clear()
+        self.access_token.clear()
+        self.refresh_token.clear()
         self.backend.logout()
         self.refresh_auth_status()
         self.account_log.append("Logged out.")
+
+    def closeEvent(self, event):
+        if self.download_in_progress:
+            self._close_pending = True
+            self.cancel_downloads()
+            event.ignore()
+            return
+        self._stop_device_login("")
+        self._save_queue()
+        event.accept()
 
     def login_with_token(self):
         access_token = self.access_token.text().strip()

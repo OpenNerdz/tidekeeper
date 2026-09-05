@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import contextlib
-import io
+import copy
+import json
 import os
 import time
-from dataclasses import dataclass, replace
+from pathlib import Path
+from uuid import uuid4
+from dataclasses import dataclass, replace, field
 from types import SimpleNamespace
 from typing import Callable, Iterable, List, Optional
 
@@ -17,7 +19,8 @@ from ..events import loginByConfig, logout, start, start_type
 from ..lang.language import LANG
 from ..paths import PATHS, openPath
 from ..printf import VERSION
-from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter
+from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter, _atomicWrite
+from ..runtime import job_context, configure_logging
 from ..tidal import TIDAL_API
 from ..updater import run_update
 
@@ -78,19 +81,14 @@ class SearchItem:
     status: str = "Queued"
     progress_percent: int = 0
     progress_label: str = ""
+    job_id: str = field(default_factory=lambda: uuid4().hex)
+    actual_quality: str = ""
 
 
-class _CallbackWriter(io.TextIOBase):
-    def __init__(self, callback: Callable[[str], None]):
-        self._callback = callback
-
-    def writable(self):
-        return True
-
-    def write(self, text):
-        if text:
-            self._callback(str(text))
-        return len(text)
+def queue_item(item, video_only=False):
+    return replace(item, source=copy.deepcopy(item.source), video_only=video_only,
+                   job_id=uuid4().hex, status='Queued', progress_percent=0,
+                   progress_label='', actual_quality='')
 
 
 def _duration_label(seconds) -> str:
@@ -284,18 +282,22 @@ def queue_progress_percent(snapshot: dict) -> int:
     completed = int(snapshot.get("completed") or 0)
     bytes_current = int(snapshot.get("bytes") or 0)
     bytes_total = int(snapshot.get("bytes_total") or 0)
-    file_frac = (bytes_current / bytes_total) if bytes_total > 0 else 0.0
+    file_frac = snapshot.get('file_fraction', (bytes_current / bytes_total) if bytes_total > 0 else 0.0)
     if count > 1:
         value = ((completed + file_frac) / count) * 100.0
     elif bytes_total > 0:
         value = file_frac * 100.0
     else:
         return 0
-    return int(max(0, min(100, value)))
+    return int(max(0, min(99 if snapshot.get('active') else 100, value)))
 
 
 class TidekeeperBackend:
+    def __init__(self):
+        self._download_active = False
+
     def initialize(self):
+        configure_logging(PATHS.getLogPath())
         SETTINGS.read(PATHS.getProfilePath())
         TOKEN.read(PATHS.getTokenPath())
         if not apiKey.isItemValid(SETTINGS.apiKeyIndex):
@@ -303,6 +305,44 @@ class TidekeeperBackend:
             SETTINGS.save()
         TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
         self._sync_api_login_key_from_token()
+
+    def load_queue(self):
+        path = Path(PATHS.getConfigDirectory()) / '.tidekeeper-queue.json'
+        try:
+            rows = json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(rows, list):
+                return []
+            items = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    kind = Type[row['kind']]
+                    status = row.get('status', 'Queued')
+                    if status == 'Downloading':
+                        status = 'Interrupted'
+                    if status not in ('Queued', 'Interrupted', 'Done', 'Failed', 'Cancelled', 'Partial'):
+                        status = 'Queued'
+                    item = SearchItem(kind, str(row['title']), str(row.get('artists', '')),
+                                      str(row.get('quality', '')), str(row['identifier']),
+                                      str(row.get('duration', '')),
+                                      str(row['source']) if kind == Type.Null else None,
+                                      video_only=bool(row.get('video_only')), status=status)
+                    item.actual_quality = str(row.get('actual_quality', ''))
+                    items.append(item)
+                except (KeyError, ValueError, TypeError):
+                    continue
+            return items
+        except (OSError, ValueError):
+            return []
+
+    def save_queue(self, items):
+        rows = [{'kind': item.kind.name, 'title': item.title, 'artists': item.artists,
+                 'quality': item.quality, 'identifier': item.identifier, 'duration': item.duration,
+                 'video_only': item.video_only, 'status': item.status,
+                 'actual_quality': item.actual_quality,
+                 'source': str(item.source) if item.kind == Type.Null else None} for item in items]
+        _atomicWrite(str(Path(PATHS.getConfigDirectory()) / '.tidekeeper-queue.json'), json.dumps(rows))
 
     def _sync_api_login_key_from_token(self):
         TIDAL_API.key.userId = TOKEN.userid
@@ -367,10 +407,13 @@ class TidekeeperBackend:
         )
 
     def poll_device_login(self) -> AuthStatus:
+        generation = TIDAL_API._sessionGeneration
         if not TIDAL_API.checkAuthStatus():
             return replace(self.auth_status(), fresh_login=False)
-
-        self._save_api_login_key_to_token(time.time() + int(TIDAL_API.key.expiresIn))
+        with TIDAL_API._authStateLock:
+            if generation != TIDAL_API._sessionGeneration:
+                return replace(self.auth_status(), fresh_login=False)
+            self._save_api_login_key_to_token(time.time() + int(TIDAL_API.key.expiresIn))
         return replace(self.auth_status(), fresh_login=True)
 
     def logout(self) -> AuthStatus:
@@ -461,28 +504,40 @@ class TidekeeperBackend:
         return SearchItem(Type.Null, label, "", "Direct", text, "", text)
 
     def download(self, item: SearchItem, log: LogCallback = None, progress=None):
-        self._ensure_catalog_session()
-        callback = log or (lambda text: None)
-        writer = _CallbackWriter(callback)
-        kwargs = {}
-        if progress is not None:
-            kwargs["progress"] = progress
-        with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-            if item.kind == Type.Null:
-                ok = start(str(item.source), item.video_only, **kwargs)
-            else:
-                ok = start_type(item.kind, item.source, item.video_only, **kwargs)
+        self._download_active = True
+        try:
+            with job_context(log, getattr(progress, 'cancel_event', None), getattr(progress, 'note_warning', None)):
+                self._ensure_catalog_session()
+                kwargs = {"progress": progress} if progress is not None else {}
+                if item.kind == Type.Null:
+                    ok = start(str(item.source), item.video_only, **kwargs)
+                else:
+                    if item.source is None:
+                        item.source = TIDAL_API.getTypeData(item.identifier, item.kind)
+                    ok = start_type(item.kind, item.source, item.video_only, **kwargs)
+        finally:
+            self._download_active = False
         if not ok:
             raise RuntimeError(f"Download failed for {item.title}")
 
-    def save_settings(self, values: dict):
+    def apply_download_settings(self, values: dict):
+        if values.get('apiKeyIndex') != SETTINGS.apiKeyIndex:
+            raise ValueError('Save the changed TIDAL client and sign in again before downloading.')
+        return self.save_settings(values, persist=False)
+
+    def save_settings(self, values: dict, persist=True):
+        if self._download_active:
+            raise RuntimeError('Wait for the active download to finish before changing settings.')
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
+        selected = AudioQuality[values['audioQuality']]
+        if audio_priority:
+            audio_priority = [selected] + [quality for quality in audio_priority if quality != selected]
         previous_api_key_index = SETTINGS.apiKeyIndex
         download_path = str(values.get("downloadPath") or "").strip()
         if not download_path:
             download_path = SETTINGS.downloadPath or "./download/"
         SETTINGS.downloadPath = download_path
-        SETTINGS.audioQuality = audio_priority[0] if audio_priority else AudioQuality[values["audioQuality"]]
+        SETTINGS.audioQuality = selected
         SETTINGS.audioQualityPriority = audio_priority
         SETTINGS.videoQuality = VideoQuality[values["videoQuality"]]
         SETTINGS.checkExist = values["checkExist"]
@@ -507,7 +562,8 @@ class TidekeeperBackend:
         SETTINGS.apiKeyIndex = values["apiKeyIndex"]
         TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
         LANG.setLang(SETTINGS.language)
-        SETTINGS.save()
+        if persist:
+            SETTINGS.save()
         syncPlaybackRateLimiter()
         if SETTINGS.apiKeyIndex != previous_api_key_index:
             # Tokens are bound to the client id. Applying a new key to an old
@@ -547,18 +603,20 @@ class TidekeeperBackend:
         if not access_token:
             raise ValueError("Access token is required.")
 
+        generation = TIDAL_API._sessionGeneration
         TIDAL_API.loginByAccessToken(access_token, TOKEN.userid)
-        TOKEN.accessToken = access_token
-        TOKEN.refreshToken = refresh_token.strip() or TOKEN.refreshToken
-        TOKEN.expiresAfter = 0
-        self._save_api_login_key_to_token(TOKEN.expiresAfter)
+        with TIDAL_API._authStateLock:
+            if generation != TIDAL_API._sessionGeneration:
+                raise RuntimeError('Login cancelled.')
+            TIDAL_API.key.refreshToken = refresh_token.strip() or TOKEN.refreshToken
+            self._save_api_login_key_to_token(0)
         return self.auth_status()
 
     def run_doctor(self) -> str:
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+        output = []
+        with job_context(output.append):
             runDoctor()
-        return output.getvalue()
+        return ''.join(output)
 
     def update_app(self, include_gui: bool = True) -> str:
         result = run_update(include_gui)
@@ -578,6 +636,12 @@ class TidekeeperBackend:
 
 
 class DemoBackend(TidekeeperBackend):
+    def load_queue(self):
+        return []
+
+    def save_queue(self, items):
+        pass
+
     def initialize(self):
         SETTINGS.downloadPath = "/Music/Tidekeeper"
         from ..settings import getDefaultAudioQualityPriority
@@ -689,7 +753,7 @@ class DemoBackend(TidekeeperBackend):
             log("Resolved stream metadata\n")
             log("Demo download completed\n")
 
-    def save_settings(self, values: dict):
+    def save_settings(self, values: dict, persist=True):
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
         for key, value in values.items():
             if hasattr(SETTINGS, key):

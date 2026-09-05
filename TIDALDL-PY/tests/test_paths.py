@@ -1,8 +1,10 @@
+import os
 import unittest
 from unittest import mock
 
-from tidal_dl.model import StreamUrl
-from tidal_dl.paths import __getExtension__, PATHS, openPath
+from tidal_dl.model import Album, Artist, StreamUrl
+from tidal_dl.paths import __getExtension__, PATHS, getAlbumPath, openPath
+from tidal_dl.settings import SETTINGS
 
 
 class PathTests(unittest.TestCase):
@@ -73,6 +75,31 @@ class PathTests(unittest.TestCase):
                     openPath("/tmp/tidekeeper-test-folder")
 
         popen.assert_called_once_with(["open", "/tmp/tidekeeper-test-folder"])
+
+    def test_duration_token_is_windows_safe(self):
+        album = Album()
+        album.id = 1
+        album.title = "Album"
+        album.duration = 125
+        album.releaseDate = "2020-01-01"
+        album.numberOfTracks = 1
+        album.numberOfVideos = 0
+        album.numberOfVolumes = 1
+        album.audioQuality = "LOSSLESS"
+        album.type = "ALBUM"
+        album.artist = Artist()
+        album.artist.id = 2
+        album.artist.name = "Artist"
+        album.artists = [album.artist]
+        previous = SETTINGS.albumFolderFormat
+        SETTINGS.albumFolderFormat = "{Duration}"
+        try:
+            with mock.patch("tidal_dl.paths.sys.platform", "win32"):
+                path = getAlbumPath(album)
+        finally:
+            SETTINGS.albumFolderFormat = previous
+        self.assertNotIn(":", os.path.basename(path))
+        self.assertIn("2-05", path)
 
     def test_open_path_uses_platform_opener_on_windows(self):
         with mock.patch("tidal_dl.paths.sys.platform", "win32"):

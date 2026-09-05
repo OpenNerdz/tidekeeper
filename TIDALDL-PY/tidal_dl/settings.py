@@ -12,6 +12,7 @@ import json
 import aigpy
 import base64
 import logging
+import math
 import os
 import tempfile
 
@@ -139,6 +140,8 @@ class Settings(aigpy.model.ModelBase):
             value = [item.strip() for item in value.split(',')]
         elif isinstance(value, AudioQuality):
             value = [value]
+        elif not isinstance(value, (list, tuple)):
+            return []
 
         priority = []
         for item in value:
@@ -156,10 +159,12 @@ class Settings(aigpy.model.ModelBase):
         return [self.audioQuality]
 
     def getVideoQuality(self, value):
+        if isinstance(value, VideoQuality):
+            return value
         for item in VideoQuality:
-            if item.name == value:
+            if str(value).upper() in (item.name, str(item.value), str(item.value) + 'P'):
                 return item
-        return VideoQuality.P360
+        return VideoQuality.P720
 
     def read(self, path):
         self._path_ = path
@@ -170,8 +175,33 @@ class Settings(aigpy.model.ModelBase):
                 data = json.loads(txt)
                 if not isinstance(data, dict):
                     raise ValueError("settings root must be a JSON object")
-                if aigpy.model.dictToModel(data, self) is None:
-                    return
+                defaults = Settings()
+                fields = aigpy.model.modelToDict(defaults)
+                data = {key.lower(): value for key, value in data.items()}
+                for name, default in fields.items():
+                    value = data.get(name.lower(), default)
+                    try:
+                        if isinstance(default, bool):
+                            if isinstance(value, str) and value.lower() in ('true', 'false'):
+                                value = value.lower() == 'true'
+                            if not isinstance(value, bool):
+                                raise ValueError('expected a boolean')
+                        elif name == 'requestIntervalSeconds':
+                            value = float(value)
+                            if not math.isfinite(value):
+                                raise ValueError('expected finite seconds')
+                            value = min(300.0, max(0.0, value))
+                        elif name in ('apiKeyIndex', 'language'):
+                            value = int(value)
+                            if value < 0:
+                                raise ValueError('expected a nonnegative index')
+                        elif isinstance(default, str):
+                            if not isinstance(value, str) or not value.strip():
+                                raise ValueError('expected nonempty text')
+                    except (TypeError, ValueError, OverflowError):
+                        logging.warning('Ignoring invalid setting %s; using its default', name)
+                        value = default
+                    setattr(self, name, value)
             except (json.JSONDecodeError, TypeError, ValueError) as error:
                 logging.warning("Ignoring invalid settings file %s: %s", self._path_, error)
                 hasSavedSettings = False
@@ -243,7 +273,14 @@ class TokenSettings(aigpy.model.ModelBase):
                 data = json.loads(self.__decode__(txt))
                 if not isinstance(data, dict):
                     raise ValueError("token root must be a JSON object")
-                aigpy.model.dictToModel(data, self)
+                for name in ('userid', 'countryCode', 'accessToken', 'refreshToken'):
+                    value = data.get(name)
+                    setattr(self, name, value if isinstance(value, (str, int)) else None)
+                try:
+                    expires = float(data.get('expiresAfter') or 0)
+                    self.expiresAfter = expires if math.isfinite(expires) else 0
+                except (TypeError, ValueError, OverflowError):
+                    self.expiresAfter = 0
             except (json.JSONDecodeError, TypeError, ValueError) as error:
                 logging.warning("Ignoring invalid token file %s: %s", self._path_, error)
 

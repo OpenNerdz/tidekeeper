@@ -9,6 +9,7 @@
 @Desc    :
 """
 
+from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
 
 from .download import *
@@ -68,6 +69,9 @@ def start_album(obj: Album, videoOnly=False, progress=None):
     obj = __resolveAlbumForDownload__(obj)
     Printf.album(obj)
     tracks, videos = TIDAL_API.getItems(obj.id, Type.Album)
+    if hasattr(progress, 'plan_collection'):
+        progress.plan_collection((len(tracks) if not videoOnly else 0) +
+                                 (len(videos) if videoOnly or SETTINGS.downloadVideos else 0))
     success = True
     if not videoOnly and SETTINGS.saveAlbumInfo:
         downloadAlbumInfo(obj, tracks)
@@ -112,6 +116,7 @@ def start_artist(obj: Artist, videoOnly=False, progress=None):
     Printf.artist(obj, len(albums))
     success = True
     for item in albums:
+        check_cancelled()
         success = start_album(item, progress=progress) and success
     return success
 
@@ -119,6 +124,9 @@ def start_artist(obj: Artist, videoOnly=False, progress=None):
 def start_playlist(obj: Playlist, videoOnly=False, progress=None):
     Printf.playlist(obj)
     tracks, videos = TIDAL_API.getItems(obj.uuid, Type.Playlist)
+    if hasattr(progress, 'plan_collection'):
+        progress.plan_collection((len(tracks) if not videoOnly else 0) +
+                                 (len(videos) if videoOnly or SETTINGS.downloadVideos else 0))
     success = True
     if not videoOnly:
         success = downloadTracks(tracks, None, obj, **_progress_kwargs(progress)) and success
@@ -146,6 +154,7 @@ def start_file(string, videoOnly=False, progress=None):
     success = True
     sawItem = False
     for item in array:
+        check_cancelled()
         if aigpy.string.isNull(item):
             continue
         if item[0] == '#':
@@ -190,6 +199,7 @@ def start(string, videoOnly=False, progress=None):
     success = True
     sawItem = False
     for item in strings:
+        check_cancelled()
         if aigpy.string.isNull(item):
             continue
         if os.path.exists(item):
@@ -198,6 +208,8 @@ def start(string, videoOnly=False, progress=None):
         sawItem = True
         try:
             etype, obj = TIDAL_API.getByString(item)
+        except DownloadCancelled:
+            raise
         except Exception as e:
             Printf.err(str(e) + " [" + item + "]")
             return False
@@ -205,6 +217,8 @@ def start(string, videoOnly=False, progress=None):
         try:
             if not start_type(etype, obj, videoOnly, progress=progress):
                 success = False
+        except DownloadCancelled:
+            raise
         except Exception as e:
             Printf.err(str(e))
             success = False
@@ -365,7 +379,7 @@ def loginByWeb():
         while elapsed < TIDAL_API.key.authCheckTimeout:
             elapsed = time.time() - start
             if not TIDAL_API.checkAuthStatus():
-                time.sleep(TIDAL_API.key.authCheckInterval + 1)
+                cancellable_sleep(TIDAL_API.key.authCheckInterval + 1)
                 continue
 
             Printf.success(LANG.select.MSG_VALID_ACCESSTOKEN.format(
@@ -380,6 +394,8 @@ def loginByWeb():
             return True
 
         raise Exception(LANG.select.AUTH_TIMEOUT)
+    except DownloadCancelled:
+        raise
     except Exception as e:
         Printf.err(f"Login failed.{str(e)}")
         return False
@@ -414,25 +430,22 @@ def loginByConfig():
         else:
             logout()
             return False
+    except DownloadCancelled:
+        raise
     except Exception as e:
         logging.warning("Unable to refresh access token: %s", e)
         return False
 
 
 def logout():
-    TOKEN.userid = None
-    TOKEN.countryCode = None
-    TOKEN.accessToken = None
-    TOKEN.refreshToken = None
-    TOKEN.expiresAfter = 0
-    TOKEN.save()
-
-    TIDAL_API.key.userId = None
-    TIDAL_API.key.countryCode = None
-    TIDAL_API.key.accessToken = None
-    TIDAL_API.key.refreshToken = None
-    TIDAL_API.key.expiresIn = None
-    TIDAL_API._atmosUnavailableTrackIds.clear()
+    with TIDAL_API._authStateLock:
+        TIDAL_API.clearSession()
+        TOKEN.userid = None
+        TOKEN.countryCode = None
+        TOKEN.accessToken = None
+        TOKEN.refreshToken = None
+        TOKEN.expiresAfter = 0
+        TOKEN.save()
     Printf.success("Logged out.")
     return True
 
@@ -444,6 +457,8 @@ def loginByAccessToken():
         if token == '0':
             return
         TIDAL_API.loginByAccessToken(token, TOKEN.userid)
+    except DownloadCancelled:
+        raise
     except Exception as e:
         Printf.err(str(e))
         return
