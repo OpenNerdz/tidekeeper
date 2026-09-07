@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2026.9.7.0 - 2026-09-07
+
+### Reliability
+
+- Retrying a partial download repairs failed metadata instead of skipping the file and incorrectly reporting success. Completed transfer data is retained for the retry.
+- Parallel media-size probes inherit cancellation state and cancel pending probes, so cancellation no longer leaves the full probe queue running.
+
 ## 2026.9.5.0 - 2026-09-05
 
 ### Reliability

@@ -144,6 +144,76 @@ class ReliabilityTests(unittest.TestCase):
         Path(path).write_bytes(b'other')
         self.assertFalse(is_completed(path, identity))
 
+    def test_metadata_failure_is_repaired_on_retry_before_skip(self):
+        path = str(self.root / 'track.flac')
+        track = SimpleNamespace(id=1, title='Track', allowStreaming=True, streamReady=True)
+        stream = SimpleNamespace(trackid=1, soundQuality='LOSSLESS', codec='flac',
+                                 container='flac', encryptionKey=None,
+                                 url='https://cdn.invalid/file', urls=['https://cdn.invalid/file'])
+        SETTINGS.checkExist = True
+        SETTINGS.showTrackInfo = SETTINGS.showProgress = SETTINGS.multiThread = False
+        warnings = []
+        progress = SimpleNamespace(updateStream=lambda stream: None, note_warning=warnings.append)
+        # An older receipt must not make the failed replacement look complete.
+        Path(path).write_bytes(b'media')
+        record_completion(path, audio_identity(stream))
+        SETTINGS.checkExist = False
+        with mock.patch.object(download, '__resolveTrackForAtmosDownload__', return_value=(track, None)), \
+             mock.patch.object(download, '__getTrackStream__', return_value=stream), \
+             mock.patch.object(download, 'getTrackPath', return_value=path), \
+             mock.patch.object(download, '__remoteSize__', return_value=5), \
+             mock.patch.object(download, '__httpRequest__', return_value=Response(b'media')) as request, \
+             mock.patch.object(TIDAL_API, 'getTrackContributors', return_value=None), \
+             mock.patch.object(download, '__saveLyricsForTrack__', return_value=''), \
+             mock.patch.object(download, '__setMetaData__', side_effect=OSError('tagging failed')) as tag:
+            self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
+            self.assertEqual(len(warnings), 1)
+            self.assertFalse(is_completed(path, audio_identity(stream)))
+            self.assertTrue(Path(path + '.part').is_file())
+
+            SETTINGS.checkExist = True
+            warnings.clear()
+            tag.side_effect = None
+            self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
+            self.assertEqual(tag.call_count, 2)
+            self.assertEqual(request.call_count, 1, 'Retry should reuse the completed transfer')
+            self.assertFalse(warnings)
+            self.assertTrue(is_completed(path, audio_identity(stream)))
+            self.assertFalse(Path(path + '.part').exists())
+            self.assertFalse(Path(path + '.part.source.json').exists())
+
+            self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
+            self.assertEqual(tag.call_count, 2, 'Fully repaired files should be skipped')
+
+    def test_legacy_completion_receipt_remains_valid(self):
+        path = str(self.root / 'track.flac')
+        Path(path).write_bytes(b'media')
+        identity = {'type': 'track', 'id': '1'}
+        record_completion(path, identity)
+        receipt_path = Path(path + '.tidekeeper.json')
+        receipt = json.loads(receipt_path.read_text())
+        del receipt['metadata_complete']
+        receipt_path.write_text(json.dumps(receipt))
+        self.assertTrue(is_completed(path, identity))
+
+    def test_parallel_size_probes_observe_inflight_cancellation(self):
+        cancelled = threading.Event()
+        started = threading.Barrier(2)
+
+        def response(*args, **kwargs):
+            started.wait(timeout=3)
+            cancelled.set()
+            return Response(status=503)
+
+        # Both probes reach HTTP before cancellation, then must interrupt their
+        # retry wait rather than lose the job context in the nested executor.
+        with job_context(cancel=cancelled), \
+             mock.patch.object(download, '__httpSession__') as session:
+            session.return_value.request.side_effect = response
+            with self.assertRaises(DownloadCancelled):
+                download.__remoteSize__(['https://cdn.invalid/1', 'https://cdn.invalid/2'])
+            self.assertEqual(session.return_value.request.call_count, 2)
+
     def test_video_skip_requires_verified_completion(self):
         path = str(self.root / 'video.mp4')
         video = SimpleNamespace(id=2, title='Video')

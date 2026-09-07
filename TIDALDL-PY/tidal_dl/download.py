@@ -258,10 +258,17 @@ def __remoteSize__(urls):
     # startup time for DASH tracks with many segments.
     total = 0
     with ThreadPoolExecutor(max_workers=min(8, len(urls))) as probe_pool:
-        for size in probe_pool.map(__contentLength__, urls):
-            if size <= 0:
-                return -1
-            total += size
+        futures = [probe_pool.submit(copy_context().run, __contentLength__, url) for url in urls]
+        try:
+            for future in as_completed(futures):
+                check_cancelled()
+                size = future.result()
+                if size <= 0:
+                    return -1
+                total += size
+        finally:
+            for future in futures:
+                future.cancel()
     return total
 
 
@@ -1282,20 +1289,23 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         lyrics = __saveLyricsForTrack__(track, path)
 
+        metadata_complete = True
         try:
             __setMetaData__(track, album, processingPath, contributors, lyrics)
         except DownloadCancelled:
             raise
         except Exception as e:
+            metadata_complete = False
             logging.warning("Unable to write metadata for %s: %s", path, e)
             Printf.info(f"Downloaded '{title}', but metadata tagging was skipped: {str(e)}")
             if hasattr(userProgress, 'note_warning'):
                 userProgress.note_warning(f'Metadata could not be saved for {title}')
         check_cancelled()
         os.replace(processingPath, path)
-        record_completion(path, audio_identity(stream))
-        __removeFile__(partPath)
-        __removeFile__(partPath + '.source.json')
+        record_completion(path, audio_identity(stream), metadata_complete=metadata_complete)
+        if metadata_complete:
+            __removeFile__(partPath)
+            __removeFile__(partPath + '.source.json')
         Printf.success(title)
 
         return True, ''

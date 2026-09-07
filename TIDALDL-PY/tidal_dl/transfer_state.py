@@ -60,12 +60,13 @@ def video_identity(video, quality):
     return {'type': 'video', 'id': str(video.id), 'quality': quality.name}
 
 
-def record_completion(path, identity):
+def record_completion(path, identity, metadata_complete=True):
     stat = os.stat(path)
     if stat.st_size <= 0:
         raise OSError('Cannot finalize an empty media file')
     _atomicWrite(path + '.tidekeeper.json', json.dumps({
         'identity': identity, 'size': stat.st_size, 'sha256': file_digest(path),
+        'metadata_complete': metadata_complete,
     }))
 
 
@@ -73,6 +74,7 @@ def is_completed(path, identity):
     receipt = _read(path + '.tidekeeper.json')
     try:
         return (receipt.get('identity') == identity
+                and receipt.get('metadata_complete', True) is True
                 and os.path.getsize(path) > 0
                 and receipt.get('size') == os.path.getsize(path)
                 and receipt.get('sha256') == file_digest(path))
