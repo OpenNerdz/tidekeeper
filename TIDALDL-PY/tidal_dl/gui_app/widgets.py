@@ -77,6 +77,7 @@ def button(text: str, kind: str = "secondary", *, tooltip: str = "", checkable: 
 
 def label(text: str, name: Optional[str] = None, *, wrap: bool = False) -> QLabel:
     widget = QLabel(text)
+    widget.setTextFormat(Qt.PlainText)
     if name:
         widget.setObjectName(name)
     if wrap:

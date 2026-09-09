@@ -21,7 +21,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - os: macos-latest
+            asset-name: macOS
+          - os: ubuntu-latest
+            asset-name: Linux
+          - os: ubuntu-24.04-arm
+            asset-name: linux-arm64
+          - os: windows-latest
+            asset-name: Windows
 
     steps:
       - name: Checkout repo
@@ -46,6 +54,12 @@ jobs:
           python -m pip install wheel pyinstaller
           python -m pip install -e ".[gui]"
         working-directory: TIDALDL-PY
+
+      - name: Install Linux GUI runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
 
       - name: Clean directory
         shell: bash
@@ -72,6 +86,35 @@ jobs:
           pyinstaller -F $GUI_FLAGS tidal_dl/gui_app/__main__.py -n tidekeeper-gui
         working-directory: TIDALDL-PY
 
+      - name: Smoke test Linux GUI executable
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          TIDEKEEPER_GUI_DEMO: '1'
+        working-directory: TIDALDL-PY
+        run: |
+          python - <<'PY'
+          import subprocess
+
+          with subprocess.Popen(['./dist/tidekeeper-gui'], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT) as process:
+              try:
+                  output, _ = process.communicate(timeout=10)
+              except subprocess.TimeoutExpired:
+                  process.terminate()
+                  try:
+                      output, _ = process.communicate(timeout=5)
+                  except subprocess.TimeoutExpired:
+                      process.kill()
+                      output, _ = process.communicate()
+                  text = output.decode(errors='replace')
+                  print(text)
+                  assert 'Traceback' not in text, 'GUI emitted a traceback during startup'
+                  print('GUI stayed running in offscreen demo mode for 10 seconds')
+              else:
+                  raise SystemExit(f'GUI exited during startup ({process.returncode}): {output.decode(errors="replace")}')
+          PY
+
       - name: Prepare release assets
         shell: bash
         run: |
@@ -80,14 +123,14 @@ jobs:
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             EXT=".exe"
           fi
-          cp "dist/tidekeeper${EXT}" "release-assets/tidekeeper-${{ runner.os }}${EXT}"
-          cp "dist/tidekeeper-gui${EXT}" "release-assets/tidekeeper-gui-${{ runner.os }}${EXT}"
+          cp "dist/tidekeeper${EXT}" "release-assets/tidekeeper-${{ matrix.asset-name }}${EXT}"
+          cp "dist/tidekeeper-gui${EXT}" "release-assets/tidekeeper-gui-${{ matrix.asset-name }}${EXT}"
         working-directory: TIDALDL-PY
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tidekeeper-${{ runner.os }}
+          name: tidekeeper-${{ matrix.asset-name }}
           path: TIDALDL-PY/release-assets/*
 
   release:

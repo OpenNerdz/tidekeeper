@@ -14,11 +14,23 @@ import base64
 import logging
 import math
 import os
+from pathlib import Path
 import tempfile
 
 from .enums import AudioQuality, Type, VideoQuality
 from .environment import getDefaultDownloadPath
 from .lang.language import LANG
+
+
+def _readText(path):
+    """Read the encoding we write, accepting BOMs from external editors."""
+    try:
+        return Path(path).read_text(encoding='utf-8-sig')
+    except FileNotFoundError:
+        return ''
+    except UnicodeError:
+        logging.warning('Ignoring invalid UTF-8 profile %s', path)
+        return ''
 
 
 def _atomicWrite(path, content, binary=False, mode=0o600):
@@ -171,7 +183,7 @@ class Settings(aigpy.model.ModelBase):
         self.__dict__.clear()
         self.__init__()
         self._path_ = path
-        txt = aigpy.file.getContent(self._path_)
+        txt = _readText(self._path_)
         hasSavedSettings = len(txt) > 0
         if hasSavedSettings:
             try:
@@ -274,7 +286,7 @@ class TokenSettings(aigpy.model.ModelBase):
     def read(self, path):
         self.__dict__.clear()
         self._path_ = path
-        txt = aigpy.file.getContent(self._path_)
+        txt = _readText(self._path_)
         if len(txt) > 0:
             try:
                 data = json.loads(self.__decode__(txt))

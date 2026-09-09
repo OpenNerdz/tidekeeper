@@ -25,7 +25,7 @@ from collections import Counter
 from html import escape
 from typing import List, Tuple
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPalette, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 
 from ..enums import AudioQuality, Type, VideoQuality
 from ..settings import SETTINGS
+from ..runtime import redact
 from .backend import (
     SearchItem,
     TidekeeperBackend,
@@ -57,6 +58,7 @@ from .backend import (
     parse_direct_inputs,
     queue_progress_percent,
     queue_item,
+    queue_identity,
     with_video_only,
 )
 from .style import APP_STYLESHEET, FONT_MONO, TOKENS
@@ -149,11 +151,16 @@ class MainWindow(QMainWindow):
         self.login_poll_inflight = False
         self.login_deadline = 0
         self.search_in_progress = False
+        self.search_worker = None
+        self._search_cancel_requested = False
         self.download_in_progress = False
         self.download_worker = None
         self._cancel_requested = False
         self._close_pending = False
         self._login_generation = 0
+        self._removed_queue_items = []
+        self._saved_settings_values = None
+        self._loading_settings = False
 
         self._mono_font = QFont()
         self._mono_font.setFamilies([name.strip().strip('"') for name in FONT_MONO.split(",")])
@@ -164,9 +171,12 @@ class MainWindow(QMainWindow):
         self.resize(1180, 760)
         self.setStyleSheet(APP_STYLESHEET)
         self._build()
+        self.results_table.viewport().installEventFilter(self)
+        self.queue_table.viewport().installEventFilter(self)
         self._bind_shortcuts()
         self.version_label.setText(f"Version {self.backend.version()}")
         self.refresh_settings()
+        self._bind_settings_changes()
         self.refresh_auth_status()
         self.queue = self.backend.load_queue()
         self.refresh_queue_table()
@@ -317,6 +327,7 @@ class MainWindow(QMainWindow):
         self.back_results_button = button("← Back", "ghost", tooltip="Return to the previous result list.")
         self.back_results_button.clicked.connect(self.show_previous_results)
         self.search_status = label("", "Meta")
+        self.search_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.artist_tracks_button = button("Tracks", "ghost", tooltip="Browse every track by the selected artist.")
         self.artist_videos_button = button("Videos", "ghost", tooltip="Browse videos by the selected artist.")
         self.artist_tracks_button.clicked.connect(self.view_selected_artist_tracks)
@@ -330,7 +341,7 @@ class MainWindow(QMainWindow):
 
         self.results_table = QTableWidget(0, 6)
         configure_table(self.results_table, ["Type", "Title", "Artists", "Quality", "Duration", "ID"])
-        fix_columns(self.results_table, {0: 80, 3: 160, 4: 72, 5: 104})
+        fix_columns(self.results_table, {0: 80, 2: 130, 3: 160, 4: 72, 5: 104})
         self.results_table.itemSelectionChanged.connect(self.update_result_actions)
         self.results_table.itemDoubleClicked.connect(self.open_result_item)
         self.results_empty = EmptyOverlay(self.results_table, RESULTS_EMPTY)
@@ -359,14 +370,18 @@ class MainWindow(QMainWindow):
         self.queue_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._queue_message = ""
         self.remove_queue_button = button("Remove", "ghost", tooltip="Remove selected rows  (Delete)")
-        self.clear_queue_button = button("Clear", "ghost", tooltip="Clear the queue and log.")
-        self.retry_failed_button = button("Retry failed", tooltip="Re-queue failed items and download them again.")
+        self.clear_queue_button = button("Clear all", "ghost", tooltip="Remove all queue rows. Undo is available until the next removal.")
+        self.clear_done_button = button("Clear done", "ghost", tooltip="Remove completed rows while keeping unfinished work.")
+        self.undo_queue_button = button("Undo", "ghost", tooltip="Undo the last queue removal  (Ctrl+Z in the queue)")
+        self.retry_failed_button = button("Retry incomplete", tooltip="Retry failed, partial, interrupted, or cancelled items.")
         self.log_toggle = button("Log", "ghost", checkable=True, tooltip="Show download output.")
         self.cancel_queue_button = button("Cancel", "danger", tooltip="Cancel downloads and keep partial transfers for retry.")
-        self.start_queue_button = button("Start", "primary", tooltip="Download queued and failed items.")
+        self.start_queue_button = button("Start", "primary", tooltip="Download all unfinished queue items.")
         self.start_queue_button.setMinimumWidth(80)
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_items)
         self.clear_queue_button.clicked.connect(self.clear_queue)
+        self.clear_done_button.clicked.connect(self.clear_completed_queue_items)
+        self.undo_queue_button.clicked.connect(self.undo_queue_removal)
         self.retry_failed_button.clicked.connect(self.retry_failed_downloads)
         self.log_toggle.toggled.connect(self._set_log_visible)
         self.cancel_queue_button.clicked.connect(self.cancel_downloads)
@@ -374,19 +389,12 @@ class MainWindow(QMainWindow):
         header = panel.header
         header.addWidget(label("Queue", "PanelTitle"))
         header.addWidget(self.queue_status, 1)
-        for widget in (
-            self.remove_queue_button,
-            self.clear_queue_button,
-            self.retry_failed_button,
-            self.log_toggle,
-            self.cancel_queue_button,
-            self.start_queue_button,
-        ):
+        for widget in (self.log_toggle, self.cancel_queue_button, self.start_queue_button):
             header.addWidget(widget)
 
         self.queue_table = QTableWidget(0, 6)
         configure_table(self.queue_table, ["Type", "Title", "Artists", "Quality", "Status", "Progress"])
-        fix_columns(self.queue_table, {0: 76, 3: 120, 4: 160, 5: 104})
+        fix_columns(self.queue_table, {0: 76, 2: 130, 3: 120, 4: 160, 5: 104})
         self.queue_table.setItemDelegateForColumn(4, StatusDelegate(self.queue_table))
         self.queue_table.setItemDelegateForColumn(5, QueueProgressDelegate(self.queue_table))
         self.queue_table.itemSelectionChanged.connect(self.update_queue_actions)
@@ -403,7 +411,24 @@ class MainWindow(QMainWindow):
         self.queue_splitter.addWidget(self.download_log)
         self.queue_splitter.setStretchFactor(0, 3)
         self.queue_splitter.setStretchFactor(1, 1)
-        panel.set_body(self.queue_splitter)
+        self.queue_detail = label("", "Hint", wrap=True)
+        self.queue_detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.queue_detail.setMaximumHeight(44)
+        self.queue_detail.setContentsMargins(10, 5, 10, 5)
+        self.queue_detail.hide()
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body_layout.addWidget(self.queue_splitter, 1)
+        body_layout.addWidget(self.queue_detail)
+        panel.set_body(body)
+        footer = panel.footer
+        for widget in (self.remove_queue_button, self.clear_done_button, self.clear_queue_button,
+                       self.undo_queue_button):
+            footer.addWidget(widget)
+        footer.addStretch(1)
+        footer.addWidget(self.retry_failed_button)
         return panel
 
     def _set_log_visible(self, visible: bool):
@@ -599,11 +624,15 @@ class MainWindow(QMainWindow):
         footer.setObjectName("PanelFooter")
         footer.setFixedHeight(44)
         self.settings_status = label("", "Meta")
-        reload_button = button("Reload", "ghost", tooltip="Discard unsaved changes and reload from disk.")
-        save_button = button("Save", "primary", tooltip="Write these settings to disk.")
-        reload_button.clicked.connect(self.reload_settings)
-        save_button.clicked.connect(self.save_settings)
-        footer.setLayout(row(self.settings_status, None, reload_button, save_button, margins=(12, 0, 12, 0)))
+        self.settings_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.reload_settings_button = button("Reload", "ghost", tooltip="Discard unsaved changes and reload from disk.")
+        self.save_settings_button = button("Save", "primary", tooltip="Write these settings to disk.")
+        self.reload_settings_button.clicked.connect(self.reload_settings)
+        self.save_settings_button.clicked.connect(self.save_settings)
+        footer_layout = row(self.settings_status, self.reload_settings_button,
+                            self.save_settings_button, margins=(12, 0, 12, 0))
+        footer_layout.setStretch(0, 1)
+        footer.setLayout(footer_layout)
         page_layout.addWidget(footer)
         return page
 
@@ -700,6 +729,8 @@ class MainWindow(QMainWindow):
             shortcut.setContext(Qt.WidgetShortcut)
         remove = QShortcut(QKeySequence(Qt.Key_Delete), self.queue_table, activated=self.remove_selected_queue_items)
         remove.setContext(Qt.WidgetShortcut)
+        undo = QShortcut(QKeySequence.Undo, self.queue_table, activated=self.undo_queue_removal)
+        undo.setContext(Qt.WidgetShortcut)
 
     def _focus_search(self):
         self._set_find_mode(FIND_MODE_SEARCH)
@@ -768,23 +799,40 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------- search
 
     def run_search(self):
+        if self.search_in_progress:
+            self.cancel_search()
+            return
         text = self.search_text.text().strip()
         kind = self.search_type.currentData()
         if not text:
             self.search_status.setText("Enter a search term or TIDAL URL.")
             return
-        if self.search_in_progress:
-            return
         self.result_history = []
+        self._start_search(self.backend.search, text, kind)
+
+    def _start_search(self, fn, *args, status_text="Searching…", result_label=None):
         self.search_in_progress = True
+        self._search_cancel_requested = False
         self.update_search_action()
         self.update_result_actions()
-        self.search_status.setText("Searching…")
-        worker = TaskWorker(self.backend.search, text, kind)
-        worker.signals.result.connect(self.set_search_results)
-        worker.signals.error.connect(self.show_search_error)
+        self.search_status.setText(status_text)
+        self.search_status.setToolTip(status_text)
+        worker = TaskWorker(fn, *args)
+        self.search_worker = worker
+        worker.signals.result.connect(lambda items: self.set_search_results(
+            items, result_label(items) if result_label else None
+        ) if not self._search_cancel_requested else None)
+        worker.signals.error.connect(lambda message: self.show_search_error(message)
+                                     if not self._search_cancel_requested else None)
         worker.signals.finished.connect(self._search_finished)
         self.start_worker(worker)
+
+    def cancel_search(self):
+        if self.search_worker is not None:
+            self._search_cancel_requested = True
+            self.search_worker.cancel()
+            self.search_status.setText("Cancelling search…")
+            self.update_search_action()
 
     def set_search_results(self, items: List[SearchItem], status_text: str | None = None):
         self.results = items
@@ -796,37 +844,41 @@ class MainWindow(QMainWindow):
                 cell = self._table_cell(value, item if col == 0 else None, mono=col == 5, muted=col in (0, 5))
                 if col in (4, 5):
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if col == 1:
+                    cell.setToolTip('\n'.join(filter(None, [item.title, item.artists, item.duration,
+                                                          f'ID: {item.identifier}'])))
                 self.results_table.setItem(row_index, col, cell)
         self.results_table.setSortingEnabled(True)
         self.results_empty.set_text("No results. Try another term or content type.")
         self.results_empty.set_visible(not items)
         self.search_status.setText(status_text or f"{self._plural(len(items), 'result')}")
+        self.search_status.setToolTip(self.search_status.text())
         self.update_result_actions()
 
     def _search_finished(self):
         self.search_in_progress = False
+        self.search_worker = None
+        if self._search_cancel_requested:
+            self.search_status.setText("Search cancelled")
+            self.search_status.setToolTip(self.search_status.text())
+        self._search_cancel_requested = False
         self.update_search_action()
         self.update_result_actions()
 
     def show_search_error(self, message: str):
+        message = redact(message)
         self.search_status.setText(message)
-        QMessageBox.warning(self, "Search failed", message)
+        self.search_status.setToolTip(message)
+        if not self.results:
+            self.results_empty.set_text(f"Search failed. {message}")
+            self.results_empty.set_visible(True)
 
     def _load_artist_children(self, item: SearchItem, loader, noun: str):
         self.result_history.append((list(self.results), self.search_status.text()))
-        self.search_in_progress = True
-        self.search_status.setText(f"Loading {noun}s by {item.title}…")
-        self.update_search_action()
-        self.update_result_actions()
-        worker = TaskWorker(loader, item)
-        worker.signals.result.connect(
-            lambda items, artist=item.title: self.set_search_results(
-                items, f"{self._plural(len(items), noun)} by {artist}"
-            )
+        self._start_search(
+            loader, item, status_text=f"Loading {noun}s by {item.title}…",
+            result_label=lambda items: f"{self._plural(len(items), noun)} by {item.title}",
         )
-        worker.signals.error.connect(self.show_search_error)
-        worker.signals.finished.connect(self._search_finished)
-        self.start_worker(worker)
 
     def open_result_item(self, cell: QTableWidgetItem):
         item = self._row_item(self.results_table, cell.row())
@@ -874,9 +926,9 @@ class MainWindow(QMainWindow):
         if not items:
             self.search_status.setText("Select one or more rows first.")
             return
-        self.queue.extend(items)
-        self.refresh_queue_table()
-        self.search_status.setText(f"Added {self._plural(len(items), 'item')} to the queue")
+        self._enqueue_items(items)
+        self.search_status.setText(self._queue_message)
+        self.search_status.setToolTip(self._queue_message)
 
     # ------------------------------------------------------------------ links
 
@@ -904,23 +956,15 @@ class MainWindow(QMainWindow):
         return [with_video_only(self.backend.direct_item(token), video_only) for token in tokens]
 
     def add_direct_to_queue(self):
-        items = self.direct_items_from_input()
-        if not items:
-            return
-        self.queue.extend(items)
-        self.refresh_queue_table()
-        self._set_queue_message(f"Added {self._plural(len(items), 'link')}")
+        self._enqueue_items(self.direct_items_from_input())
 
     def download_direct(self):
         if self.download_in_progress:
             self._set_queue_message("A download is already running.")
             return
-        items = self.direct_items_from_input()
-        if not items:
-            return
-        self.queue.extend(items)
-        self.refresh_queue_table()
-        self.start_downloads(items)
+        items = self._enqueue_items(self.direct_items_from_input())
+        if items:
+            self.start_downloads(items)
 
     def download_selected(self):
         if self.download_in_progress:
@@ -930,11 +974,30 @@ class MainWindow(QMainWindow):
         if not items:
             self.search_status.setText("Select one or more rows first.")
             return
-        self.queue.extend(items)
-        self.refresh_queue_table()
-        self.start_downloads(items)
+        self.start_downloads(self._enqueue_items(items))
 
     # ------------------------------------------------------------------ queue
+
+    def _enqueue_items(self, items):
+        if not items:
+            return []
+        existing = {queue_identity(item): item for item in self.queue if item.status != 'Done'}
+        resolved = {}
+        added = 0
+        for item in items:
+            key = queue_identity(item)
+            if key not in existing:
+                existing[key] = item
+                self.queue.append(item)
+                added += 1
+            resolved[key] = existing[key]
+        if added:
+            self.refresh_queue_table()
+        parts = [f"Added {self._plural(added, 'item')}"] if added else []
+        if len(items) > added:
+            parts.append(f"{len(items) - added} already in the queue")
+        self._set_queue_message(" · ".join(parts))
+        return list(resolved.values())
 
     def _queue_kind_label(self, item: SearchItem) -> str:
         kind = "Link" if item.kind == Type.Null else item.kind.name
@@ -984,6 +1047,8 @@ class MainWindow(QMainWindow):
                     cell.setData(Qt.UserRole, item)
         state = self._queue_progress_state(item)
         self.queue_table.item(row_index, 4).setData(PROGRESS_STATE_ROLE, state)
+        self.queue_table.item(row_index, 4).setToolTip(item.status_detail or self._queue_status_text(item))
+        self.queue_table.item(row_index, 1).setToolTip('\n'.join(filter(None, [item.title, item.artists])))
         progress_cell = self.queue_table.item(row_index, 5)
         progress_cell.setData(PROGRESS_STATE_ROLE, state)
         progress_cell.setData(PROGRESS_PERCENT_ROLE, 100 if item.status == "Done" else int(item.progress_percent or 0))
@@ -1009,7 +1074,7 @@ class MainWindow(QMainWindow):
         try:
             self.backend.save_queue(self.queue)
         except OSError as error:
-            self.queue_status.setText(f"Unable to save queue: {error}")
+            self._set_queue_message(f"Unable to save queue: {redact(error)}")
 
     def _refresh_queue_row(self, item: SearchItem):
         for row_index in range(self.queue_table.rowCount()):
@@ -1020,20 +1085,43 @@ class MainWindow(QMainWindow):
 
     def remove_selected_queue_items(self):
         rows = sorted({index.row() for index in self.queue_table.selectionModel().selectedRows()})
-        selected_items = [self._row_item(self.queue_table, row_index) for row_index in rows]
-        for selected in selected_items:
-            if selected is None:
-                continue
-            for index, queued in enumerate(self.queue):
-                if queued is selected:
-                    self.queue.pop(index)
-                    break
-        self.refresh_queue_table()
+        selected_ids = {id(self._row_item(self.queue_table, row)) for row in rows}
+        self._remove_queue_items(lambda item: id(item) in selected_ids)
 
     def clear_queue(self):
-        self.queue = []
+        self._remove_queue_items(lambda item: True)
+
+    def clear_completed_queue_items(self):
+        self._remove_queue_items(lambda item: item.status == 'Done')
+
+    def _remove_queue_items(self, predicate):
+        if self.download_in_progress:
+            return
+        removed = [(index, item) for index, item in enumerate(self.queue) if predicate(item)]
+        if not removed:
+            return
+        self._removed_queue_items = removed
+        removed_ids = {id(item) for _, item in removed}
+        self.queue = [item for item in self.queue if id(item) not in removed_ids]
         self.refresh_queue_table()
-        self.download_log.clear()
+        self._set_queue_message(f"Removed {self._plural(len(removed), 'item')}. Undo is available.")
+
+    def undo_queue_removal(self):
+        if self.download_in_progress or not self._removed_queue_items:
+            return
+        existing = {queue_identity(item) for item in self.queue if item.status != 'Done'}
+        restored = 0
+        for index, item in self._removed_queue_items:
+            key = queue_identity(item)
+            if item.status != 'Done' and key in existing:
+                continue
+            self.queue.insert(min(index, len(self.queue)), item)
+            if item.status != 'Done':
+                existing.add(key)
+            restored += 1
+        self._removed_queue_items = []
+        self.refresh_queue_table()
+        self._set_queue_message(f"Restored {self._plural(restored, 'item')}")
 
     def pending_queue_items(self) -> List[SearchItem]:
         return [item for item in self.queue if item.status not in ("Done", "Downloading")]
@@ -1042,7 +1130,7 @@ class MainWindow(QMainWindow):
         return [item for item in list(self.queue) if (item.status or "Queued") == "Queued"]
 
     def failed_queue_items(self) -> List[SearchItem]:
-        return [item for item in self.queue if item.status == "Failed"]
+        return [item for item in self.queue if item.status in ('Failed', 'Partial', 'Interrupted', 'Cancelled')]
 
     def start_queue_download(self):
         if self.download_in_progress:
@@ -1060,12 +1148,14 @@ class MainWindow(QMainWindow):
             return
         items = self.failed_queue_items()
         if not items:
-            self._set_queue_message("No failed items to retry.")
+            self._set_queue_message("No incomplete items to retry.")
             return
         for item in items:
             item.status = "Queued"
             item.progress_percent = 0
             item.progress_label = ""
+            item.actual_quality = ""
+            item.status_detail = ""
         self.refresh_queue_table()
         self.start_downloads(items)
 
@@ -1094,10 +1184,19 @@ class MainWindow(QMainWindow):
         worker.signals.log.connect(self.append_download_log)
         worker.signals.item_status.connect(self._set_queue_item_status)
         worker.signals.item_progress.connect(self._set_queue_item_progress)
-        worker.signals.result.connect(lambda _: self._set_queue_message("Downloads finished"))
+        worker.signals.item_detail.connect(self._set_queue_item_detail)
+        worker.signals.result.connect(self._downloads_completed)
         worker.signals.error.connect(self.show_download_error)
         worker.signals.finished.connect(self._download_finished)
         self.start_worker(worker)
+
+    def _downloads_completed(self, items):
+        partial = sum(item.status == 'Partial' for item in items)
+        if partial:
+            self._set_queue_message(f"Finished; {self._plural(partial, 'item')} needs attention. Select a row for details.")
+            self.log_toggle.setChecked(True)
+        else:
+            self._set_queue_message("Downloads finished")
 
     def _download_finished(self):
         self.download_in_progress = False
@@ -1128,11 +1227,15 @@ class MainWindow(QMainWindow):
             item.progress_label = ""
             if status in ("Queued", "Downloading"):
                 item.actual_quality = ""
+                item.status_detail = ""
         elif status == "Partial":
             item.progress_label = ""
         self._refresh_queue_row(item)
         self._save_queue()
         self.update_queue_actions()
+
+    def _set_queue_item_detail(self, item, detail):
+        item.status_detail = redact(detail)[:2000]
 
     def _set_queue_item_progress(self, item, snapshot: dict):
         item.progress_label = format_queue_progress(snapshot)
@@ -1154,10 +1257,11 @@ class MainWindow(QMainWindow):
             scrollbar.setValue(previous)
 
     def show_download_error(self, message: str):
+        message = redact(message)
         self._set_queue_message(message)
         if not self.log_toggle.isChecked():
             self.log_toggle.setChecked(True)
-        QMessageBox.warning(self, "Download failed", message)
+        self.append_download_log(message + '\n')
 
     # ---------------------------------------------------------- action states
 
@@ -1169,8 +1273,22 @@ class MainWindow(QMainWindow):
         self.pages["settings"].setEnabled(not self.download_in_progress)
         self.pages["account"].setEnabled(not self.download_in_progress)
 
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt naming
+        if event.type() == QEvent.Resize:
+            width = watched.width()
+            if watched is self.results_table.viewport():
+                self.results_table.setColumnHidden(5, width < 820)
+                self.results_table.setColumnHidden(4, width < 680)
+            elif watched is self.queue_table.viewport():
+                self.queue_table.setColumnHidden(2, width < 760)
+        return super().eventFilter(watched, event)
+
     def update_search_action(self):
-        self.search_button.setEnabled(bool(self.search_text.text().strip()) and not self.search_in_progress)
+        busy = self.search_in_progress
+        self.search_button.setText("Cancel" if busy else "Search")
+        self.search_button.setToolTip("Cancel the current search." if busy else "Search TIDAL for the selected content type.")
+        self.search_button.setEnabled(not self._search_cancel_requested and
+                                      (busy or bool(self.search_text.text().strip())))
 
     def update_direct_actions(self):
         has_input = bool(self.direct_text.toPlainText().strip())
@@ -1216,6 +1334,8 @@ class MainWindow(QMainWindow):
         if self._queue_message:
             parts.append(f'<span style="color:{TOKENS["text_secondary"]}">{escape(self._queue_message)}</span>')
         self.queue_status.setText("&nbsp;·&nbsp;".join(parts))
+        self.queue_status.setToolTip(' · '.join(f'{count} {status.lower()}' for status, count in counts.items())
+                                     + ('\n' + self._queue_message if self._queue_message else ''))
 
     def update_queue_actions(self):
         has_queue = bool(self.queue)
@@ -1224,16 +1344,27 @@ class MainWindow(QMainWindow):
         has_pending = bool(self.pending_queue_items())
         self.remove_queue_button.setEnabled(has_selection and not self.download_in_progress)
         self.clear_queue_button.setEnabled(has_queue and not self.download_in_progress)
+        self.clear_done_button.setEnabled(any(item.status == 'Done' for item in self.queue) and not self.download_in_progress)
+        self.undo_queue_button.setVisible(bool(self._removed_queue_items))
+        self.undo_queue_button.setEnabled(bool(self._removed_queue_items) and not self.download_in_progress)
         self.retry_failed_button.setEnabled(has_failed and not self.download_in_progress)
         self.retry_failed_button.setVisible(has_failed)
         self.cancel_queue_button.setEnabled(self.download_in_progress and not self._cancel_requested)
         self.cancel_queue_button.setVisible(self.download_in_progress)
         self.start_queue_button.setEnabled(has_pending and not self.download_in_progress)
+        self.start_queue_button.setText('Resume' if has_pending and not self._live_queued_items() else 'Start')
+        selected = self.queue_table.selectionModel().selectedRows()
+        item = self._row_item(self.queue_table, selected[0].row()) if len(selected) == 1 else None
+        detail = item.status_detail if item is not None else ''
+        self.queue_detail.setText(detail)
+        self.queue_detail.setToolTip(detail)
+        self.queue_detail.setVisible(bool(detail))
         self._update_queue_summary()
 
     # --------------------------------------------------------------- settings
 
     def refresh_settings(self):
+        self._loading_settings = True
         self.download_path.setText(SETTINGS.downloadPath)
         self.audio_quality.setCurrentText(SETTINGS.audioQuality.name)
         self.video_quality.setCurrentIndex(self.video_quality.findData(SETTINGS.videoQuality.name))
@@ -1254,6 +1385,34 @@ class MainWindow(QMainWindow):
         self.track_format.setText(SETTINGS.trackFileFormat)
         self.video_format.setText(SETTINGS.videoFileFormat)
         self.settings_status.setText("Loaded from disk")
+        self._saved_settings_values = self.collect_settings_values()
+        self._loading_settings = False
+        self._update_settings_dirty()
+
+    def _bind_settings_changes(self):
+        for widget in (self.download_path, self.album_format, self.playlist_format, self.track_format, self.video_format):
+            widget.textChanged.connect(self._update_settings_dirty)
+        for widget in (self.audio_quality, self.priority_preset, self.video_quality, self.language, self.api_client):
+            widget.currentIndexChanged.connect(self._update_settings_dirty)
+        for widget in self.checks.values():
+            widget.toggled.connect(self._update_settings_dirty)
+        self.request_interval.valueChanged.connect(self._update_settings_dirty)
+
+    def _update_settings_dirty(self):
+        if self._loading_settings or self._saved_settings_values is None:
+            return
+        values = self.collect_settings_values()
+        dirty = values != self._saved_settings_values
+        self.save_settings_button.setEnabled(dirty)
+        self.settings_toggle.setText('Settings •' if dirty else 'Settings')
+        if dirty:
+            client_changed = values['apiKeyIndex'] != self._saved_settings_values['apiKeyIndex']
+            self.settings_status.setText('Unsaved changes')
+            self.settings_status.setToolTip('Save and sign in again to use the changed client.' if client_changed
+                                           else 'These changes apply to the next run. Save to keep them after restarting.')
+        else:
+            self.settings_status.setText('Saved settings')
+            self.settings_status.setToolTip('The controls match your saved settings.')
 
     def browse_download_path(self):
         path = QFileDialog.getExistingDirectory(self, "Download folder", self.download_path.text())
@@ -1341,8 +1500,10 @@ class MainWindow(QMainWindow):
         try:
             result = self.backend.save_settings(self.collect_settings_values()) or {}
         except (ValueError, RuntimeError, OSError) as error:
-            self.settings_status.setText(str(error))
+            self.settings_status.setText(redact(error))
+            self.settings_status.setToolTip(self.settings_status.text())
             return
+        self.refresh_settings()
         if result.get("reauth_required"):
             self.refresh_auth_status()
             self.settings_status.setText("Saved. Sign in again: the client changed.")
@@ -1353,7 +1514,8 @@ class MainWindow(QMainWindow):
         try:
             result = self.backend.reload_settings()
         except (ValueError, RuntimeError, OSError) as error:
-            self.settings_status.setText(str(error))
+            self.settings_status.setText(redact(error))
+            self.settings_status.setToolTip(self.settings_status.text())
             return
         self.refresh_settings()
         self.refresh_auth_status()
@@ -1480,6 +1642,7 @@ class MainWindow(QMainWindow):
             self.cancel_downloads()
             event.ignore()
             return
+        self.cancel_search()
         self._stop_device_login("")
         self._save_queue()
         event.accept()
@@ -1521,7 +1684,7 @@ class MainWindow(QMainWindow):
         self.set_search_results(self.backend.search("midnight", Type.Track))
         if self.results:
             self.results_table.selectRow(0)
-            self.queue = self.results[:28]
+            self.queue = [queue_item(item) for item in self.results[:28]]
             for index, item in enumerate(self.queue):
                 if index < 3:
                     item.status = "Done"
@@ -1532,6 +1695,7 @@ class MainWindow(QMainWindow):
                     item.progress_label = "7/16 · 2.1 MB/s · 12s"
                 elif index == 4:
                     item.status = "Failed"
+                    item.status_detail = "The connection timed out. Retry this item when the connection is available."
             self.refresh_queue_table()
             self.queue_table.selectRow(0)
             self.log_toggle.setChecked(True)

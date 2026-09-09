@@ -21,7 +21,7 @@ from ..lang.language import LANG
 from ..paths import PATHS, openPath
 from ..printf import VERSION
 from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter, _atomicWrite
-from ..runtime import job_context, configure_logging
+from ..runtime import job_context, configure_logging, redact
 from ..tidal import TIDAL_API
 from ..updater import run_update
 
@@ -84,12 +84,21 @@ class SearchItem:
     progress_label: str = ""
     job_id: str = field(default_factory=lambda: uuid4().hex)
     actual_quality: str = ""
+    status_detail: str = ""
 
 
 def queue_item(item, video_only=False):
     return replace(item, source=copy.deepcopy(item.source), video_only=video_only,
                    job_id=uuid4().hex, status='Queued', progress_percent=0,
-                   progress_label='', actual_quality='')
+                   progress_label='', actual_quality='', status_detail='')
+
+
+def queue_identity(item):
+    """Match catalog rows and typed TIDAL links without a network lookup."""
+    kind, identifier = item.kind, item.identifier
+    if kind == Type.Null:
+        kind, identifier = TIDAL_API.parseUrl(str(item.source))
+    return kind, str(identifier), bool(item.video_only and kind != Type.Video)
 
 
 def _duration_label(seconds) -> str:
@@ -268,6 +277,9 @@ class TidekeeperBackend:
                                       str(row['source']) if kind == Type.Null else None,
                                       video_only=bool(row.get('video_only')), status=status)
                     item.actual_quality = str(row.get('actual_quality', ''))
+                    item.status_detail = redact(row.get('status_detail') or '')[:2000]
+                    if status == 'Interrupted' and not item.status_detail:
+                        item.status_detail = 'The previous run stopped before finishing. Resume to retry this item.'
                     items.append(item)
                 except (KeyError, ValueError, TypeError):
                     continue
@@ -280,6 +292,7 @@ class TidekeeperBackend:
                  'quality': item.quality, 'identifier': item.identifier, 'duration': item.duration,
                  'video_only': item.video_only, 'status': item.status,
                  'actual_quality': item.actual_quality,
+                 'status_detail': redact(item.status_detail)[:2000],
                  'source': str(item.source) if item.kind == Type.Null else None} for item in items]
         _atomicWrite(str(Path(PATHS.getConfigDirectory()) / '.tidekeeper-queue.json'), json.dumps(rows))
 
@@ -466,9 +479,9 @@ class TidekeeperBackend:
             raise ValueError('Save the changed TIDAL client and sign in again before downloading.')
         if self._download_active:
             raise RuntimeError('Wait for the active download to finish before changing settings.')
-        return self.apply_runtime_settings(values, persist_client=False)
+        return self.apply_runtime_settings(values)
 
-    def apply_runtime_settings(self, values: dict, persist_client: bool = False):
+    def apply_runtime_settings(self, values: dict):
         """Apply quality/download options in memory. Download starts must not persist or logout."""
         selected = AudioQuality[values['audioQuality']]
         audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
@@ -502,17 +515,23 @@ class TidekeeperBackend:
         SETTINGS.videoFileFormat = values["videoFileFormat"]
         LANG.setLang(SETTINGS.language)
         syncPlaybackRateLimiter()
-        if persist_client:
-            SETTINGS.apiKeyIndex = values["apiKeyIndex"]
-            TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
         return {"reauth_required": False}
 
     def save_settings(self, values: dict):
         if self._download_active:
             raise RuntimeError('Wait for the active download to finish before changing settings.')
         previous_api_key_index = SETTINGS.apiKeyIndex
-        self.apply_runtime_settings(values, persist_client=True)
-        SETTINGS.save()
+        previous_settings = copy.deepcopy(SETTINGS.__dict__)
+        try:
+            self.apply_runtime_settings(values)
+            SETTINGS.apiKeyIndex = values["apiKeyIndex"]
+            SETTINGS.save()
+        except Exception:
+            SETTINGS.__dict__.clear()
+            SETTINGS.__dict__.update(previous_settings)
+            LANG.setLang(SETTINGS.language)
+            syncPlaybackRateLimiter()
+            raise
         if SETTINGS.apiKeyIndex != previous_api_key_index:
             # Tokens are bound to the client id. Applying a new key to an old
             # token produces 4022 errors on the next search/download.
@@ -598,7 +617,10 @@ class TidekeeperBackend:
 
 class DemoBackend(TidekeeperBackend):
     def reload_settings(self):
-        self.initialize()
+        SETTINGS.__dict__.clear()
+        SETTINGS.__dict__.update(copy.deepcopy(self._saved_settings))
+        LANG.setLang(SETTINGS.language)
+        syncPlaybackRateLimiter()
         return {"reauth_required": False}
 
     def load_queue(self):
@@ -626,6 +648,7 @@ class DemoBackend(TidekeeperBackend):
         SETTINGS.adaptiveRateLimit = True
         SETTINGS.saveAsFlac = False
         SETTINGS.usePlaylistFolder = True
+        self._saved_settings = copy.deepcopy(SETTINGS.__dict__)
 
     def auth_status(self) -> AuthStatus:
         return AuthStatus("demo-user", "US", time.time() + 7200, True)
@@ -674,7 +697,10 @@ class DemoBackend(TidekeeperBackend):
                     audioQuality=qualities[index % len(qualities)],
                 )
             )
-        return [to_search_item(kind, item) for item in samples]
+        return [to_search_item(Type.Track if kind == Type.Null else kind, item) for item in samples]
+
+    def artist_tracks(self, artist: SearchItem) -> List[SearchItem]:
+        return self.search(artist.title, Type.Track)
 
     def artist_videos(self, artist: SearchItem) -> List[SearchItem]:
         source_artist = getattr(artist, "source", None)
@@ -718,13 +744,11 @@ class DemoBackend(TidekeeperBackend):
             log("Resolved stream metadata\n")
             log("Demo download completed\n")
 
-    def save_settings(self, values: dict, persist=True):
-        audio_priority = SETTINGS.getAudioQualityPriority(values.get("audioQualityPriority", []))
-        for key, value in values.items():
-            if hasattr(SETTINGS, key):
-                setattr(SETTINGS, key, value)
-        SETTINGS.audioQualityPriority = audio_priority
-        SETTINGS.audioQuality = audio_priority[0] if audio_priority else AudioQuality[values["audioQuality"]]
+    def save_settings(self, values: dict):
+        result = self.apply_runtime_settings(values)
+        SETTINGS.apiKeyIndex = values['apiKeyIndex']
+        self._saved_settings = copy.deepcopy(SETTINGS.__dict__)
+        return result
 
     def open_download_folder(self, path: str = "") -> str:
         return path or SETTINGS.downloadPath

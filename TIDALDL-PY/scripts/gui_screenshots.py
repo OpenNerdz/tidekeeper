@@ -101,9 +101,9 @@ def _validate_interactions(window) -> list[str]:
         window.remove_selected_queue_items()
         if row_item is None or any(item is row_item for item in window.queue) or len(window.queue) != before - 1:
             failures.append("queue: sorted removal resolves the wrong item")
-        if row_item is not None:
-            window.queue.append(row_item)
-        window.refresh_queue_table()
+        window.undo_queue_removal()
+        if len(window.queue) != before or not any(item is row_item for item in window.queue):
+            failures.append("queue: undo does not restore the removed item")
     return failures
 
 

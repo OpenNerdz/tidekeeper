@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from threading import RLock, Event
 
-from ..runtime import DownloadCancelled, redact
+from ..runtime import DownloadCancelled, redact, job_context, check_cancelled
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
@@ -15,6 +15,7 @@ class WorkerSignals(QObject):
     log = Signal(str)
     item_status = Signal(object, str)
     item_progress = Signal(object, dict)
+    item_detail = Signal(object, str)
 
 
 class TaskWorker(QRunnable):
@@ -25,12 +26,21 @@ class TaskWorker(QRunnable):
         self.args = args
         self.kwargs = kwargs
         self.signals = WorkerSignals()
+        self._cancelled = Event()
+
+    def cancel(self):
+        self._cancelled.set()
 
     @Slot()
     def run(self):
         try:
-            result = self.fn(*self.args, **self.kwargs)
+            with job_context(cancel=self._cancelled):
+                check_cancelled()
+                result = self.fn(*self.args, **self.kwargs)
+                check_cancelled()
             self.signals.result.emit(result)
+        except DownloadCancelled:
+            pass
         except Exception as exc:
             self.signals.error.emit(redact(exc))
         finally:
@@ -200,13 +210,19 @@ class DownloadWorker(QRunnable):
                     except DownloadCancelled:
                         cancelled = True
                         self._cancelled.set()
+                        self.signals.item_detail.emit(item, 'Cancelled. Partial transfers are kept for retry.')
                         self.signals.item_status.emit(item, "Cancelled")
                         continue
                     except Exception as exc:
                         failed.append(item.title)
+                        self.signals.item_detail.emit(item, redact(exc)[:2000])
                         self.signals.item_status.emit(item, "Failed")
                         self.signals.log.emit(redact(f"Failed {item.title}: {exc}\n"))
                         continue
+                    if reporter.warnings:
+                        detail = redact('\n'.join(dict.fromkeys(reporter.warnings)))[:2000]
+                        self.signals.item_detail.emit(item, detail)
+                        self.signals.log.emit(f"Needs attention: {detail}\n")
                     self.signals.item_status.emit(item, "Partial" if reporter.warnings else "Done")
                     self.signals.log.emit(f"Finished {item.title}\n")
                 if cancelled:

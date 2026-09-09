@@ -109,6 +109,60 @@ class DownloadWorkerQueueTests(unittest.TestCase):
         worker.run()
         self.assertEqual(backend.downloaded, ["Album One"])
 
+    def test_failure_details_precede_failed_status_and_hide_tokens(self):
+        item = SimpleNamespace(title='Album')
+        def fail(_):
+            raise RuntimeError('Unavailable: access_token=dummy-secret')
+        worker = self.DownloadWorker(RecordingBackend(fail), [item])
+        events = []
+        worker.signals.item_detail.connect(lambda _, detail: events.append(('detail', detail)))
+        worker.signals.item_status.connect(lambda _, status: events.append(('status', status)))
+        worker.run()
+        self.assertEqual(events[-1], ('status', 'Failed'))
+        self.assertEqual(events[-2][0], 'detail')
+        self.assertIn('Unavailable', events[-2][1])
+        self.assertNotIn('dummy-secret', events[-2][1])
+
+    def test_partial_download_retains_deduplicated_warning_details(self):
+        class WarningBackend:
+            def download(self, item, log, progress):
+                progress.note_warning('Cover could not be saved')
+                progress.note_warning('Cover could not be saved')
+        worker = self.DownloadWorker(WarningBackend(), [SimpleNamespace(title='Album')])
+        details, statuses = [], []
+        worker.signals.item_detail.connect(lambda _, detail: details.append(detail))
+        worker.signals.item_status.connect(lambda _, status: statuses.append(status))
+        worker.run()
+        self.assertEqual(details, ['Cover could not be saved'])
+        self.assertEqual(statuses[-1], 'Partial')
+
+    def test_task_cancelled_before_start_does_not_run(self):
+        from tidal_dl.gui_app.workers import TaskWorker
+        calls, results, finished = [], [], []
+        worker = TaskWorker(lambda: calls.append(True))
+        worker.signals.result.connect(results.append)
+        worker.signals.finished.connect(lambda: finished.append(True))
+        worker.cancel()
+        worker.run()
+        self.assertEqual(calls, [])
+        self.assertEqual(results, [])
+        self.assertEqual(finished, [True])
+
+    def test_task_cancelled_during_request_does_not_publish_late_result(self):
+        from tidal_dl.gui_app.workers import TaskWorker
+        results, errors, finished = [], [], []
+        def query():
+            worker.cancel()
+            return 'Late response'
+        worker = TaskWorker(query)
+        worker.signals.result.connect(results.append)
+        worker.signals.error.connect(errors.append)
+        worker.signals.finished.connect(lambda: finished.append(True))
+        worker.run()
+        self.assertEqual(results, [])
+        self.assertEqual(errors, [])
+        self.assertEqual(finished, [True])
+
 
 if __name__ == "__main__":
     unittest.main()

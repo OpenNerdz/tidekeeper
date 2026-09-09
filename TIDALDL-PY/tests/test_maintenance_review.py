@@ -75,6 +75,31 @@ class MaintenanceReviewTests(unittest.TestCase):
         self.assertFalse(settings.multiThread)
         self.assertEqual(settings.trackFileFormat, Settings.trackFileFormat)
 
+    def test_profiles_with_invalid_utf8_clear_stale_values(self):
+        for profile, field, stale in ((Settings(), 'multiThread', True),
+                                      (TokenSettings(), 'accessToken', 'old-token')):
+            with self.subTest(profile=type(profile).__name__):
+                path = self.root / 'profile.json'
+                path.write_bytes(b'\xff\xfe')
+                setattr(profile, field, stale)
+                with self.assertLogs(level='WARNING'):
+                    profile.read(str(path))
+                self.assertFalse(getattr(profile, field))
+                self.assertEqual(path.read_bytes(), b'\xff\xfe')
+
+    def test_utf8_bom_profiles_preserve_saved_values(self):
+        path = self.root / 'settings.json'
+        path.write_text(json.dumps({'downloadPath': '/Music/Bj\u00f6rk'}, ensure_ascii=False), encoding='utf-8-sig')
+        settings = Settings()
+        settings.read(str(path))
+        self.assertEqual(settings.downloadPath, '/Music/Bj\u00f6rk')
+        token_path = self.root / 'token.json'
+        token_path.write_text(json.dumps({'userid': 7, 'accessToken': 'saved-token'}), encoding='utf-8-sig')
+        token = TokenSettings()
+        token.read(str(token_path))
+        self.assertEqual(token.userid, 7)
+        self.assertEqual(token.accessToken, 'saved-token')
+
     def test_gui_manual_login_does_not_reuse_old_refresh_token(self):
         TOKEN.refreshToken = 'previous-session'
         key = SimpleNamespace(userId=7, countryCode='US', accessToken='new', refreshToken='previous-session')

@@ -65,7 +65,7 @@ Delete obsolete branches only after confirming their commits are merged.
    ```
 
    The Build workflow creates the GitHub release and attaches terminal and GUI
-   binaries for Windows, macOS, and Linux. The Publish workflow uploads the sdist
+   binaries for Windows, macOS, and Linux (x86-64 and ARM64). The Publish workflow uploads the sdist
    and wheel to [PyPI](https://pypi.org/project/tidekeeper/).
 7. Confirm the release's Publish workflow succeeds and
    `pip install -U tidekeeper` installs the new version.

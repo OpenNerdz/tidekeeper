@@ -86,7 +86,6 @@ setup(
         "Environment :: Console",
         "Environment :: X11 Applications :: Qt",
         "Intended Audience :: End Users/Desktop",
-        "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3 :: Only",
