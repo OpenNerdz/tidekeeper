@@ -78,6 +78,21 @@ class NestedGuiProgressTests(unittest.TestCase):
 
 
 class RuntimeSettingsTests(unittest.TestCase):
+    def setUp(self):
+        from tidal_dl.settings import SETTINGS
+        from tidal_dl.tidal import TIDAL_API
+        from tidal_dl.lang.language import LANG
+
+        # These tests replace most settings and the API client, not just quality.
+        # Restore all of them so later download tests cannot use the test path.
+        for patcher in (
+            mock.patch.dict(SETTINGS.__dict__, {}),
+            mock.patch.object(TIDAL_API, 'apiKey', TIDAL_API.apiKey),
+            mock.patch.object(LANG, 'select', LANG.select),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def _values(self, **overrides):
         values = {
             "downloadPath": "/tmp/tidekeeper-dl",

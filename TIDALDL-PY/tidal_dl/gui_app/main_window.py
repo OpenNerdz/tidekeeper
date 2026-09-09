@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import time
 import webbrowser
+from collections import Counter
+from html import escape
 from typing import List, Tuple
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
@@ -115,7 +117,7 @@ PRIORITY_PRESETS = [
 ]
 NAMING_HINT = (
     "{ArtistName} {AlbumArtistName} {AlbumTitle} {AlbumYear} {TrackNumber} "
-    "{TrackTitle} {PlaylistName} {VideoTitle} {Quality} {Flag}"
+    "{TrackTitle} {PlaylistName} {VideoTitle} {StreamQuality} {Codec} {Flag}"
 )
 RESULTS_EMPTY = (
     "Search the TIDAL catalog or paste links.\n"
@@ -360,7 +362,7 @@ class MainWindow(QMainWindow):
         self.clear_queue_button = button("Clear", "ghost", tooltip="Clear the queue and log.")
         self.retry_failed_button = button("Retry failed", tooltip="Re-queue failed items and download them again.")
         self.log_toggle = button("Log", "ghost", checkable=True, tooltip="Show download output.")
-        self.cancel_queue_button = button("Cancel", "danger", tooltip="Stop after the current item finishes.")
+        self.cancel_queue_button = button("Cancel", "danger", tooltip="Cancel downloads and keep partial transfers for retry.")
         self.start_queue_button = button("Start", "primary", tooltip="Download queued and failed items.")
         self.start_queue_button.setMinimumWidth(80)
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_items)
@@ -384,7 +386,7 @@ class MainWindow(QMainWindow):
 
         self.queue_table = QTableWidget(0, 6)
         configure_table(self.queue_table, ["Type", "Title", "Artists", "Quality", "Status", "Progress"])
-        fix_columns(self.queue_table, {0: 96, 3: 150, 4: 210, 5: 132})
+        fix_columns(self.queue_table, {0: 76, 3: 120, 4: 160, 5: 104})
         self.queue_table.setItemDelegateForColumn(4, StatusDelegate(self.queue_table))
         self.queue_table.setItemDelegateForColumn(5, QueueProgressDelegate(self.queue_table))
         self.queue_table.itemSelectionChanged.connect(self.update_queue_actions)
@@ -458,6 +460,7 @@ class MainWindow(QMainWindow):
 
         storage = FormSection("Storage")
         self.download_path = QLineEdit()
+        self.download_path.setAccessibleName("Download folder")
         self.download_path.setPlaceholderText("Folder where downloads are written")
         browse = button("Browse…", tooltip="Choose a download folder.")
         open_folder = button("Open", "ghost", tooltip="Open the download folder.")
@@ -598,7 +601,7 @@ class MainWindow(QMainWindow):
         self.settings_status = label("", "Meta")
         reload_button = button("Reload", "ghost", tooltip="Discard unsaved changes and reload from disk.")
         save_button = button("Save", "primary", tooltip="Write these settings to disk.")
-        reload_button.clicked.connect(self.refresh_settings)
+        reload_button.clicked.connect(self.reload_settings)
         save_button.clicked.connect(self.save_settings)
         footer.setLayout(row(self.settings_status, None, reload_button, save_button, margins=(12, 0, 12, 0)))
         page_layout.addWidget(footer)
@@ -710,6 +713,7 @@ class MainWindow(QMainWindow):
 
     def _table_cell(self, value, item=None, *, mono: bool = False, muted: bool = False) -> QTableWidgetItem:
         cell = QTableWidgetItem(str(value))
+        cell.setToolTip(str(value))
         if item is not None:
             cell.setData(Qt.UserRole, item)
         if mono:
@@ -794,8 +798,7 @@ class MainWindow(QMainWindow):
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.results_table.setItem(row_index, col, cell)
         self.results_table.setSortingEnabled(True)
-        self.results_empty.set_text(RESULTS_EMPTY if not self.results_table.rowCount() and status_text is None
-                                    else "No results. Try another term or content type.")
+        self.results_empty.set_text("No results. Try another term or content type.")
         self.results_empty.set_visible(not items)
         self.search_status.setText(status_text or f"{self._plural(len(items), 'result')}")
         self.update_result_actions()
@@ -889,7 +892,11 @@ class MainWindow(QMainWindow):
         return items[0] if items else None
 
     def direct_items_from_input(self) -> List[SearchItem]:
-        tokens = parse_direct_inputs(self.direct_text.toPlainText())
+        try:
+            tokens = parse_direct_inputs(self.direct_text.toPlainText())
+        except (ValueError, OSError) as error:
+            self._set_queue_message(str(error))
+            return []
         if not tokens:
             self._set_queue_message("Enter a URL, ID, mix ID, or .txt file.")
             return []
@@ -972,6 +979,7 @@ class MainWindow(QMainWindow):
                 self.queue_table.setItem(row_index, col, cell)
             else:
                 cell.setText(str(value))
+                cell.setToolTip(str(value))
                 if col == 0:
                     cell.setData(Qt.UserRole, item)
         state = self._queue_progress_state(item)
@@ -1115,8 +1123,12 @@ class MainWindow(QMainWindow):
         if status == "Done":
             item.progress_percent = 100
             item.progress_label = ""
-        elif status in ("Failed", "Cancelled", "Queued"):
+        elif status in ("Failed", "Cancelled", "Queued", "Downloading"):
             item.progress_percent = 0
+            item.progress_label = ""
+            if status in ("Queued", "Downloading"):
+                item.actual_quality = ""
+        elif status == "Partial":
             item.progress_label = ""
         self._refresh_queue_row(item)
         self._save_queue()
@@ -1130,11 +1142,16 @@ class MainWindow(QMainWindow):
             self._refresh_queue_row(item)
 
     def append_download_log(self, text: str):
+        scrollbar = self.download_log.verticalScrollBar()
+        follow = scrollbar.value() >= scrollbar.maximum()
+        previous = scrollbar.value()
         cursor = self.download_log.textCursor()
         cursor.movePosition(QTextCursor.End)
         cursor.insertText(text)
-        self.download_log.setTextCursor(cursor)
-        self.download_log.ensureCursorVisible()
+        if follow:
+            scrollbar.setValue(scrollbar.maximum())
+        else:
+            scrollbar.setValue(previous)
 
     def show_download_error(self, message: str):
         self._set_queue_message(message)
@@ -1181,22 +1198,23 @@ class MainWindow(QMainWindow):
         self._update_queue_summary()
 
     def _update_queue_summary(self):
-        done = sum(1 for item in self.queue if item.status == "Done")
-        failed = len(self.failed_queue_items())
-        active = sum(1 for item in self.queue if item.status == "Downloading")
-        pending = len(self.queue) - done - failed - active
+        counts = Counter(item.status or "Queued" for item in self.queue)
         parts = []
-        for count, word, color in (
-            (active, "downloading", TOKENS["accent"]),
-            (pending, "queued", None),
-            (done, "done", TOKENS["success"]),
-            (failed, "failed", TOKENS["danger"]),
+        for status, word, color in (
+            ("Downloading", "downloading", TOKENS["accent"]),
+            ("Queued", "queued", None),
+            ("Done", "done", TOKENS["success"]),
+            ("Failed", "failed", TOKENS["danger"]),
+            ("Partial", "partial", TOKENS["warning"]),
+            ("Cancelled", "cancelled", None),
+            ("Interrupted", "interrupted", None),
         ):
+            count = counts[status]
             if count:
                 text = f"{count} {word}"
                 parts.append(f'<span style="color:{color}">{text}</span>' if color else text)
         if self._queue_message:
-            parts.append(f'<span style="color:{TOKENS["text_secondary"]}">{self._queue_message}</span>')
+            parts.append(f'<span style="color:{TOKENS["text_secondary"]}">{escape(self._queue_message)}</span>')
         self.queue_status.setText("&nbsp;·&nbsp;".join(parts))
 
     def update_queue_actions(self):
@@ -1330,6 +1348,17 @@ class MainWindow(QMainWindow):
             self.settings_status.setText("Saved. Sign in again: the client changed.")
         else:
             self.settings_status.setText("Saved")
+
+    def reload_settings(self):
+        try:
+            result = self.backend.reload_settings()
+        except (ValueError, RuntimeError, OSError) as error:
+            self.settings_status.setText(str(error))
+            return
+        self.refresh_settings()
+        self.refresh_auth_status()
+        if result.get("reauth_required"):
+            self.settings_status.setText("Reloaded. Sign in again: the client changed.")
 
     # ---------------------------------------------------------------- account
 

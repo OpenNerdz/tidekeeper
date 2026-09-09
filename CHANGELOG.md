@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 2026.9.9.0 - 2026-09-09
+
+- Fixed Termux installation attempting to replace system pip, Arch partial upgrades, and the download-folder environment override being ignored outside Termux (including Docker).
+- Diagnostics use a temporary file without overwriting an existing write-test file.
+- CLI and GUI share a batch parser with cycle detection, relative nested lists, BOM support, whitespace-separated IDs, and duplicate removal. CLI batches continue after individual lookup failures.
+- Reload reads saved settings from disk. Missing or damaged profiles clear old state, and manual login no longer reuses an unrelated refresh token.
+- Cancelled assembly and FLAC remux clean up their temporary output while retaining retry data. Catalog pagination avoids an unnecessary request after a full final page.
+- Desktop logs use bounded plain text and preserve scroll position. Queue summaries distinguish partial, cancelled, and interrupted items; retries clear stale progress and quality.
+- Queue columns leave more room for titles and can be resized; cells expose complete text in tooltips. Form fields have accessible labels, and empty searches explain that no matches were found.
+- Added regression coverage, restored settings isolation between tests, and smoke-test packaged terminal executables during platform builds.
+- Verified all 302 tests with Qt enabled under Ubuntu proot. Screenshot generation now uses the real application theme; refreshed the desktop documentation screenshots.
+
 ## 2026.9.7.0 - 2026-09-07
 
 ### Reliability

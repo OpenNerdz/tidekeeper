@@ -19,7 +19,6 @@ import logging
 from collections import OrderedDict
 from threading import Lock, RLock
 from typing import List
-from xml.etree import ElementTree
 from urllib.parse import unquote, urlparse
 
 import aigpy
@@ -565,12 +564,9 @@ class TidalAPI(object):
             data = self.__get__(path, params)
             if 'totalNumberOfItems' in data:
                 total = data['totalNumberOfItems']
-            if total > 0 and total <= len(ret):
-                return ret
-
             ret += data["items"]
             num = len(data["items"])
-            if num < 50:
+            if num < 50 or (total > 0 and len(ret) >= total):
                 break
             params['offset'] += num
         return ret

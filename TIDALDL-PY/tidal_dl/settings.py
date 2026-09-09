@@ -167,6 +167,9 @@ class Settings(aigpy.model.ModelBase):
         return VideoQuality.P720
 
     def read(self, path):
+        # Re-reading a missing or damaged profile must not retain old values.
+        self.__dict__.clear()
+        self.__init__()
         self._path_ = path
         txt = aigpy.file.getContent(self._path_)
         hasSavedSettings = len(txt) > 0
@@ -269,6 +272,7 @@ class TokenSettings(aigpy.model.ModelBase):
             return string
 
     def read(self, path):
+        self.__dict__.clear()
         self._path_ = path
         txt = aigpy.file.getContent(self._path_)
         if len(txt) > 0:
@@ -278,7 +282,8 @@ class TokenSettings(aigpy.model.ModelBase):
                     raise ValueError("token root must be a JSON object")
                 for name in ('userid', 'countryCode', 'accessToken', 'refreshToken'):
                     value = data.get(name)
-                    setattr(self, name, value if isinstance(value, (str, int)) else None)
+                    valid = isinstance(value, str) or (name == 'userid' and type(value) is int)
+                    setattr(self, name, value if valid else None)
                 try:
                     expires = float(data.get('expiresAfter') or 0)
                     self.expiresAfter = expires if math.isfinite(expires) else 0

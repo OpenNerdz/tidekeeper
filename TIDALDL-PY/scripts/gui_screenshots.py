@@ -127,7 +127,7 @@ def main() -> int:
     try:
         from PySide6.QtWidgets import QApplication
         from tidal_dl.gui_app.backend import DemoBackend
-        from tidal_dl.gui_app.main_window import MainWindow, SCREEN_ORDER
+        from tidal_dl.gui_app.main_window import MainWindow, SCREEN_ORDER, configure_application_theme
     except ImportError as exc:
         print(f"Missing GUI dependency: {exc}", file=sys.stderr)
         return 2
@@ -136,6 +136,7 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
 
     app = QApplication.instance() or QApplication([])
+    configure_application_theme(app)
     backend = DemoBackend()
     backend.initialize()
     window = MainWindow(backend)

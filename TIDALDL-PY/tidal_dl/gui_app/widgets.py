@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -33,7 +34,6 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -108,12 +108,20 @@ def dot_icon(color: str, size: int = 8) -> QIcon:
     return QIcon(pixmap)
 
 
-def log_view(placeholder: str) -> QTextEdit:
-    view = QTextEdit()
+class LogView(QPlainTextEdit):
+    """Bounded plain text output; log messages must never become HTML."""
+
+    def append(self, text):
+        self.appendPlainText(str(text))
+
+
+def log_view(placeholder: str) -> LogView:
+    view = LogView()
     view.setObjectName("Log")
     view.setReadOnly(True)
+    view.document().setMaximumBlockCount(2000)
     view.setPlaceholderText(placeholder)
-    view.setLineWrapMode(QTextEdit.NoWrap)
+    view.setLineWrapMode(QPlainTextEdit.NoWrap)
     view.setFrameShape(QFrame.NoFrame)
     return view
 
@@ -290,14 +298,19 @@ class FormSection(QWidget):
         caption.setFixedWidth(self.LABEL_WIDTH)
         line.addWidget(caption)
         if isinstance(widget_or_layout, QWidget):
+            caption.setBuddy(widget_or_layout)
+            widget_or_layout.setAccessibleName(text)
             line.addWidget(widget_or_layout, 1)
         else:
             line.addLayout(widget_or_layout, 1)
         self._layout.addLayout(line)
 
     def add_stacked(self, text: str, widget_or_layout) -> None:
-        self._layout.addWidget(label(text, "FieldLabel"))
+        caption = label(text, "FieldLabel")
+        self._layout.addWidget(caption)
         if isinstance(widget_or_layout, QWidget):
+            caption.setBuddy(widget_or_layout)
+            widget_or_layout.setAccessibleName(text)
             self._layout.addWidget(widget_or_layout)
         else:
             self._layout.addLayout(widget_or_layout)
@@ -459,8 +472,8 @@ def configure_table(table: QTableWidget, headers: Iterable[str], stretch_column:
 
 
 def fix_columns(table: QTableWidget, widths: dict) -> None:
-    """Pin ``{column: width}`` pairs so they do not jitter on refresh."""
+    """Set stable initial widths that users can resize without content jitter."""
     header = table.horizontalHeader()
     for column, width in widths.items():
-        header.setSectionResizeMode(column, QHeaderView.Fixed)
+        header.setSectionResizeMode(column, QHeaderView.Interactive)
         table.setColumnWidth(column, width)

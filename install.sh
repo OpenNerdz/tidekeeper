@@ -26,7 +26,7 @@ run_as_root() {
 install_termux_dependencies() {
     pkg update
     pkg upgrade -y
-    pkg install -y python git ffmpeg x265 clang libxml2 libxslt
+    pkg install -y python python-pip git ffmpeg x265 clang libxml2 libxslt
 }
 
 verify_termux_ffmpeg() {
@@ -62,7 +62,7 @@ install_linux_dependencies() {
     elif has_command dnf; then
         run_as_root dnf install -y python3 python3-pip git ffmpeg gcc libxml2-devel libxslt-devel
     elif has_command pacman; then
-        run_as_root pacman -Sy --needed --noconfirm python python-pip git ffmpeg gcc libxml2 libxslt
+        run_as_root pacman -Syu --needed --noconfirm python python-pip git ffmpeg gcc libxml2 libxslt
     elif has_command apk; then
         run_as_root apk add --no-cache python3 py3-pip git ffmpeg gcc musl-dev libxml2-dev libxslt-dev
     elif has_command zypper; then
@@ -100,7 +100,8 @@ install_termux_package() {
     python="$(python_command)"
     source="$(package_source)"
 
-    "$python" -m pip install --upgrade pip wheel
+    # Termux owns pip through python-pip; pip refuses to replace itself.
+    "$python" -m pip install --upgrade wheel
     "$python" -m pip install --upgrade "$source"
 }
 
@@ -157,4 +158,6 @@ main() {
     print_done
 }
 
-main "$@"
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
