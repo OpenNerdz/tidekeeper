@@ -480,14 +480,14 @@ def __concatenateFiles__(partPaths, outputPath, expectedSize=-1):
         with open(tempOutputPath, "wb") as output:
             for partPath in partPaths:
                 with open(partPath, "rb") as inputFile:
-                    shutil.copyfileobj(inputFile, output)
+                    for chunk in iter(lambda: inputFile.read(1024 * 1024), b''):
+                        check_cancelled()
+                        output.write(chunk)
+        check_cancelled()
         __verifyLocalSize__(tempOutputPath, expectedSize, label="assembled media")
         os.replace(tempOutputPath, outputPath)
-    except DownloadCancelled:
-        raise
-    except Exception:
+    finally:
         __removeFile__(tempOutputPath)
-        raise
 
 
 def __partsDirectory__(outputPath):
@@ -729,11 +729,12 @@ def __exportFlacFromContainer__(path, stream):
     except DownloadCancelled:
         raise
     except Exception as e:
-        __removeFile__(tempPath)
         logging.warning("Unable to export FLAC for %s: %s; saving container as %s", path, e, fallbackPath)
         if os.path.abspath(path) != os.path.abspath(fallbackPath):
             os.replace(path, fallbackPath)
         return fallbackPath
+    finally:
+        __removeFile__(tempPath)
 
 
 def __lyricsText__(value):

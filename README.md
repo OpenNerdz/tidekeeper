@@ -104,6 +104,15 @@ be retried with:
 tidekeeper -l "/path/to/downloads/failed-tracks.txt"
 ```
 
+URL lists accept comments starting with `#`, comma- or whitespace-separated
+URLs/IDs, and nested text files. Nested filenames resolve relative to the list
+containing them; repeated inputs and file cycles are skipped. The terminal
+continues past individual lookup failures and returns a failure status if any
+item failed.
+
+`TIDEKEEPER_DOWNLOAD_PATH` sets the default download folder on every platform,
+including Docker. An existing saved profile keeps its configured folder.
+
 ## Customizability
 Custom filename formats are supported:
 | Tokens  | Description  | Album | Track | Video | Playlist |

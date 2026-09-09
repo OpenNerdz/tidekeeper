@@ -2,7 +2,8 @@
 # -*- encoding: utf-8 -*-
 import os
 import shutil
-from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
+import tempfile
+from .runtime import print
 import sys
 
 import aigpy
@@ -32,10 +33,9 @@ def __checkDownloadPath__():
     path = SETTINGS.downloadPath or "."
     try:
         os.makedirs(path, exist_ok=True)
-        probe = os.path.join(path, ".tidekeeper-write-test")
-        with open(probe, "w", encoding="utf-8") as output:
+        with tempfile.TemporaryFile(mode="w", encoding="utf-8", dir=path) as output:
             output.write("ok")
-        os.remove(probe)
+            output.flush()
         return "OK", "Download path", os.path.abspath(path)
     except Exception as e:
         return "ERR", "Download path", str(e)

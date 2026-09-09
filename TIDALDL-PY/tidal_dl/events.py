@@ -12,6 +12,8 @@
 from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
 
+from .inputs import parse_direct_inputs
+
 from .download import *
 from .download import __wantsAtmosDownload__  # import * skips underscore names
 
@@ -146,24 +148,7 @@ def start_mix(obj: Mix, videoOnly=False, progress=None):
 
 
 def start_file(string, videoOnly=False, progress=None):
-    txt = aigpy.file.getContent(string)
-    if aigpy.string.isNull(txt):
-        Printf.err("Nothing can read!")
-        return False
-    array = txt.split('\n')
-    success = True
-    sawItem = False
-    for item in array:
-        check_cancelled()
-        if aigpy.string.isNull(item):
-            continue
-        if item[0] == '#':
-            continue
-        if item[0] == '[':
-            continue
-        sawItem = True
-        success = start(item, videoOnly, progress=progress) and success
-    return success if sawItem else False
+    return start(string, videoOnly, progress=progress)
 
 
 def start_type(etype: Type, obj, videoOnly=False, progress=None):
@@ -190,21 +175,15 @@ def start(string, videoOnly=False, progress=None):
         Printf.err('Please enter something.')
         return False
 
-    # Treat the whole input as a single token first so file paths that
-    # contain spaces are not split apart.
-    if os.path.exists(string.strip()):
-        return start_file(string.strip(), videoOnly, progress=progress)
-
-    strings = string.split(" ")
+    try:
+        strings = parse_direct_inputs(string)
+    except (OSError, ValueError) as error:
+        Printf.err(str(error))
+        return False
     success = True
     sawItem = False
     for item in strings:
         check_cancelled()
-        if aigpy.string.isNull(item):
-            continue
-        if os.path.exists(item):
-            return start_file(item, videoOnly, progress=progress)
-
         sawItem = True
         try:
             etype, obj = TIDAL_API.getByString(item)
@@ -212,7 +191,8 @@ def start(string, videoOnly=False, progress=None):
             raise
         except Exception as e:
             Printf.err(str(e) + " [" + item + "]")
-            return False
+            success = False
+            continue
 
         try:
             if not start_type(etype, obj, videoOnly, progress=progress):
@@ -467,10 +447,11 @@ def loginByAccessToken():
     print("-------------RefreshToken---------------")
     refreshToken = Printf.enter("refreshToken('0' to skip):")
     if refreshToken == '0':
-        refreshToken = TOKEN.refreshToken
+        refreshToken = None
 
     TOKEN.accessToken = token
     TOKEN.refreshToken = refreshToken
+    TIDAL_API.key.refreshToken = refreshToken
     TOKEN.userid = TIDAL_API.key.userId
     TOKEN.expiresAfter = 0
     TOKEN.countryCode = TIDAL_API.key.countryCode

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from threading import RLock, Event
 
-from ..runtime import DownloadCancelled
+from ..runtime import DownloadCancelled, redact
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
@@ -32,7 +32,7 @@ class TaskWorker(QRunnable):
             result = self.fn(*self.args, **self.kwargs)
             self.signals.result.emit(result)
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            self.signals.error.emit(redact(exc))
         finally:
             self.signals.finished.emit()
 
@@ -205,7 +205,7 @@ class DownloadWorker(QRunnable):
                     except Exception as exc:
                         failed.append(item.title)
                         self.signals.item_status.emit(item, "Failed")
-                        self.signals.log.emit(f"Failed {item.title}: {exc}\n")
+                        self.signals.log.emit(redact(f"Failed {item.title}: {exc}\n"))
                         continue
                     self.signals.item_status.emit(item, "Partial" if reporter.warnings else "Done")
                     self.signals.log.emit(f"Finished {item.title}\n")
@@ -226,6 +226,6 @@ class DownloadWorker(QRunnable):
             elif not cancelled:
                 self.signals.result.emit(items)
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            self.signals.error.emit(redact(exc))
         finally:
             self.signals.finished.emit()

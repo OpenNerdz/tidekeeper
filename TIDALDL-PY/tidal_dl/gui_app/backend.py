@@ -12,6 +12,7 @@ from typing import Callable, Iterable, List, Optional
 
 import aigpy
 
+from ..inputs import parse_direct_inputs as parse_direct_inputs
 from .. import apiKey
 from ..diagnostics import runDoctor
 from ..enums import AudioQuality, Type, VideoQuality
@@ -157,68 +158,6 @@ def to_search_item(kind: Type, item) -> SearchItem:
 
 def with_video_only(item: SearchItem, video_only: bool) -> SearchItem:
     return replace(item, video_only=video_only)
-
-
-def parse_direct_inputs(text: str, _seen_files: Optional[set] = None) -> List[str]:
-    """Split pasted URLs/IDs into one token per queue row.
-
-    Accepts newlines, commas, and space-separated http(s) URLs. A path to an
-    existing text file is expanded using the same comment-skipping rules as
-    CLI ``start_file``.
-    """
-    if text is None:
-        return []
-    stripped = str(text).strip()
-    if not stripped:
-        return []
-
-    seen_files = set() if _seen_files is None else _seen_files
-    if os.path.isfile(stripped):
-        path = os.path.abspath(stripped)
-        if path in seen_files:
-            return []
-        seen_files.add(path)
-        try:
-            with open(stripped, "r", encoding="utf-8") as handle:
-                stripped = handle.read()
-        except OSError:
-            return [stripped]
-        if not stripped.strip():
-            return []
-
-    tokens: List[str] = []
-    seen = set()
-
-    def _add(token: str):
-        token = token.strip()
-        if not token or token in seen:
-            return
-        if os.path.isfile(token):
-            for nested in parse_direct_inputs(token, seen_files):
-                if nested not in seen:
-                    seen.add(nested)
-                    tokens.append(nested)
-            return
-        seen.add(token)
-        tokens.append(token)
-
-    for line in stripped.splitlines():
-        line = line.strip()
-        if not line or line[0] in "#[{":
-            continue
-        if os.path.isfile(line):
-            _add(line)
-            continue
-        for part in line.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            if "://" in part and " " in part:
-                for piece in part.split():
-                    _add(piece)
-            else:
-                _add(part)
-    return tokens
 
 
 def format_byte_size(num) -> str:
@@ -585,6 +524,19 @@ class TidekeeperBackend:
     def open_download_folder(self, path: str = "") -> str:
         return openPath(path or SETTINGS.downloadPath)
 
+    def reload_settings(self):
+        if self._download_active:
+            raise RuntimeError('Wait for the active download to finish before changing settings.')
+        previous_client = SETTINGS.apiKeyIndex
+        SETTINGS.read(PATHS.getProfilePath())
+        if not apiKey.isItemValid(SETTINGS.apiKeyIndex):
+            SETTINGS.apiKeyIndex = apiKey.getDefaultIndex()
+        changed_client = SETTINGS.apiKeyIndex != previous_client
+        if changed_client:
+            logout()
+        TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
+        return {"reauth_required": changed_client}
+
     def api_clients(self):
         return [
             {
@@ -617,7 +569,7 @@ class TidekeeperBackend:
         with TIDAL_API._authStateLock:
             if generation != TIDAL_API._sessionGeneration:
                 raise RuntimeError('Login cancelled.')
-            TIDAL_API.key.refreshToken = refresh_token.strip() or TOKEN.refreshToken
+            TIDAL_API.key.refreshToken = refresh_token.strip() or None
             self._save_api_login_key_to_token(0)
         return self.auth_status()
 
@@ -645,6 +597,10 @@ class TidekeeperBackend:
 
 
 class DemoBackend(TidekeeperBackend):
+    def reload_settings(self):
+        self.initialize()
+        return {"reauth_required": False}
+
     def load_queue(self):
         return []
 

@@ -316,6 +316,59 @@ class GuiQueueTests(unittest.TestCase):
         event.ignore.assert_called_once()
         event.accept.assert_not_called()
 
+    def test_queue_summary_distinguishes_stopped_and_partial_items(self):
+        items = self.backend.search('song', self.Type.Track)[:4]
+        for item, status in zip(items, ('Queued', 'Partial', 'Cancelled', 'Interrupted')):
+            item.status = status
+        self.window.queue = items
+        self.window.refresh_queue_table()
+        text = self.window.queue_status.text()
+        for label in ('1 queued', '1 partial', '1 cancelled', '1 interrupted'):
+            self.assertIn(label, text)
+        self.assertNotIn('4 queued', text)
+
+    def test_queue_errors_escape_markup(self):
+        self.window._set_queue_message('Failed <album> & retry')
+        self.assertIn('&lt;album&gt; &amp; retry', self.window.queue_status.text())
+
+    def test_retry_resets_previous_progress_and_quality(self):
+        item = self.backend.search('song', self.Type.Track)[0]
+        item.status = 'Partial'
+        item.progress_percent = 75
+        item.actual_quality = 'old quality'
+        self.window.queue = [item]
+        self.window.refresh_queue_table()
+        self.window._set_queue_item_status(item, 'Downloading')
+        self.assertEqual(item.progress_percent, 0)
+        self.assertEqual(item.actual_quality, '')
+
+    def test_logs_are_plain_text_and_bounded(self):
+        self.window.account_log.append('<b>literal log text</b>')
+        self.assertIn('<b>literal log text</b>', self.window.account_log.toPlainText())
+        for index in range(2100):
+            self.window.account_log.append(str(index))
+        self.assertLessEqual(self.window.account_log.document().blockCount(), 2000)
+
+    def test_download_log_preserves_scroll_position(self):
+        self.window.show()
+        self.window.log_toggle.setChecked(True)
+        self.window.append_download_log('line\n' * 1000)
+        self.app.processEvents()
+        scrollbar = self.window.download_log.verticalScrollBar()
+        self.assertGreater(scrollbar.maximum(), 0)
+        scrollbar.setValue(0)
+        self.window.append_download_log('next line\n')
+        self.assertEqual(scrollbar.value(), 0)
+
+    def test_reload_settings_reads_backend(self):
+        with mock.patch.object(self.backend, 'reload_settings', return_value={}) as reload:
+            self.window.reload_settings()
+            reload.assert_called_once_with()
+
+    def test_empty_search_explains_no_matches(self):
+        self.window.set_search_results([])
+        self.assertIn('No results', self.window.results_empty._label.text())
+
 
 if __name__ == "__main__":
     unittest.main()

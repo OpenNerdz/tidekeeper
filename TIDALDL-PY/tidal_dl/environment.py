@@ -9,7 +9,7 @@ TERMUX_HOME = "/com.termux/files/home"
 
 
 def isTermux(environ=None):
-    environ = environ or os.environ
+    environ = os.environ if environ is None else environ
     prefix = environ.get("PREFIX", "")
     home = environ.get("HOME", "")
     return (
@@ -20,7 +20,7 @@ def isTermux(environ=None):
 
 
 def getTermuxDownloadPath(environ=None):
-    environ = environ or os.environ
+    environ = os.environ if environ is None else environ
     if environ.get("TIDEKEEPER_DOWNLOAD_PATH"):
         return environ["TIDEKEEPER_DOWNLOAD_PATH"]
 
@@ -40,6 +40,9 @@ def getTermuxDownloadPath(environ=None):
 
 
 def getDefaultDownloadPath(environ=None):
+    environ = os.environ if environ is None else environ
+    if environ.get("TIDEKEEPER_DOWNLOAD_PATH"):
+        return environ["TIDEKEEPER_DOWNLOAD_PATH"]
     if isTermux(environ):
         return getTermuxDownloadPath(environ)
     return "./download/"

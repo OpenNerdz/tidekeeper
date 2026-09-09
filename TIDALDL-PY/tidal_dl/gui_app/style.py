@@ -252,7 +252,7 @@ QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
     width: 16px;
 }
 
-QTextEdit#Log {
+QPlainTextEdit#Log {
     background: %(bg)s;
     border: none;
     border-top: 1px solid %(border)s;

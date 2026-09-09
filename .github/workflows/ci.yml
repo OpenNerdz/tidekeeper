@@ -35,6 +35,7 @@ jobs:
       - name: Installer script syntax
         run: |
           bash -n ../install.sh
+          bash -n ../build.sh
           bash -n ../scripts/install-termux.sh
 
   test:
