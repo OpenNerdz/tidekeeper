@@ -42,8 +42,10 @@ bash -n ../install.sh
 bash -n ../scripts/install-termux.sh
 ```
 
-Ruff is configured for a high-signal subset of rules (syntax errors, undefined
-names, bare `except`). Prefer fixing those over large style-only refactors.
+Ruff checks syntax errors, undefined names, bare `except`, unused imports and
+locals, duplicate definitions, and wildcard imports. Use explicit imports so
+undefined names cannot hide behind transitive dependencies. Prefer these checks
+over large style-only refactors.
 
 ## Pull Request Guidelines
 

@@ -1,9 +1,6 @@
 import copy
 import json
-import logging
-import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import threading
@@ -14,8 +11,8 @@ from unittest import mock
 import requests
 
 import tidal_dl
-from tidal_dl import download, events
-from tidal_dl.enums import AudioQuality, Type, VideoQuality
+from tidal_dl import download
+from tidal_dl.enums import Type, VideoQuality
 from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend, queue_item
 from tidal_dl.manifests import dash_segments, hls_segments, hls_variants
 from tidal_dl.paths import PATHS
@@ -375,7 +372,20 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(restored[0].status, 'Interrupted')
         self.assertEqual(restored[0].identifier, '1')
         self.assertIsNone(restored[0].source)
+        self.assertIn('Resume', restored[0].status_detail)
         self.assertEqual((self.root / '.tidekeeper-queue.json').stat().st_mode & 0o777, 0o600)
+
+    def test_queue_persists_bounded_redacted_failure_details(self):
+        item = SearchItem(Type.Track, 'Song', '', '', '1', '', None, status='Failed',
+                          status_detail='access_token=dummy-secret Could not load stream. ' + 'x' * 3000)
+        backend = TidekeeperBackend()
+        with mock.patch.object(PATHS, 'getConfigDirectory', return_value=str(self.root)):
+            backend.save_queue([item])
+            restored = backend.load_queue()
+        self.assertEqual(restored[0].status, 'Failed')
+        self.assertIn('Could not load stream', restored[0].status_detail)
+        self.assertLessEqual(len(restored[0].status_detail), 2000)
+        self.assertNotIn('dummy-secret', (self.root / '.tidekeeper-queue.json').read_text())
 
     def test_unavailable_collection_entries_reach_warning_summary(self):
         api = TidalAPI()

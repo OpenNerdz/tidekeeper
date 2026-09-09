@@ -664,6 +664,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             text=json.dumps({"ok": True}),
             headers={},
             url="https://api.tidal.com/v1/tracks/123/playbackinfopostpaywall/v4",
+            close=mock.Mock(),
         )
         try:
             events.SETTINGS.downloadDelay = True
@@ -1378,7 +1379,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
     def test_get_cover_data_uses_timeout(self):
         api = TidalAPI()
-        response = SimpleNamespace(content=b"cover")
+        response = SimpleNamespace(content=b"cover", raise_for_status=mock.Mock(), close=mock.Mock())
         with mock.patch.object(api.session, "get", return_value=response) as get:
             self.assertEqual(api.getCoverData("abc-def"), b"cover")
 
@@ -2022,7 +2023,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
     @unittest.skipIf(sys.platform.startswith("win"), "POSIX file mode check")
     def test_token_save_restricts_file_permissions(self):
-        token = events.TokenSettings()
+        token = TokenSettings()
         token.accessToken = "access"
         token.refreshToken = "refresh"
         with tempfile.TemporaryDirectory() as temp_dir:

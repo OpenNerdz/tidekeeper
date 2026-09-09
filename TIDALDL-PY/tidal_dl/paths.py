@@ -14,8 +14,10 @@ import sys
 import aigpy
 import datetime
 
-from .tidal import *
-from .settings import *
+from .enums import AudioQuality, Type
+from .model import StreamUrl
+from .tidal import TIDAL_API
+from .settings import SETTINGS
 
 
 def __fixPath__(name: str):

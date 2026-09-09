@@ -9,7 +9,7 @@
 @Desc    :
 '''
 
-from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
+from .runtime import check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
 import os
 import shutil
@@ -23,10 +23,15 @@ from threading import Lock, local
 import aigpy
 import requests
 
-from .decryption import *
-from .printf import *
-from .tidal import *
+from .decryption import decrypt_file, decrypt_security_token
+from .enums import AudioQuality, Type
+from .model import Album, Lyrics, Playlist, Track, Video
+from .paths import getAlbumPath, getTrackPath, getVideoPath
+from .printf import Printf
+from .settings import SETTINGS
+from .tidal import TIDAL_API
 from .manifests import hls_segments
+from .http import retry_delay
 from .transfer_state import prepare_transfer, complete_transfer, audio_identity, video_identity, record_completion, is_completed
 from .runtime import run_process, redact
 
@@ -48,7 +53,9 @@ def __httpSession__():
     if session is None:
         session = requests.Session()
         pool_size = max(TRACK_THREAD_COUNT, VIDEO_THREAD_COUNT) + 2
-        adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=3)
+        # Request/transfer loops own retries so cancellation and attempt limits
+        # apply to every network attempt, including connection failures.
+        adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=0)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         download_session_state.session = session
@@ -126,12 +133,7 @@ def __ensureParentDir__(path):
 
 
 def __retryDelay__(response, attempt):
-    if response is not None and response.headers.get("Retry-After"):
-        try:
-            return min(float(response.headers["Retry-After"]), 60)
-        except ValueError:
-            pass
-    return min(2 ** attempt, 20)
+    return retry_delay(response, default=min(2 ** attempt, 20), cap=60)
 
 
 def __shouldRetryDownload__(error=None):
@@ -142,14 +144,14 @@ def __shouldRetryDownload__(error=None):
     return status in RETRYABLE_STATUS_CODES
 
 
-def __httpRequest__(method, url, **kwargs):
+def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
     last_error = None
-    for attempt in range(DOWNLOAD_RETRIES):
+    for attempt in range(attempts):
         check_cancelled()
         response = None
         try:
             response = __httpSession__().request(method, url, timeout=DOWNLOAD_TIMEOUT, **kwargs)
-            if response.status_code in RETRYABLE_STATUS_CODES and attempt < DOWNLOAD_RETRIES - 1:
+            if response.status_code in RETRYABLE_STATUS_CODES and attempt < attempts - 1:
                 response.close()
                 cancellable_sleep(__retryDelay__(response, attempt))
                 continue
@@ -157,7 +159,7 @@ def __httpRequest__(method, url, **kwargs):
             return response
         except requests.RequestException as e:
             last_error = e
-            retry = attempt < DOWNLOAD_RETRIES - 1 and __shouldRetryDownload__(e)
+            retry = attempt < attempts - 1 and __shouldRetryDownload__(e)
             if response is not None:
                 response.close()
             if retry:
@@ -207,9 +209,6 @@ def __contentLength__(url):
     try:
         response = __httpRequest__("HEAD", url, allow_redirects=True)
         try:
-            size = __parseIntHeader__(response.headers.get("Content-Length"))
-            if size > 0:
-                return size
             size = __contentTotalSize__(response)
             if size > 0:
                 return size
@@ -233,8 +232,9 @@ def __contentLength__(url):
             size = __contentTotalSize__(response)
             if size > 0:
                 return size
-            size = __parseIntHeader__(response.headers.get("Content-Length"))
-            return size if size > 0 else -1
+            # A 206 Content-Length describes only the range body (often one
+            # byte), not the object. Unknown totals must remain unknown.
+            return -1
         finally:
             response.close()
     except DownloadCancelled:
@@ -302,9 +302,11 @@ def __isReusableAssembledFile__(path, expectedSize=-1):
 
 
 def __verifyLocalSize__(path, expectedSize, label="download"):
-    if expectedSize is None or expectedSize <= 0:
-        return __localFileSize__(path)
     actual = __localFileSize__(path)
+    if actual <= 0:
+        raise IOError(f"Incomplete {label}: received an empty file")
+    if expectedSize is None or expectedSize <= 0:
+        return actual
     if actual != expectedSize:
         raise IOError(
             f"Incomplete {label}: got {actual} bytes, expected {expectedSize}"
@@ -406,7 +408,7 @@ def __downloadSingleUrl__(
         headers = {"Range": f"bytes={resumeSize}-"} if resumeSize > 0 else {}
         response = None
         try:
-            response = __httpRequest__("GET", url, stream=True, allow_redirects=True, headers=headers)
+            response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True, headers=headers)
             mode = "wb"
             if resumeSize > 0:
                 rangeStart = __contentRangeStart__(response)
@@ -427,7 +429,7 @@ def __downloadSingleUrl__(
                     response = None
                     __removeFile__(tempOutputPath)
                     resumeSize = 0
-                    response = __httpRequest__("GET", url, stream=True, allow_redirects=True)
+                    response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True)
                     mode = "wb"
 
             responseTotal = __contentTotalSize__(response)
@@ -438,14 +440,19 @@ def __downloadSingleUrl__(
                 if contentLength > 0:
                     knownTotal = contentLength
 
+            writtenBytes = resumeSize if mode == 'ab' else 0
             with open(tempOutputPath, mode) as output:
                 for chunk in response.iter_content(chunk_size=chunkSize):
                     check_cancelled()
                     if not chunk:
                         continue
                     output.write(chunk)
-                    __noteProgress__(progress, userProgress, len(chunk), progressLock)
-                    reportedBytes += len(chunk)
+                    writtenBytes += len(chunk)
+                    # If Range was ignored, re-downloaded bytes must not be
+                    # credited twice. Keep the reported high-water mark.
+                    credit = max(writtenBytes - reportedBytes, 0)
+                    __noteProgress__(progress, userProgress, credit, progressLock)
+                    reportedBytes += credit
 
             __verifyLocalSize__(tempOutputPath, knownTotal, label="CDN object")
             os.replace(tempOutputPath, outputPath)
@@ -457,6 +464,7 @@ def __downloadSingleUrl__(
                 if remote_total > 0 and resumeSize == remote_total and knownTotal in (-1, remote_total):
                     __verifyLocalSize__(tempOutputPath, remote_total)
                     os.replace(tempOutputPath, outputPath)
+                    __noteProgress__(progress, userProgress, max(remote_total - reportedBytes, 0), progressLock)
                     return remote_total
                 # A stale or overlong sidecar cannot be resumed.
                 __removeFile__(tempOutputPath)
@@ -465,7 +473,12 @@ def __downloadSingleUrl__(
             lastError = error
             if attempt >= DOWNLOAD_RETRIES - 1 or not __shouldRetryDownload__(error):
                 raise
-            cancellable_sleep(__retryDelay__(response, attempt))
+            retry_response = failed_response if failed_response is not None else response
+            delay = __retryDelay__(retry_response, attempt)
+            if response is not None:
+                response.close()
+                response = None
+            cancellable_sleep(delay)
         finally:
             if response is not None:
                 response.close()
@@ -620,20 +633,6 @@ def __downloadUrls__(
     except Exception as e:
         # Keep complete segments under outputPath.parts for the next attempt.
         return False, str(e)
-
-
-def __isSkip__(finalpath, urls):
-    if not SETTINGS.checkExist:
-        return False
-    curSize = __localFileSize__(finalpath)
-    if curSize <= 0:
-        return False
-    if __localFileSize__(finalpath + ".download") > 0:
-        return False
-    netSize = __remoteSize__(urls)
-    if netSize <= 0:
-        return False
-    return curSize >= netSize
 
 
 def __downloadErrorHint__(err):

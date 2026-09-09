@@ -19,15 +19,15 @@ import shutil
 from . import apiKey as apiKey
 
 from .enums import Type
-from .model import *
-from .paths import *
-from .settings import *
+from .model import Album, Artist, StreamUrl, Track, Video, VideoStreamUrl
+from .paths import PATHS
+from .settings import SETTINGS, TOKEN
 from .tidal import TIDAL_API
 from .environment import isTermux
-from .lang.language import *
+from .lang.language import LANG
 
 
-VERSION = '2026.9.9.0'
+VERSION = '2026.9.9.1'
 PROJECT_URL = 'https://github.com/OpenNerdz/tidekeeper'
 
 print_mutex = threading.Lock()

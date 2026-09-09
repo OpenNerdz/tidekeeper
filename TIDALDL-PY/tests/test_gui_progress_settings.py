@@ -1,6 +1,6 @@
 import sys
 import unittest
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from unittest import mock
 
 

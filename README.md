@@ -56,7 +56,7 @@ export TIDEKEEPER_DOWNLOAD_PATH="/storage/emulated/0/Download/Tidekeeper"
 
 ### Prebuilt binaries
 
-Terminal and desktop GUI executables for Windows, macOS, and Linux are attached
+Terminal and desktop GUI executables for Windows, macOS, and Linux (x86-64 and ARM64) are attached
 to each [GitHub Release](https://github.com/OpenNerdz/tidekeeper/releases).
 
 ### Docker
@@ -160,8 +160,19 @@ so the queue stays in view. After installing with the GUI extra above, launch it
 with `tidekeeper-gui` or `tidekeeper --gui`. Update GUI installs with
 `tidekeeper --update-gui` or the **Update** button in the Account panel.
 
+Repeated additions reuse an unfinished queue job, including a pasted link to a
+catalog result already queued. **Clear done** removes completed rows; **Undo**
+restores the last removal. **Retry incomplete** retries failed, partial,
+interrupted, or cancelled jobs. Select a row to read its failure details.
+
+Search can be cancelled while it runs. Settings mark unsaved changes; download
+options apply to the next run, and **Save** keeps them after restarting. Changing
+the TIDAL client requires saving and signing in again. Tables hide secondary
+columns when space is tight; title tooltips retain the additional information.
+
 Shortcuts: `Ctrl+F` search, `Enter` on a result adds it to the queue, `Delete`
-removes queue rows, `Ctrl+,` opens Settings, `Esc` closes the side panel.
+removes queue rows, `Ctrl+Z` in the queue undoes removal, `Ctrl+,` opens Settings,
+and `Esc` closes the side panel.
 
 ![Workspace: search, results and queue](docs/screenshots/workspace.png)
 

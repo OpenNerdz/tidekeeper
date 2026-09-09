@@ -16,6 +16,7 @@ import base64
 import json
 from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep, report_warning
 import logging
+import math
 from collections import OrderedDict
 from threading import Lock, RLock
 from typing import List
@@ -40,6 +41,7 @@ from .model import (
     VideoStreamUrl,
 )
 from .manifests import dash_segments, hls_variants
+from .http import retry_delay
 from .settings import SETTINGS, TOKEN, Settings, syncPlaybackRateLimiter
 
 REQUEST_TIMEOUT = (5, 60)
@@ -130,7 +132,7 @@ class RateLimitWaitBudget:
         self.attempts = 0
 
     def allows(self, delay):
-        return self.waited + delay <= self.maxWaitSeconds
+        return math.isfinite(delay) and delay > 0 and self.waited + delay <= self.maxWaitSeconds
 
     def record(self, delay):
         self.waited += delay
@@ -193,7 +195,8 @@ class TidalAPI(object):
 
     def __responseBody__(self, response):
         try:
-            return response.json()
+            body = response.json()
+            return body if isinstance(body, dict) else {}
         except ValueError:
             return {}
 
@@ -363,7 +366,8 @@ class TidalAPI(object):
         if not isinstance(error, TidalApiError):
             return False
         if error.statusCode == 429:
-            return False
+            # A 429 reaches this handler only after its wait budget is spent.
+            return True
         if self.__isPlaybackBlockedError__(error):
             return True
         if playbackRequest and error.statusCode == 401:
@@ -406,19 +410,8 @@ class TidalAPI(object):
         return self.__isRateLimitError__(error) or self.__isStaleClientError__(error)
 
     def __retryAfter__(self, response, attempt):
-        retryAfter = getattr(response, 'headers', {}).get('Retry-After') if response is not None else None
-        delay = None
-        if retryAfter:
-            try:
-                delay = min(float(retryAfter), 300)
-            except ValueError:
-                pass
-        if delay is None:
-            delay = min(5 * (attempt + 1), 30)
-        minimum = self.__requestIntervalSeconds__()
-        if minimum > 0:
-            delay = max(delay, minimum)
-        return delay
+        return retry_delay(response, default=min(5 * (attempt + 1), 30), cap=300,
+                           minimum=max(1.0, self.__requestIntervalSeconds__()))
 
     def __get__(self, path, params=None, urlpre=None):
         if urlpre is not None:
@@ -521,6 +514,8 @@ class TidalAPI(object):
                 if index >= maxAttempts - 1 and respond is not None:
                     errmsg += respond.text
             finally:
+                if respond is not None:
+                    respond.close()
                 if consumeAttempt:
                     index += 1
 
@@ -550,7 +545,7 @@ class TidalAPI(object):
             except Exception as e:
                 last_error = e
                 logging.debug("Playback request failed for %s%s: %s", base, path, e)
-                if self.__isPlaybackBlockedError__(e):
+                if self.__isPlaybackBlockedError__(e) or self.__shouldSkipOpenApiFallback__(e):
                     break
         raise last_error
 
@@ -593,6 +588,7 @@ class TidalAPI(object):
         url = urlpre + path
         lastAttempt = AUTH_MAX_ATTEMPTS - 1
         for attempt in range(AUTH_MAX_ATTEMPTS):
+            check_cancelled()
             response = None
             try:
                 response = self.session.post(url, data=data, auth=auth, timeout=REQUEST_TIMEOUT)
@@ -1084,63 +1080,67 @@ class TidalAPI(object):
             params.append(('formats', item))
 
         response = None
-        refreshedToken = False
-        rateLimitBudget = RateLimitWaitBudget()
-        # Mirrors __getOnce__: only asset-not-ready responses consume attempts;
-        # 429s are bounded by the wait budget and token refresh happens once.
-        attempt = 0
-        while attempt < PLAYBACK_ASSET_NOT_READY_ATTEMPTS:
-            check_cancelled()
-            self.__waitForStreamRequestQuota__()
-            response = self.session.get(
-                f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
-                headers={
-                    'authorization': f'Bearer {self.key.accessToken}',
-                    'Accept': 'application/vnd.api+json',
-                },
-                params=params,
-                timeout=REQUEST_TIMEOUT,
-            )
-
-            if response.status_code == 429:
-                self.__backOffForRateLimit__("Track manifest request", response, rateLimitBudget)
-                continue
-
-            if response.status_code == 401 and self.__isAssetNotReady__(response):
-                self.__backOffForAssetNotReady__(response, attempt)
-                attempt += 1
-                continue
-
-            if response.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():
-                refreshedToken = True
-                response.close()
-                continue
-
-            break
-
-        if response is None or response.status_code != 200:
-            raise self.__httpError__("Track manifest request", response)
-
         try:
-            data = response.json()
-        except ValueError as error:
-            raise TidalApiError(
-                "Track manifest request failed: TIDAL returned invalid JSON.",
-                response.status_code,
-            ) from error
-        if not isinstance(data, dict):
-            raise TidalApiError(
-                "Track manifest request failed: TIDAL returned an invalid JSON payload.",
-                response.status_code,
-            )
-        attributes = data.get('data', {}).get('attributes')
-        if not isinstance(attributes, dict):
-            raise TidalApiError(
-                "Track manifest request failed: response attributes are missing.",
-                response.status_code,
-            )
-        self.__rewardStreamRequest__()
-        return attributes
+            refreshedToken = False
+            rateLimitBudget = RateLimitWaitBudget()
+            # Mirrors __getOnce__: only asset-not-ready responses consume attempts;
+            # 429s are bounded by the wait budget and token refresh happens once.
+            attempt = 0
+            while attempt < PLAYBACK_ASSET_NOT_READY_ATTEMPTS:
+                check_cancelled()
+                self.__waitForStreamRequestQuota__()
+                response = self.session.get(
+                    f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
+                    headers={
+                        'authorization': f'Bearer {self.key.accessToken}',
+                        'Accept': 'application/vnd.api+json',
+                    },
+                    params=params,
+                    timeout=REQUEST_TIMEOUT,
+                )
+
+                if response.status_code == 429:
+                    self.__backOffForRateLimit__("Track manifest request", response, rateLimitBudget)
+                    continue
+
+                if response.status_code == 401 and self.__isAssetNotReady__(response):
+                    self.__backOffForAssetNotReady__(response, attempt)
+                    attempt += 1
+                    continue
+
+                if response.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():
+                    refreshedToken = True
+                    response.close()
+                    continue
+
+                break
+
+            if response is None or response.status_code != 200:
+                raise self.__httpError__("Track manifest request", response)
+
+            try:
+                data = response.json()
+            except ValueError as error:
+                raise TidalApiError(
+                    "Track manifest request failed: TIDAL returned invalid JSON.",
+                    response.status_code,
+                ) from error
+            if not isinstance(data, dict):
+                raise TidalApiError(
+                    "Track manifest request failed: TIDAL returned an invalid JSON payload.",
+                    response.status_code,
+                )
+            attributes = data.get('data', {}).get('attributes')
+            if not isinstance(attributes, dict):
+                raise TidalApiError(
+                    "Track manifest request failed: response attributes are missing.",
+                    response.status_code,
+                )
+            self.__rewardStreamRequest__()
+            return attributes
+        finally:
+            if response is not None:
+                response.close()
 
     def __openApiFlacSoundQuality__(self, formats):
         available = set(formats or [])
@@ -1519,10 +1519,19 @@ class TidalAPI(object):
 
     def getCoverData(self, sid, width="320", height="320"):
         url = self.getCoverUrl(sid, width, height)
+        if not url:
+            return b''
+        response = None
         try:
-            return self.session.get(url, timeout=REQUEST_TIMEOUT).content
+            check_cancelled()
+            response = self.session.get(url, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            return response.content
         except requests.RequestException:
-            return ''
+            return b''
+        finally:
+            if response is not None:
+                response.close()
 
     def __artistList__(self, artists):
         if isinstance(artists, (list, tuple)):

@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 2026.9.9.1 - 2026-09-09
+
+- Bounded CDN retries at the transfer layer, stopped playback endpoint fallback after rate-limit exhaustion, and made zero/invalid retry delays safe. Shared retry parsing now supports HTTP-date headers.
+- Closed catalog, manifest, and artwork responses consistently. Artwork HTTP failures are no longer returned as image data, and size probes no longer mistake a partial response length for the whole file.
+- Rejected empty completed transfers and prevented double-counted progress when a server restarts a resumed download.
+- Protected active queue items from the Delete shortcut and direct queue-removal actions.
+- Read settings and token files consistently as UTF-8, support byte-order marks, and recover from invalid encoding without reusing stale values.
+- Replaced wildcard imports with explicit dependencies, removed the obsolete size-only skip helper and unused imports, and expanded lint checks to prevent their return.
+- Consolidated queue insertion and prevent duplicate unfinished jobs, including equivalent catalog selections and pasted links. Added undo for removal, Clear done, and retry for partial, cancelled, and interrupted jobs.
+- Show persistent, redacted failure details beside selected queue rows, with inline search errors and automatic download-log opening when attention is needed.
+- Added cancellable searches, explicit unsaved-settings feedback, and a compact table layout that preserves readable titles beside Settings or Account.
+- Restore runtime settings after a failed save before changing the login client. Demo settings now share the real conversion code and preserve enum types when saved and reloaded.
+- Build Linux ARM64 terminal and desktop executables in GitHub Actions alongside Windows, macOS, and Linux x86-64 releases.
 
 ## 2026.9.9.0 - 2026-09-09
 

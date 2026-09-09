@@ -24,9 +24,13 @@ select = [
     "F63",  # invalid print/star-expression usage
     "F7",   # syntax errors in statements
     "F82",  # undefined names
+    "F401", # unused imports
+    "F403", # wildcard imports hide dependencies and undefined names
+    "F405", # unresolved names from wildcard imports
+    "F811", # overwritten definitions
+    "F841", # unused local variables
     "E722", # bare except
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = []
-

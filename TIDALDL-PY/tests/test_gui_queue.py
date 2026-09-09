@@ -84,6 +84,21 @@ class GuiQueueTests(unittest.TestCase):
         self.window.start_queue_download()
         self.assertEqual(started, [queued])
 
+    def test_queue_removal_slots_preserve_items_during_download(self):
+        item = self.SearchItem(self.Type.Track, 'Active', '', '', '1', '', None, status='Downloading')
+        self.window.queue = [item]
+        self.window.refresh_queue_table()
+        self.window.queue_table.selectRow(0)
+        self.window.download_in_progress = True
+        # Delete invokes the removal slot directly even when its button is disabled.
+        self.window.remove_selected_queue_items()
+        self.window.clear_queue()
+        self.assertEqual(self.window.queue, [item])
+        self.assertEqual(self.window.queue_table.rowCount(), 1)
+        self.window.download_in_progress = False
+        self.window.remove_selected_queue_items()
+        self.assertEqual(self.window.queue, [])
+
     def test_live_queued_items_ignore_active_failed_and_done(self):
         done = self.SearchItem(self.Type.Track, "Done", "", "", "1", "", SimpleNamespace(id=1), status="Done")
         failed = self.SearchItem(self.Type.Track, "Failed", "", "", "2", "", SimpleNamespace(id=2), status="Failed")
@@ -104,6 +119,7 @@ class GuiQueueTests(unittest.TestCase):
                     log=SimpleNamespace(connect=lambda *_: None),
                     item_status=SimpleNamespace(connect=lambda *_: None),
                     item_progress=SimpleNamespace(connect=lambda *_: None),
+                    item_detail=SimpleNamespace(connect=lambda *_: None),
                     result=SimpleNamespace(connect=lambda *_: None),
                     error=SimpleNamespace(connect=lambda *_: None),
                     finished=SimpleNamespace(connect=lambda *_: None),
@@ -121,6 +137,249 @@ class GuiQueueTests(unittest.TestCase):
 
         self.assertEqual(captured["items"], [queued])
         self.assertEqual(captured["more_items"], self.window._live_queued_items)
+
+    def test_catalog_selection_and_equivalent_links_share_one_unfinished_job(self):
+        item = self.backend.search('song', self.Type.Track)[0]
+        self.window.set_search_results([item])
+        self.window.results_table.selectRow(0)
+        self.window.add_selected_to_queue()
+        self.window.add_selected_to_queue()
+        self.window.direct_text.setPlainText(f'https://tidal.com/browse/track/{item.identifier}?share=1')
+        self.window.add_direct_to_queue()
+        self.assertEqual(len(self.window.queue), 1)
+        self.assertIn('already in the queue', self.window.queue_status.toolTip())
+        with mock.patch.object(self.window, 'start_downloads') as start:
+            self.window.download_direct()
+        start.assert_called_once_with(self.window.queue)
+        self.window.queue[0].status = 'Done'
+        self.window.add_selected_to_queue()
+        self.assertEqual([row.status for row in self.window.queue], ['Done', 'Queued'])
+
+    def test_audio_and_video_only_collections_are_distinct_jobs(self):
+        from tidal_dl.gui_app.backend import queue_item
+        item = self.backend.search('album', self.Type.Album)[0]
+        jobs = self.window._enqueue_items([queue_item(item), queue_item(item, video_only=True)])
+        self.assertEqual(len(jobs), 2)
+
+    def test_sorted_removal_undo_restores_order_and_preserves_new_jobs(self):
+        from PySide6.QtCore import Qt
+        original = self.backend.search('song', self.Type.Track)[:3]
+        self.window.queue = list(original)
+        self.window.refresh_queue_table()
+        self.window.queue_table.sortItems(1, Qt.DescendingOrder)
+        self.window.queue_table.selectRow(1)
+        removed = self.window._row_item(self.window.queue_table, 1)
+        self.window.remove_selected_queue_items()
+        self.assertNotIn(removed, self.window.queue)
+        added = self.backend.direct_item('https://tidal.com/browse/track/123')
+        self.window._enqueue_items([added])
+        self.window.undo_queue_removal()
+        self.assertEqual(self.window.queue, original + [added])
+        self.assertFalse(self.window.undo_queue_button.isEnabled())
+
+    def test_undo_does_not_duplicate_readded_unfinished_jobs(self):
+        from tidal_dl.gui_app.backend import queue_item
+        item = self.backend.search('song', self.Type.Track)[0]
+        self.window._enqueue_items([item])
+        self.window.clear_queue()
+        replacement = queue_item(item)
+        self.window._enqueue_items([replacement])
+        self.window.undo_queue_removal()
+        self.assertEqual(self.window.queue, [replacement])
+
+    def test_clear_done_keeps_incomplete_jobs_and_supports_undo(self):
+        items = self.backend.search('song', self.Type.Track)[:3]
+        items[0].status, items[1].status = 'Done', 'Failed'
+        self.window.queue = list(items)
+        self.window.refresh_queue_table()
+        self.window.download_log.setPlainText('Retain diagnostic history')
+        self.window.clear_completed_queue_items()
+        self.assertEqual(self.window.queue, items[1:])
+        self.assertIn('Retain diagnostic history', self.window.download_log.toPlainText())
+        self.window.undo_queue_removal()
+        self.assertEqual(self.window.queue, items)
+
+    def test_retry_incomplete_resets_attempt_state_and_keeps_new_jobs(self):
+        items = self.backend.search('song', self.Type.Track)[:6]
+        statuses = ['Failed', 'Partial', 'Interrupted', 'Cancelled', 'Done', 'Queued']
+        for item, status in zip(items, statuses):
+            item.status = status
+            item.status_detail = 'Previous attempt'
+            item.actual_quality = 'LOW'
+            item.progress_percent = 50
+        self.window.queue = items
+        self.window.refresh_queue_table()
+        with mock.patch.object(self.window, 'start_downloads') as start:
+            self.window.retry_failed_downloads()
+        start.assert_called_once_with(items[:4])
+        for item in items[:4]:
+            self.assertEqual((item.status, item.status_detail, item.actual_quality, item.progress_percent),
+                             ('Queued', '', '', 0))
+        self.assertEqual([item.status for item in items[4:]], ['Done', 'Queued'])
+
+    def test_failure_details_are_visible_selectable_and_redacted(self):
+        from PySide6.QtCore import Qt
+        item = self.backend.search('song', self.Type.Track)[0]
+        self.window._enqueue_items([item])
+        self.window._set_queue_item_detail(item, 'Cannot load stream: access_token=dummy-secret')
+        self.window._set_queue_item_status(item, 'Failed')
+        self.window.queue_table.selectRow(0)
+        self.assertFalse(self.window.queue_detail.isHidden())
+        self.assertNotIn('dummy-secret', self.window.queue_detail.text())
+        self.assertIn('Cannot load stream', self.window.queue_detail.text())
+        self.assertEqual(self.window.queue_detail.textFormat(), Qt.PlainText)
+        self.assertEqual(self.window.queue_table.item(0, 4).toolTip(), item.status_detail)
+        self.window._set_queue_item_status(item, 'Downloading')
+        self.assertEqual(item.status_detail, '')
+        self.assertTrue(self.window.queue_detail.isHidden())
+
+    def test_settings_dirty_save_and_reload_preserve_enum_types(self):
+        from tidal_dl.enums import AudioQuality, VideoQuality
+        from tidal_dl.settings import SETTINGS
+        self.assertFalse(self.window.save_settings_button.isEnabled())
+        self.window.audio_quality.setCurrentText('HiFi')
+        self.assertTrue(self.window.save_settings_button.isEnabled())
+        self.assertEqual(self.window.settings_status.text(), 'Unsaved changes')
+        self.window.save_settings()
+        self.assertEqual(SETTINGS.audioQuality, AudioQuality.HiFi)
+        self.assertIsInstance(SETTINGS.videoQuality, VideoQuality)
+        self.assertFalse(self.window.save_settings_button.isEnabled())
+        saved = self.window.collect_settings_values()
+        self.window.audio_quality.setCurrentText('Normal')
+        self.window.apply_settings_for_download()
+        self.window.reload_settings()
+        self.assertEqual(self.window.collect_settings_values(), saved)
+        self.assertFalse(self.window.save_settings_button.isEnabled())
+
+    def test_failed_settings_save_keeps_unsaved_indicator(self):
+        self.window.download_path.setText('/new/path')
+        with mock.patch.object(self.backend, 'save_settings', side_effect=OSError('Disk full')):
+            self.window.save_settings()
+        self.assertEqual(self.window.settings_status.text(), 'Disk full')
+        self.assertTrue(self.window.save_settings_button.isEnabled())
+        self.assertIn('•', self.window.settings_toggle.text())
+
+    def test_cancel_search_keeps_previous_results_and_suppresses_late_callbacks(self):
+        original = self.backend.search('song', self.Type.Track)[:1]
+        self.window.set_search_results(original)
+        self.window.search_text.setText('new search')
+        with mock.patch.object(self.window, 'start_worker'):
+            self.window.run_search()
+        worker = self.window.search_worker
+        self.assertEqual(self.window.search_button.text(), 'Cancel')
+        self.window.run_search()
+        self.assertFalse(self.window.search_button.isEnabled())
+        worker.signals.result.emit([])
+        worker.signals.error.emit('An obsolete failure')
+        worker.signals.finished.emit()
+        self.assertEqual(self.window.results, original)
+        self.assertEqual(self.window.search_status.text(), 'Search cancelled')
+        self.assertEqual(self.window.search_button.text(), 'Search')
+        self.assertTrue(self.window.search_button.isEnabled())
+
+    def test_search_and_download_failures_use_inline_feedback(self):
+        with mock.patch('tidal_dl.gui_app.main_window.QMessageBox.warning') as warning:
+            self.window.show_search_error('Connection timed out')
+            self.window.show_download_error('One download failed')
+        warning.assert_not_called()
+        self.assertEqual(self.window.search_status.toolTip(), 'Connection timed out')
+        self.assertTrue(self.window.log_toggle.isChecked())
+        self.assertIn('One download failed', self.window.download_log.toPlainText())
+
+    def test_failed_real_settings_save_restores_runtime_and_preserves_session(self):
+        from tidal_dl.gui_app.backend import TidekeeperBackend
+        from tidal_dl.settings import SETTINGS
+        from tidal_dl.tidal import TIDAL_API
+        saved = copy.deepcopy(SETTINGS.__dict__)
+        client = TIDAL_API.apiKey
+        values = self.window.collect_settings_values()
+        values['apiKeyIndex'] += 1
+        values['downloadPath'] = '/new/path'
+        with mock.patch.object(SETTINGS, 'save', side_effect=OSError('Disk full')), \
+             mock.patch('tidal_dl.gui_app.backend.logout') as logout:
+            with self.assertRaisesRegex(OSError, 'Disk full'):
+                TidekeeperBackend().save_settings(values)
+        self.assertEqual(SETTINGS.__dict__, saved)
+        self.assertIs(TIDAL_API.apiKey, client)
+        logout.assert_not_called()
+
+    def test_narrow_inspector_layout_preserves_titles_and_restores_columns(self):
+        self.window.resize(1024, 620)
+        self.window.show()
+        self.window.show_screen('settings')
+        self.app.processEvents()
+        self.assertGreaterEqual(self.window.settings_status.width(), 120)
+        for table in (self.window.results_table, self.window.queue_table):
+            self.assertGreaterEqual(table.columnWidth(1), 140)
+            self.assertEqual(table.horizontalScrollBar().maximum(), 0)
+        self.assertTrue(self.window.results_table.isColumnHidden(5))
+        self.assertTrue(self.window.queue_table.isColumnHidden(2))
+        self.window.show_screen('workspace')
+        self.window.resize(1180, 760)
+        self.app.processEvents()
+        self.assertFalse(self.window.results_table.isColumnHidden(5))
+        self.assertFalse(self.window.queue_table.isColumnHidden(2))
+
+    def _wait_for_workers(self):
+        from PySide6.QtTest import QTest
+        for _ in range(300):
+            self.app.processEvents()
+            if not self.window.active_workers:
+                return
+            QTest.qWait(10)
+        self.fail('GUI workers did not finish within three seconds')
+
+    def test_real_qt_workers_complete_search_and_partial_download(self):
+        from PySide6.QtCore import QThread
+        class WarningBackend:
+            def download(self, item, log, progress):
+                progress.note_warning('Cover could not be saved')
+        delivered_threads = []
+        set_results = self.window.set_search_results
+        def record_results(*args):
+            delivered_threads.append(QThread.currentThread())
+            set_results(*args)
+        self.window.set_search_results = record_results
+        self.window.search_text.setText('song')
+        self.window.run_search()
+        self._wait_for_workers()
+        self.assertTrue(self.window.results)
+        self.assertEqual(delivered_threads, [self.app.thread()])
+        self.assertFalse(self.window.search_in_progress)
+        self.window.results_table.selectRow(0)
+        self.window.add_selected_to_queue()
+        with mock.patch.object(self.backend, 'download', side_effect=WarningBackend().download):
+            self.window.start_queue_download()
+            self._wait_for_workers()
+        self.assertEqual(self.window.queue[0].status, 'Partial')
+        self.assertEqual(self.window.queue[0].status_detail, 'Cover could not be saved')
+        self.assertTrue(self.window.log_toggle.isChecked())
+        self.assertIn('needs attention', self.window.queue_status.toolTip())
+        self.assertFalse(self.window.download_in_progress)
+
+    def test_real_qt_search_cancel_interrupts_cooperative_wait(self):
+        from threading import Event
+        from PySide6.QtTest import QTest
+        from tidal_dl.runtime import sleep
+        entered = Event()
+        def slow_search(*args):
+            entered.set()
+            sleep(10)
+            return []
+        self.window.search_text.setText('song')
+        with mock.patch.object(self.backend, 'search', side_effect=slow_search):
+            self.window.run_search()
+            try:
+                for _ in range(100):
+                    if entered.is_set():
+                        break
+                    QTest.qWait(10)
+                self.assertTrue(entered.is_set())
+            finally:
+                self.window.cancel_search()
+                self._wait_for_workers()
+        self.assertEqual(self.window.search_status.text(), 'Search cancelled')
+        self.assertFalse(self.window.search_in_progress)
 
     def test_device_login_poll_ignores_preexisting_token(self):
         from tidal_dl.gui_app.backend import AuthStatus
