@@ -40,14 +40,29 @@ def prepare_transfer(path, urls):
         if parts.exists():
             shutil.rmtree(parts)
         _atomicWrite(marker, json.dumps({'source': identity, 'complete': False}))
-    return matches and state.get('complete') is True
+    if not matches or state.get('complete') is not True:
+        return False
+
+    # A completed transfer can be reused without another CDN size probe, but
+    # only when the local object still has the exact size recorded at commit.
+    # Older markers did not record a size and are conservatively downloaded
+    # again once, then upgraded by ``complete_transfer`` below.
+    try:
+        recorded_size = int(state.get('size', 0))
+        return recorded_size > 0 and os.path.getsize(path) == recorded_size
+    except (OSError, TypeError, ValueError):
+        return False
 
 
 def complete_transfer(path):
     """Mark the assembled output only after it has been successfully replaced."""
     marker = path + '.source.json'
     state = _read(marker)
+    size = os.path.getsize(path)
+    if size <= 0:
+        raise OSError('Cannot complete an empty transfer')
     state['complete'] = True
+    state['size'] = size
     _atomicWrite(marker, json.dumps(state))
 
 

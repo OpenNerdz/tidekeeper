@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.9.12.0 - 2026-09-12
+
+- Stop probing every DASH audio object for its size before downloading. Actual
+  transfer responses still verify object sizes, while completed-transfer markers
+  record the assembled size for safe retry reuse without extra CDN requests.
+
 ## 2026.9.9.1 - 2026-09-09
 
 - Bounded CDN retries at the transfer layer, stopped playback endpoint fallback after rate-limit exhaustion, and made zero/invalid retry delays safe. Shared retry parsing now supports HTTP-date headers.

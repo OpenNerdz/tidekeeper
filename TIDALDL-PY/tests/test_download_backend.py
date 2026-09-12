@@ -462,8 +462,11 @@ class GuiDownloadStatusTests(unittest.TestCase):
     def test_download_urls_skips_probe_when_expected_size_given(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "sized.out"
+            def download_sized(_url, path, *args, **kwargs):
+                Path(path).write_bytes(b'x' * 12)
+                return 12
             with mock.patch.object(download, "__remoteSize__") as probe, \
-                 mock.patch.object(download, "__downloadSingleUrl__", return_value=12):
+                 mock.patch.object(download, "__downloadSingleUrl__", side_effect=download_sized):
                 ok, msg = download.__downloadUrls__(
                     ["http://example.invalid/track.bin"],
                     str(output_file),
@@ -478,8 +481,11 @@ class GuiDownloadStatusTests(unittest.TestCase):
     def test_download_urls_still_probes_without_expected_size(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "probed.out"
+            def download_sized(_url, path, *args, **kwargs):
+                Path(path).write_bytes(b'x' * 8)
+                return 8
             with mock.patch.object(download, "__remoteSize__", return_value=8) as probe, \
-                 mock.patch.object(download, "__downloadSingleUrl__", return_value=8):
+                 mock.patch.object(download, "__downloadSingleUrl__", side_effect=download_sized):
                 ok, msg = download.__downloadUrls__(
                     ["http://example.invalid/track.bin"],
                     str(output_file),
@@ -489,7 +495,7 @@ class GuiDownloadStatusTests(unittest.TestCase):
         self.assertTrue(ok, msg)
         probe.assert_called_once()
 
-    def test_download_track_passes_probed_size_without_second_probe(self):
+    def test_download_track_skips_preflight_size_probes(self):
         track = SimpleNamespace(
             id=1,
             title="Song",
@@ -516,7 +522,7 @@ class GuiDownloadStatusTests(unittest.TestCase):
                      mock.patch.object(download, "__getTrackStream__", return_value=stream), \
                      mock.patch.object(download, "getTrackPath", return_value=path), \
                      mock.patch.object(download, "__skipPath__", return_value=None), \
-                     mock.patch.object(download, "__remoteSize__", return_value=4096) as probe, \
+                     mock.patch.object(download, "__remoteSize__") as probe, \
                      mock.patch.object(download, "__isReusableAssembledFile__", return_value=False), \
                      mock.patch.object(download, "__localFileSize__", return_value=0), \
                      mock.patch.object(download, "__downloadUrls__", return_value=(True, "")) as downloaded, \
@@ -532,9 +538,52 @@ class GuiDownloadStatusTests(unittest.TestCase):
                 download.SETTINGS.showTrackInfo = old_show
 
         self.assertTrue(ok, err)
-        probe.assert_called_once_with(stream.urls)
-        self.assertEqual(downloaded.call_args.args[6], False)
-        self.assertEqual(downloaded.call_args.args[7], 4096)
+        probe.assert_not_called()
+        self.assertFalse(downloaded.call_args.kwargs["probeSize"])
+
+    def test_complete_unknown_size_output_reuses_recorded_local_size(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "cached-without-probe.out"
+            urls = ["https://example.invalid/media.bin"]
+            download.prepare_transfer(str(output_file), urls)
+            output_file.write_bytes(b"already-downloaded-bytes")
+            download.complete_transfer(str(output_file))
+
+            with mock.patch.object(download, "__httpRequest__") as request, \
+                 mock.patch.object(download, "__remoteSize__") as probe:
+                ok, msg = download.__downloadUrls__(
+                    urls,
+                    str(output_file),
+                    threadNum=1,
+                    probeSize=False,
+                )
+
+            self.assertTrue(ok, msg)
+            request.assert_not_called()
+            probe.assert_not_called()
+
+    def test_changed_completed_output_is_not_reused_without_probe(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "changed-after-download.out"
+            urls = ["https://example.invalid/media.bin"]
+            download.prepare_transfer(str(output_file), urls)
+            output_file.write_bytes(b"complete")
+            download.complete_transfer(str(output_file))
+            output_file.write_bytes(b"truncated")
+
+            response = mock.Mock(status_code=200, headers={"Content-Length": "5"})
+            response.iter_content.return_value = iter([b"fresh"])
+            with mock.patch.object(download, "__httpRequest__", return_value=response) as request:
+                ok, msg = download.__downloadUrls__(
+                    urls,
+                    str(output_file),
+                    threadNum=1,
+                    probeSize=False,
+                )
+
+            self.assertTrue(ok, msg)
+            self.assertEqual(output_file.read_bytes(), b"fresh")
+            request.assert_called_once()
 
     def test_download_tracks_reports_collection_progress(self):
         class Recorder:
