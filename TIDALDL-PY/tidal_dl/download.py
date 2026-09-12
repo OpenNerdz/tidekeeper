@@ -295,9 +295,7 @@ def __isCompleteLocalFile__(path, expectedSize=-1):
 
 
 def __isReusableAssembledFile__(path, expectedSize=-1):
-    """Stricter check for assembled outputs: never skip when size is unknown."""
-    if expectedSize is None or expectedSize <= 0:
-        return False
+    """Validate an output whose completed transfer marker matched its source."""
     return __isCompleteLocalFile__(path, expectedSize)
 
 
@@ -1259,11 +1257,15 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         __ensureParentDir__(path)
 
-        expectedSize = __remoteSize__(stream.urls)
+        # Do not issue a HEAD/ranged-GET size probe for every DASH object.
+        # Each real GET supplies Content-Length/Content-Range for per-object
+        # verification, and the completed-transfer marker records the final
+        # assembled size for safe local reuse. This roughly halves CDN request
+        # count for segmented audio and avoids an up-front parallel burst.
         check, err = __downloadUrls__(
             stream.urls, partPath, SETTINGS.showProgress and not SETTINGS.multiThread,
             userProgress, TRACK_THREAD_COUNT if SETTINGS.multiThread else 1,
-            max(int(partSize), 64 * 1024), False, expectedSize,
+            max(int(partSize), 64 * 1024), probeSize=False,
         )
         if not check:
             __logFailedTrack__(track, album, playlist, err)
