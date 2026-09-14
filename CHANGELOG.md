@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026.9.14.1 - 2026-09-14
 
 - Sort desktop search-result durations by elapsed time instead of their formatted text.
 
