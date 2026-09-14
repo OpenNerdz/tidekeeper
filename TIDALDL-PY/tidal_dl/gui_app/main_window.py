@@ -24,6 +24,7 @@ import webbrowser
 from collections import Counter
 from html import escape
 from typing import List, Tuple
+from urllib.parse import quote
 
 from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPalette, QShortcut, QTextCursor
@@ -36,6 +37,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QSizePolicy,
@@ -161,6 +164,8 @@ class MainWindow(QMainWindow):
         self._removed_queue_items = []
         self._saved_settings_values = None
         self._loading_settings = False
+        self._supporters_loaded = False
+        self._supporters_loading = False
 
         self._mono_font = QFont()
         self._mono_font.setFamilies([name.strip().strip('"') for name in FONT_MONO.split(",")])
@@ -703,6 +708,20 @@ class MainWindow(QMainWindow):
         self.update_button.clicked.connect(lambda: self.update_tidekeeper(True))
         maintenance.add_layout(row(self.doctor_button, self.update_button, None, self.version_label))
         layout.addWidget(maintenance)
+
+        supporters = FormSection("Supporters")
+        self.supporters_status = label("", "Meta")
+        self.refresh_supporters_button = button("Refresh", "ghost", tooltip="Refresh the GitHub supporter list.")
+        self.refresh_supporters_button.clicked.connect(lambda: self.load_supporters(force=True))
+        supporters.add_layout(row(self.supporters_status, None, self.refresh_supporters_button))
+        self.supporters_list = QListWidget()
+        self.supporters_list.setObjectName("Supporters")
+        self.supporters_list.setAccessibleName("GitHub supporters")
+        self.supporters_list.setFixedHeight(132)
+        self.supporters_list.setUniformItemSizes(True)
+        self.supporters_list.itemActivated.connect(self.open_supporter)
+        supporters.add_widget(self.supporters_list)
+        layout.addWidget(supporters)
         layout.addStretch(1)
 
         self.account_log = log_view("Login, doctor and update output appears here.")
@@ -775,6 +794,8 @@ class MainWindow(QMainWindow):
             self.inspector_stack.setCurrentWidget(self.pages[name])
             self.inspector_title.setText("Settings" if name == "settings" else "Account")
             self.inspector.show()
+            if name == "account":
+                self.load_supporters()
         self.settings_toggle.setChecked(name == "settings")
         self.session_toggle.setChecked(name == "account")
 
@@ -795,6 +816,41 @@ class MainWindow(QMainWindow):
 
         worker.signals.finished.connect(cleanup)
         self.thread_pool.start(worker)
+
+    def load_supporters(self, force: bool = False):
+        if self._supporters_loading or (self._supporters_loaded and not force):
+            return
+        self._supporters_loading = True
+        self.supporters_status.setText("Loading…")
+        self.refresh_supporters_button.setEnabled(False)
+        worker = TaskWorker(self.backend.supporters)
+        worker.signals.result.connect(self.set_supporters)
+        worker.signals.error.connect(self.show_supporters_error)
+        worker.signals.finished.connect(self._supporters_finished)
+        self.start_worker(worker)
+
+    def set_supporters(self, names: List[str]):
+        self.supporters_list.clear()
+        for name in names:
+            item = QListWidgetItem(f"@{name}")
+            item.setData(Qt.UserRole, name)
+            item.setToolTip(f"Open {name} on GitHub")
+            self.supporters_list.addItem(item)
+        self.supporters_status.setText(self._plural(len(names), "supporter"))
+        self._supporters_loaded = True
+
+    def show_supporters_error(self, _message: str):
+        self.supporters_status.setText("Unavailable")
+
+    def _supporters_finished(self):
+        self._supporters_loading = False
+        self.refresh_supporters_button.setEnabled(True)
+
+    @staticmethod
+    def open_supporter(item: QListWidgetItem):
+        name = str(item.data(Qt.UserRole) or "")
+        if name:
+            webbrowser.open(f"https://github.com/{quote(name, safe='')}")
 
     # ----------------------------------------------------------------- search
 

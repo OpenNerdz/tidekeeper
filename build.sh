@@ -18,7 +18,9 @@ GUI_FLAGS=()
 if [[ "${OSTYPE:-}" != linux* ]]; then
   GUI_FLAGS+=(--windowed)
 fi
-pyinstaller -F "${GUI_FLAGS[@]}" tidal_dl/gui_app/__main__.py -n tidekeeper-gui
+pyinstaller -F "${GUI_FLAGS[@]}" \
+  --add-data "tidal_dl/gui_app/supporters.json:tidal_dl/gui_app" \
+  tidal_dl/gui_app/__main__.py -n tidekeeper-gui
 
 mkdir -p exe
 for name in tidekeeper tidekeeper-gui; do

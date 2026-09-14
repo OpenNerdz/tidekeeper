@@ -24,6 +24,7 @@ from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter, _atomicWrite
 from ..runtime import job_context, configure_logging, redact
 from ..tidal import TIDAL_API
 from ..updater import run_update
+from .supporters import bundled_supporters, load_supporters
 
 
 LogCallback = Optional[Callable[[str], None]]
@@ -614,8 +615,14 @@ class TidekeeperBackend:
     def version(self) -> str:
         return VERSION
 
+    def supporters(self) -> List[str]:
+        return load_supporters()
+
 
 class DemoBackend(TidekeeperBackend):
+    def supporters(self) -> List[str]:
+        return bundled_supporters()
+
     def reload_settings(self):
         SETTINGS.__dict__.clear()
         SETTINGS.__dict__.update(copy.deepcopy(self._saved_settings))

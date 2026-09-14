@@ -205,6 +205,27 @@ QScrollArea#Scroll, QWidget#ScrollContent {
     border: none;
 }
 
+QListWidget#Supporters {
+    background: %(surface_alt)s;
+    border: 1px solid %(border)s;
+    border-radius: 4px;
+    color: %(text_secondary)s;
+    outline: 0;
+    padding: 3px;
+}
+
+QListWidget#Supporters::item {
+    min-height: 25px;
+    padding: 0 7px;
+    border-radius: 3px;
+}
+
+QListWidget#Supporters::item:hover,
+QListWidget#Supporters::item:selected {
+    background: %(surface_hover)s;
+    color: %(text)s;
+}
+
 /* ----------------------------------------------------------------- inputs */
 
 QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QAbstractSpinBox {

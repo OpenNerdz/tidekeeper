@@ -80,6 +80,7 @@ setup(
 
     packages=find_packages(),
     include_package_data=False,
+    package_data={"tidal_dl.gui_app": ["supporters.json"]},
     platforms="any",
     classifiers=[
         "Development Status :: 5 - Production/Stable",

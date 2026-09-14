@@ -83,7 +83,9 @@ jobs:
           if [[ "${{ runner.os }}" != "Linux" ]]; then
             GUI_FLAGS="--windowed"
           fi
-          pyinstaller -F $GUI_FLAGS tidal_dl/gui_app/__main__.py -n tidekeeper-gui
+          pyinstaller -F $GUI_FLAGS \
+            --add-data "tidal_dl/gui_app/supporters.json:tidal_dl/gui_app" \
+            tidal_dl/gui_app/__main__.py -n tidekeeper-gui
         working-directory: TIDALDL-PY
 
       - name: Smoke test Linux GUI executable

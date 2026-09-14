@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.9.14.0 - 2026-09-14
+
+- Added a compact, scrollable Supporters section to the desktop Account panel.
+  It loads the current GitHub stargazer snapshot off the UI thread, links each
+  username to their profile, and retains the bundled list when offline.
+- Refresh the supporter snapshot every six hours with an authenticated
+  repository workflow, keeping GitHub credentials out of distributed clients.
+
 ## 2026.9.12.0 - 2026-09-12
 
 - Stop probing every DASH audio object for its size before downloading. Actual
