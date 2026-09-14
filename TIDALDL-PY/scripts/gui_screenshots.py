@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -151,6 +152,16 @@ def main() -> int:
     for screen in SCREEN_ORDER:
         window.show_screen(screen)
         app.processEvents()
+        if screen == "account":
+            for _ in range(100):
+                if window._supporters_loaded:
+                    break
+                app.processEvents()
+                time.sleep(0.01)
+            account_scroll = window.pages["account"].widget(0)
+            scroll_bar = account_scroll.verticalScrollBar()
+            scroll_bar.setValue(scroll_bar.maximum())
+            app.processEvents()
         pixmap = window.grab()
         image = pixmap.toImage()
         target = output / f"{screen}.png"
