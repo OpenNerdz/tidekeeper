@@ -176,9 +176,16 @@ and `Esc` closes the side panel.
 
 ![Workspace: search, results and queue](docs/screenshots/workspace.png)
 
-| Settings panel | Account panel |
-| --- | --- |
-| ![Settings panel](docs/screenshots/settings.png) | ![Account panel](docs/screenshots/account.png) |
+### Settings panel
+
+![Settings panel](docs/screenshots/settings.png)
+
+### Account panel
+
+The lower Account panel keeps the scrollable **Supporters** list out of the
+main workspace.
+
+![Account panel with supporters](docs/screenshots/account.png?raw=1&v=2026.9.14.0)
 
 ## Troubleshooting
 
