@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Sort desktop search-result durations by elapsed time instead of their formatted text.
+
 ## 2026.9.14.0 - 2026-09-14
 
 - Added a compact, scrollable Supporters section to the desktop Account panel.

@@ -139,6 +139,33 @@ QUEUE_STATE = {
 }
 
 
+class _SortKeyTableWidgetItem(QTableWidgetItem):
+    """Keep a display label while sorting by its underlying value."""
+
+    def __init__(self, text: str, sort_key):
+        super().__init__(text)
+        self.sort_key = sort_key
+
+    def __lt__(self, other):
+        if isinstance(other, _SortKeyTableWidgetItem):
+            return self.sort_key < other.sort_key
+        return super().__lt__(other)
+
+
+def _duration_sort_key(label: str) -> int:
+    """Convert the ``m:ss`` or ``h:mm:ss`` result label to seconds."""
+    parts = str(label).split(":")
+    if len(parts) not in (2, 3):
+        return 0
+    try:
+        total = 0
+        for part in parts:
+            total = total * 60 + int(part)
+        return total
+    except ValueError:
+        return 0
+
+
 class MainWindow(QMainWindow):
     def __init__(self, backend: TidekeeperBackend):
         super().__init__()
@@ -897,7 +924,11 @@ class MainWindow(QMainWindow):
         for row_index, item in enumerate(items):
             values = [item.kind.name, item.title, item.artists, item.quality, item.duration, item.identifier]
             for col, value in enumerate(values):
-                cell = self._table_cell(value, item if col == 0 else None, mono=col == 5, muted=col in (0, 5))
+                if col == 4:
+                    cell = _SortKeyTableWidgetItem(str(value), _duration_sort_key(value))
+                    cell.setToolTip(str(value))
+                else:
+                    cell = self._table_cell(value, item if col == 0 else None, mono=col == 5, muted=col in (0, 5))
                 if col in (4, 5):
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if col == 1:
