@@ -277,6 +277,21 @@ class GuiQueueTests(unittest.TestCase):
         self.assertEqual(self.window.search_button.text(), 'Search')
         self.assertTrue(self.window.search_button.isEnabled())
 
+    def test_search_results_sort_duration_by_elapsed_time(self):
+        from PySide6.QtCore import Qt
+        items = self.backend.search('song', self.Type.Track)[:3]
+        for item, duration in zip(items, ('1:00:24', '2:17', '2:21:31')):
+            item.duration = duration
+        self.window.set_search_results(items)
+
+        self.window.results_table.sortItems(4, Qt.AscendingOrder)
+        ascending = [self.window.results_table.item(row, 4).text() for row in range(3)]
+        self.assertEqual(ascending, ['2:17', '1:00:24', '2:21:31'])
+
+        self.window.results_table.sortItems(4, Qt.DescendingOrder)
+        descending = [self.window.results_table.item(row, 4).text() for row in range(3)]
+        self.assertEqual(descending, ['2:21:31', '1:00:24', '2:17'])
+
     def test_search_and_download_failures_use_inline_feedback(self):
         with mock.patch('tidal_dl.gui_app.main_window.QMessageBox.warning') as warning:
             self.window.show_search_error('Connection timed out')
