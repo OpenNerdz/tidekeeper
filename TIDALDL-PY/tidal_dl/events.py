@@ -430,14 +430,7 @@ def loginByConfig():
 
 
 def logout():
-    with TIDAL_API._authStateLock:
-        TIDAL_API.clearSession()
-        TOKEN.userid = None
-        TOKEN.countryCode = None
-        TOKEN.accessToken = None
-        TOKEN.refreshToken = None
-        TOKEN.expiresAfter = 0
-        TOKEN.save()
+    TIDAL_API.clearSavedSession()
     Printf.success("Logged out.")
     return True
 

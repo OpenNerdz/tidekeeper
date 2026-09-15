@@ -25,6 +25,7 @@ from urllib.parse import unquote, urlparse
 import aigpy
 import requests
 
+from . import apiKey as apiKeys
 from .enums import AudioQuality, Type, VideoQuality
 from .model import (
     Album,
@@ -153,8 +154,7 @@ class TidalStreamUnavailable(Exception):
 class TidalAPI(object):
     def __init__(self):
         self.key = LoginKey()
-        self.apiKey = {'clientId': 'fX2JxdmntZWK0ixT',
-                       'clientSecret': '1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg='}
+        self.apiKey = apiKeys.getItem(apiKeys.getDefaultIndex())
         self.session = requests.Session()
         # Retry transient connection failures at the transport level; HTTP
         # status handling (401/404/429) stays in the request helpers.
@@ -183,6 +183,17 @@ class TidalAPI(object):
             self._sessionGeneration += 1
             self.key = LoginKey()
             self.clearSessionCaches()
+
+    def clearSavedSession(self):
+        """Remove a persisted login that cannot be used by the active client."""
+        with self._authStateLock:
+            self.clearSession()
+            TOKEN.userid = None
+            TOKEN.countryCode = None
+            TOKEN.accessToken = None
+            TOKEN.refreshToken = None
+            TOKEN.expiresAfter = 0
+            TOKEN.save()
 
     def clearSessionCaches(self):
         with self._streamCacheLock:
@@ -470,10 +481,11 @@ class TidalAPI(object):
                         refreshedToken = True
                         continue
                     error = self.__httpError__("Get operation", respond)
+                    self.clearSavedSession()
                     raise TidalApiError(
                         "Get operation failed: the saved login session references an API client "
                         "that no longer exists (HTTP 404, subStatus 4022). "
-                        "Please log out and log in again.",
+                        "The unusable session was cleared; please log in again.",
                         404,
                         error.errorCodes,
                     )

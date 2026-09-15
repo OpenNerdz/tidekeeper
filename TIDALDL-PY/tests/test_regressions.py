@@ -2090,7 +2090,11 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         old_delay = events.SETTINGS.downloadDelay
         try:
             events.SETTINGS.downloadDelay = False
-            with mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
+            with mock.patch.multiple(events.TOKEN, userid="user", countryCode="GB",
+                                     accessToken="stale-access", refreshToken="stale-refresh",
+                                     expiresAfter=123), \
+                 mock.patch.object(events.TOKEN, "save") as save_token, \
+                 mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
                  mock.patch.object(api.session, "get", return_value=response) as get_mock:
                 with self.assertRaises(TidalApiError) as ctx:
                     api.__getOnce__(
@@ -2098,6 +2102,10 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                         _playback_params("LOSSLESS"),
                         API_BASE_PRIMARY,
                     )
+                self.assertIsNone(events.TOKEN.accessToken)
+                self.assertIsNone(events.TOKEN.refreshToken)
+                self.assertIsNone(api.key.accessToken)
+                save_token.assert_called_once()
         finally:
             events.SETTINGS.downloadDelay = old_delay
 

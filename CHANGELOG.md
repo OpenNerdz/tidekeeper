@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Replace the retired default TIDAL OAuth client and clear saved sessions that TIDAL rejects with subStatus 4022,
+  allowing the next login to establish a genuinely fresh session.
+
 ## 2026.9.14.1 - 2026-09-14
 
 - Sort desktop search-result durations by elapsed time instead of their formatted text.
