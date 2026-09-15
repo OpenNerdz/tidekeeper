@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026.9.15.0 - 2026-09-15
 
 - Replace the retired default TIDAL OAuth client and clear saved sessions that TIDAL rejects with subStatus 4022,
   allowing the next login to establish a genuinely fresh session.
