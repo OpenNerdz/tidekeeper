@@ -164,6 +164,6 @@ jobs:
           archive = zipfile.ZipFile(wheel)
           name = next(n for n in archive.namelist() if n.endswith("METADATA"))
           metadata = archive.read(name).decode()
-          assert "unofficial maintained fork" in metadata, "README missing from wheel metadata"
+          assert "# Tidekeeper" in metadata, "README missing from wheel metadata"
           print("long description OK", len(metadata), "bytes")
           EOF
