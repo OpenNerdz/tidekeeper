@@ -41,8 +41,6 @@ class LangHungarian(object):
     PRINT_LATEST_VERSION = "Legújabb verzió:"
 
     CHANGE_DOWNLOAD_PATH = "Letöltési útvonal('0' nincs módosítás):"
-    CHANGE_AUDIO_QUALITY = "Audió minőség('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Videó minőség(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Létező fájl ellenőrzése letöltés előtt('0'-Nem,'1'-Igen):"
     CHANGE_INCLUDE_EP = "A kislemezek és EP-k letöltése('0'-Nem, '1'-Igen):"
     CHANGE_SAVE_COVERS = "Borító mentése('0'-Nem, '1'-Igen):"

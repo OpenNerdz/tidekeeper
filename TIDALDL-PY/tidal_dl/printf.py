@@ -18,7 +18,7 @@ import shutil
 
 from . import apiKey as apiKey
 
-from .enums import Type
+from .enums import AUDIO_QUALITY_ORDER, Type, VideoQuality
 from .model import Album, Artist, StreamUrl, Track, Video, VideoStreamUrl
 from .paths import PATHS
 from .settings import SETTINGS, TOKEN
@@ -27,15 +27,10 @@ from .environment import isTermux
 from .lang.language import LANG
 
 
-VERSION = '2026.9.17.0'
+VERSION = '2026.9.17.1'
 PROJECT_URL = 'https://github.com/OpenNerdz/tidekeeper'
 
 print_mutex = threading.Lock()
-
-
-def _plain_table_style():
-    """Return a non-deprecated plain column style for PrettyTable."""
-    return prettytable.TableStyle.PLAIN_COLUMNS
 
 
 class Printf(object):
@@ -49,10 +44,6 @@ class Printf(object):
     @staticmethod
     def clearScreen():
         print("\033[2J\033[H", end="")
-
-    @staticmethod
-    def __onOff__(value):
-        return "on" if value else "off"
 
     @staticmethod
     def __enumName__(value):
@@ -87,53 +78,39 @@ class Printf(object):
     def usage():
         Printf.logo()
         print("")
+        qualities = ", ".join(item.name for item in AUDIO_QUALITY_ORDER)
+        resolutions = ", ".join(item.name for item in reversed(VideoQuality))
+        rows = [
+            ("-h, --help", "Show help"),
+            ("-v, --version", "Show version"),
+            ("-g, --gui", "Open GUI if available"),
+            ("--update", "Update terminal install"),
+            ("--update-gui", "Update terminal and GUI install"),
+            ("--doctor", "Check config, auth, and local tools"),
+            ("--paths", "Show download/config paths"),
+            ("--open-output", "Open download folder"),
+            ("--video-only", "Download videos only for URL/ID/file"),
+            ("-l, --link URL", "Download URL/ID/file"),
+            ("-o, --output PATH", "Set save folder"),
+            ("-q, --quality NAME", f"{qualities} (default: Max; legacy Master accepted)"),
+            ("--quality-priority LIST", "Fallback order, e.g. Max,HiFi,High,Normal"),
+            ("-r, --resolution NAME", resolutions),
+            ("-c, --configPathOverride PATH", "Use non-default base path for config/tokens/logs"),
+        ]
         if Printf.__isCompact__():
-            rows = [
-                ("-h, --help", "Show help"),
-                ("-v, --version", "Show version"),
-                ("-g, --gui", "Open GUI if available"),
-                ("--update", "Update terminal install"),
-                ("--update-gui", "Update terminal and GUI install"),
-                ("--doctor", "Check config, auth, and local tools"),
-                ("--paths", "Show download/config paths"),
-                ("--open-output", "Open download folder"),
-                ("--video-only", "Download videos only for URL/ID/file"),
-                ("-l, --link URL", "Download URL/ID/file"),
-                ("-o, --output PATH", "Set save folder"),
-                ("-q, --quality NAME", "Max (default), Atmos, Master, HiFi, High, Normal"),
-                ("--quality-priority LIST", "Fallback order, e.g. Max,HiFi,High,Normal"),
-                ("-r, --resolution NAME", "P1080, P720, P480, P360"),
-                ("-c, --configPathOverride", "Use non-default base path for config/tokens/logs")
-            ]
             for option, description in rows:
                 print(option)
                 print(f"  {description}")
             return
 
-        tb = Printf.__gettable__(["OPTION", "DESCRIPTION"], [
-            ["-h, --help", "Show this help"],
-            ["-v, --version", "Show version"],
-            ["-g, --gui", "Open the desktop GUI"],
-            ["--update", "Update the terminal install"],
-            ["--update-gui", "Update the terminal and GUI install"],
-            ["--doctor", "Check config, auth, and local tools"],
-            ["--paths", "Show download/config paths"],
-            ["--open-output", "Open the download folder"],
-            ["--video-only", "Download only videos for a Tidal URL, ID, or text file"],
-            ["-l, --link", "Download a Tidal URL, ID, or text file"],
-            ["-o, --output", "Set download path"],
-            ["-q, --quality", "Set one audio quality: Max (default), Atmos, Master, HiFi, High, Normal"],
-            ["--quality-priority", "Set fallback order, e.g. Max,HiFi,High,Normal"],
-            ["-r, --resolution", "Set video quality: P1080, P720, P480, P360"],
-            ["-c, --configPathOverride", "Use non-default base path for config/tokens/logs"]
-        ])
-        tb.set_style(_plain_table_style())
+        tb = Printf.__gettable__(["OPTION", "DESCRIPTION"], rows)
+        tb.set_style(prettytable.TableStyle.PLAIN_COLUMNS)
         print(tb)
 
     @staticmethod
     def paths():
         tb = Printf.__gettable__(["PATH", "VALUE"], PATHS.getPathSummary())
-        tb.set_style(_plain_table_style())
+        tb.set_style(prettytable.TableStyle.PLAIN_COLUMNS)
         print(tb)
 
     @staticmethod
@@ -414,25 +391,14 @@ class Printf(object):
 
     @staticmethod
     def apikeys(items):
+        print("Tidal clients")
         if Printf.__isCompact__():
-            print("Tidal clients")
-            for index, item in enumerate(items):
-                valid = "OK" if item["valid"] == "True" else "old"
-                print(f"{index} {valid} - {item['platform']}")
+            for item in items:
+                print(f"{item['index']} - {item['platform']}")
                 print(f"  {item['formats']}")
             return
 
-        print("-------------API-KEYS---------------")
-        tb = prettytable.PrettyTable()
-        tb.field_names = [aigpy.cmd.green('Index'),
-                          aigpy.cmd.green('Valid'),
-                          aigpy.cmd.green('Platform'),
-                          aigpy.cmd.green('Formats'), ]
-        tb.align = 'l'
-
-        for index, item in enumerate(items):
-            tb.add_row([str(index),
-                        aigpy.cmd.green('True') if item["valid"] == "True" else aigpy.cmd.red('False'),
-                        item["platform"],
-                        item["formats"]])
+        tb = Printf.__gettable__(["Index", "Platform", "Formats"], [
+            [item["index"], item["platform"], item["formats"]] for item in items
+        ])
         print(tb)

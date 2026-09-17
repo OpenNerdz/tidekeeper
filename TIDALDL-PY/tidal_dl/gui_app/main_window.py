@@ -51,7 +51,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..enums import AudioQuality, Type, VideoQuality
+from ..enums import (
+    AUDIO_QUALITY_ORDER, AudioQuality, Type, VideoQuality,
+    audio_quality_fallbacks, playback_quality_priority,
+)
 from ..settings import SETTINGS
 from ..runtime import redact
 from .backend import (
@@ -104,21 +107,14 @@ INSPECTOR_WIDTH = 380
 FIND_MODE_SEARCH, FIND_MODE_LINKS = 0, 1
 LINKS_ROW_HEIGHT = 64 + 8 + 30  # paste box, gap, action row
 
-QUALITY_ORDER = [
-    AudioQuality.Atmos,
-    AudioQuality.Max,
-    AudioQuality.Master,
-    AudioQuality.HiFi,
-    AudioQuality.High,
-    AudioQuality.Normal,
-]
 PRIORITY_PRESETS = [
-    ("Max > HiFi > High > Normal (default)", ["Max", "HiFi", "High", "Normal"]),
+    (" > ".join(item.name for item in audio_quality_fallbacks(AudioQuality.Max)) + " (default)",
+     [item.name for item in audio_quality_fallbacks(AudioQuality.Max)]),
     ("Selected quality only", []),
     ("Selected quality, then lower", "__selected__"),
-    ("Atmos > Max > Master > HiFi > High > Normal", [item.name for item in QUALITY_ORDER]),
-    ("Max > Master > HiFi > High > Normal", ["Max", "Master", "HiFi", "High", "Normal"]),
-    ("HiFi > High > Normal", ["HiFi", "High", "Normal"]),
+    *[(" > ".join(item.name for item in audio_quality_fallbacks(quality)),
+       [item.name for item in audio_quality_fallbacks(quality)])
+      for quality in (AudioQuality.Atmos, AudioQuality.HiFi)],
 ]
 NAMING_HINT = (
     "{ArtistName} {AlbumArtistName} {AlbumTitle} {AlbumYear} {TrackNumber} "
@@ -531,7 +527,7 @@ class MainWindow(QMainWindow):
 
         quality = FormSection("Quality")
         self.audio_quality = QComboBox()
-        for item in QUALITY_ORDER:
+        for item in AUDIO_QUALITY_ORDER:
             self.audio_quality.addItem(item.name, item.name)
         self.priority_preset = QComboBox()
         self.priority_preset.setToolTip("Fallback order when the requested stream is blocked or unavailable.")
@@ -626,11 +622,10 @@ class MainWindow(QMainWindow):
             self.language.addItem(name, index)
         self.api_client = QComboBox()
         for item in self.backend.api_clients():
-            status = "OK" if item["valid"] else "old"
-            self.api_client.addItem(f'{item["index"]} {status} · {item["platform"]}', item["index"])
+            self.api_client.addItem(f'{item["index"]} · {item["platform"]}', item["index"])
             self.api_client.setItemData(
                 self.api_client.count() - 1,
-                f'{item["index"]} {status} · {item["platform"]} ({item["formats"]})',
+                f'{item["index"]} · {item["platform"]} ({item["formats"]})',
                 Qt.ToolTipRole,
             )
         for combo in (self.language, self.api_client):
@@ -1453,9 +1448,13 @@ class MainWindow(QMainWindow):
     def refresh_settings(self):
         self._loading_settings = True
         self.download_path.setText(SETTINGS.downloadPath)
-        self.audio_quality.setCurrentText(SETTINGS.audioQuality.name)
+        quality = SETTINGS.audioQuality
+        self.audio_quality.setCurrentText((AudioQuality.Max if quality == AudioQuality.Master else quality).name)
         self.video_quality.setCurrentIndex(self.video_quality.findData(SETTINGS.videoQuality.name))
         priority = SETTINGS.getAudioQualityPriority(SETTINGS.audioQualityPriority)
+        if not priority and quality == AudioQuality.Master:
+            priority = [quality]
+        priority = playback_quality_priority(priority)
         self.set_priority_preset([item.name for item in priority])
         index = self.language.findData(SETTINGS.language)
         self.language.setCurrentIndex(index if index >= 0 else 0)
@@ -1532,9 +1531,7 @@ class MainWindow(QMainWindow):
 
     def selected_quality_then_lower(self) -> List[str]:
         selected = AudioQuality[self.audio_quality.currentData()]
-        names = [item.name for item in QUALITY_ORDER]
-        start = names.index(selected.name)
-        return names[start:]
+        return [item.name for item in audio_quality_fallbacks(selected)]
 
     def set_priority_preset(self, order: List[str]):
         self.remove_custom_priority_preset()

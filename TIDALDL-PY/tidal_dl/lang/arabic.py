@@ -41,8 +41,6 @@ class LangArabic(object):
     PRINT_LATEST_VERSION = "آخر اصدر:"
 
     CHANGE_DOWNLOAD_PATH = "مجلد التنزيل('0' not modify):"
-    CHANGE_AUDIO_QUALITY = "دقة الصوت('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "دقة الفديو(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "التحقق من وجود الملف قبل التحميل('0'-No,'1'-Yes):"
     CHANGE_INCLUDE_EP = "اضافة مسطلحات فردي او ثنائي الى الغنية('0'-No,'1'-Yes):"
     CHANGE_SAVE_COVERS = "حفظ صورة الالبوم('0'-No,'1'-Yes):"

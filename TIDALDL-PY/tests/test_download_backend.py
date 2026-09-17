@@ -690,7 +690,7 @@ class DirectInputAndProgressTests(unittest.TestCase):
         sink = SimpleNamespace(setMaxNum=mock.Mock(), addCurNum=mock.Mock())
         download.__setUserProgressMax__(None, 10)
         download.__setUserProgressMax__(sink, 0)
-        download.__addUserProgress__(sink, -1)
+        download.__noteProgress__(None, sink, -1)
         download.__noteProgress__(None, None, 10)
         sink.setMaxNum.assert_not_called()
         sink.addCurNum.assert_not_called()

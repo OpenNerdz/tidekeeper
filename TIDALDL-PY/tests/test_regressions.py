@@ -1382,14 +1382,6 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             events.SETTINGS.audioQuality = old_quality
             events.SETTINGS.audioQualityPriority = old_priority
 
-    def test_get_cover_data_uses_timeout(self):
-        api = TidalAPI()
-        response = SimpleNamespace(content=b"cover", raise_for_status=mock.Mock(), close=mock.Mock())
-        with mock.patch.object(api.session, "get", return_value=response) as get:
-            self.assertEqual(api.getCoverData("abc-def"), b"cover")
-
-        self.assertEqual(get.call_args.kwargs["timeout"], (5, 60))
-
     def test_video_path_respects_playlist_folder_setting(self):
         old_values = {
             "downloadPath": paths.SETTINGS.downloadPath,
@@ -1577,17 +1569,17 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             ),
         ), mock.patch.object(api, "__getPlaybackData__", return_value={
             "trackid": 456,
-            "audioQuality": "HI_RES",
+            "audioQuality": "HI_RES_LOSSLESS",
             "manifestMimeType": "application/vnd.tidal.bt",
             "manifest": manifest,
         }) as fallback_get:
             stream = api.getStreamUrl(456, AudioQuality.Atmos)
 
-        self.assertEqual(stream.soundQuality, "HI_RES")
+        self.assertEqual(stream.soundQuality, "HI_RES_LOSSLESS")
         self.assertEqual(stream.url, "https://example.invalid/fallback.flac")
-        fallback_get.assert_any_call(456, _playback_params("HI_RES"))
+        fallback_get.assert_called_once_with(456, _playback_params("HI_RES_LOSSLESS"))
 
-    def test_blocked_max_stream_falls_back_to_legacy_hi_res_stream(self):
+    def test_blocked_max_stream_falls_back_to_hifi_without_retired_mqa(self):
         api = TidalAPI()
         manifest = base64.b64encode(json.dumps({
             "codecs": "flac",
@@ -1606,24 +1598,24 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 blocked,
                 {
                     "trackid": 456,
-                    "audioQuality": "HI_RES",
+                    "audioQuality": "LOSSLESS",
                     "manifestMimeType": "application/vnd.tidal.bt",
                     "manifest": manifest,
                 },
             ]) as get:
             stream = api.getStreamUrl(456, AudioQuality.Max)
 
-        self.assertEqual(stream.soundQuality, "HI_RES")
+        self.assertEqual(stream.soundQuality, "LOSSLESS")
         self.assertEqual(stream.url, "https://example.invalid/hires.flac")
         self.assertEqual(stream.requestedQuality, "Max")
-        self.assertEqual(stream.fallbackQuality, "Master")
+        self.assertEqual(stream.fallbackQuality, "HiFi")
         self.assertEqual(stream.fallbackReason, "requested format is not allowed for this account or track")
         self.assertIn("CLIENT_NOT_ENTITLED", stream.fallbackError)
         self.assertEqual(
             get.call_args_list,
             [
                 mock.call(456, _playback_params("HI_RES_LOSSLESS")),
-                mock.call(456, _playback_params("HI_RES")),
+                mock.call(456, _playback_params("LOSSLESS")),
             ],
         )
 
@@ -2074,7 +2066,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         self.assertEqual(get.call_args_list[0].kwargs["headers"]["authorization"], "Bearer stale-access")
         self.assertEqual(get.call_args_list[1].kwargs["headers"]["authorization"], "Bearer fresh-access")
 
-    def test_api_get_stale_client_404_raises_relogin_error_when_refresh_fails(self):
+    def test_catalog_stale_client_404_raises_relogin_error_when_refresh_fails(self):
         api = TidalAPI()
         api.key.accessToken = "stale-access"
         api.key.countryCode = "GB"
@@ -2103,8 +2095,8 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                  mock.patch.object(api.session, "get", return_value=response) as get_mock:
                 with self.assertRaises(TidalApiError) as ctx:
                     api.__getOnce__(
-                        "tracks/456/playbackinfopostpaywall/v4",
-                        _playback_params("LOSSLESS"),
+                        "tracks/456",
+                        {},
                         API_BASE_PRIMARY,
                     )
                 self.assertIsNone(events.TOKEN.accessToken)

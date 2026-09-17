@@ -41,8 +41,6 @@ class LangJapanese(object):
     PRINT_LATEST_VERSION = "最新バージョン:"
 
     CHANGE_DOWNLOAD_PATH = "ダウンロードパス('0'-変更しない):"
-    CHANGE_AUDIO_QUALITY = "オーディオ品質('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "ビデオ品質(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Check exist file before download track('0'-いいえ,'1'-はい):"
     CHANGE_INCLUDE_EP = "Include singles and EPs when downloading an artist's albums('0'-いいえ,'1'-はい):"
     CHANGE_SAVE_COVERS = "カバーを保存('0'-いいえ,'1'-はい):"

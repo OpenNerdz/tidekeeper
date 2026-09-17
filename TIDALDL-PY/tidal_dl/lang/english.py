@@ -45,8 +45,6 @@ class LangEnglish(object):
     PRINT_LATEST_VERSION = "Latest version:"
 
     CHANGE_DOWNLOAD_PATH = "Download path('0'-not modify):"
-    CHANGE_AUDIO_QUALITY = "Audio quality('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max,'5'-Atmos):"
-    CHANGE_VIDEO_QUALITY = "Video quality(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Check exist file before download track('0'-No,'1'-Yes):"
     CHANGE_INCLUDE_EP = "Include singles and EPs when downloading an artist's albums('0'-No,'1'-Yes):"
     CHANGE_SAVE_COVERS = "Save covers('0'-No,'1'-Yes):"

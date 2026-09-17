@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from tidal_dl.enums import AudioQuality
+from tidal_dl.enums import AudioQuality, audio_quality_fallbacks
 from tidal_dl.tidal import STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_SECONDS, TidalAPI
 
 
@@ -58,7 +58,7 @@ class StreamCacheTests(unittest.TestCase):
         stream = self._stream()
         with mock.patch.object(api, "__getAudioStreamUrlForQuality__", return_value=stream) as resolve:
             first = api.getStreamUrl(123, AudioQuality.HiFi)
-            second = api.getStreamUrlByPriority(123, api.__qualityFallbacks__(AudioQuality.HiFi))
+            second = api.getStreamUrlByPriority(123, audio_quality_fallbacks(AudioQuality.HiFi))
 
         self.assertEqual(resolve.call_count, 1)
         self.assertEqual(second.urls, first.urls)

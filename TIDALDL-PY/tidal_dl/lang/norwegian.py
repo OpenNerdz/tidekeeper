@@ -41,8 +41,6 @@ class LangNorwegian(object):
     PRINT_LATEST_VERSION = "Seneste versjon:"
 
     CHANGE_DOWNLOAD_PATH = "Nedlastingssti('0'-ikke endre):"
-    CHANGE_AUDIO_QUALITY = "Lydkvalitet('0'-Normal,'1'-Høy,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Videokvalitet(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Kontrollér filens eksistens før nedlasting('0'-Nei,'1'-Ja):"
     CHANGE_INCLUDE_EP = "Inkluder singler og EP'er når man laster ned en artists album('0'-Nei,'1'-Ja):"
     CHANGE_SAVE_COVERS = "Lagre cover('0'-Nei,'1'-Ja):"

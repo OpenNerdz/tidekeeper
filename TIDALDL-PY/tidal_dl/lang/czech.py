@@ -41,8 +41,6 @@ class LangCzech(object):
     PRINT_LATEST_VERSION = "Nejnovější verze:"
 
     CHANGE_DOWNLOAD_PATH = "Umístění stažených souborů ('0' beze změny):"
-    CHANGE_AUDIO_QUALITY = "Kvalita hudby ('0'-Normální,'1'-Vysoká,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Kvalita videa (1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Zkontrolovat existenci souboru před stažením ('0'-Ne,'1'-Ano):"
     CHANGE_INCLUDE_EP = "Při stahování alb interpreta zahrnout singly a EP ('0'-Ne,'1'-Ano):"
     CHANGE_SAVE_COVERS = "Uložit obaly alb ('0'-Ne,'1'-Ano):"

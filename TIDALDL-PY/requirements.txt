@@ -1,4 +1,4 @@
-# Runtime dependencies — keep aligned with setup.py install_requires.
+# Runtime dependencies — also read by setup.py when building distributions.
 aigpy>=2022.7.8.1
 requests>=2.34.2
 pycryptodome

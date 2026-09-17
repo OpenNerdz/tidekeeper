@@ -562,12 +562,11 @@ class TidekeeperBackend:
     def api_clients(self):
         return [
             {
-                "index": index,
+                "index": item["index"],
                 "platform": item.get("platform", ""),
                 "formats": item.get("formats", ""),
-                "valid": item.get("valid") == "True",
             }
-            for index, item in enumerate(apiKey.getItems())
+            for item in apiKey.getItems()
         ]
 
     def language_choices(self):
@@ -762,15 +761,6 @@ class DemoBackend(TidekeeperBackend):
     def open_download_folder(self, path: str = "") -> str:
         return path or SETTINGS.downloadPath
 
-    def api_clients(self):
-        return [
-            {"index": 4, "platform": "Tidekeeper OAuth", "formats": "Normal/High/HiFi/Master", "valid": True},
-            {"index": 1, "platform": "Fire TV", "formats": "Master-Only", "valid": True},
-        ]
-
-    def language_choices(self):
-        return [(0, "English"), (13, "French"), (14, "German"), (18, "Japanese")]
-
     def login_by_access_token(self, access_token: str, refresh_token: str = "") -> AuthStatus:
         return self.auth_status()
 
@@ -778,7 +768,7 @@ class DemoBackend(TidekeeperBackend):
         return (
             "Tidekeeper doctor\n"
             "[OK] Download path - /Music/Tidekeeper\n"
-            "[OK] TIDAL client - Tidekeeper OAuth\n"
+            f"[OK] TIDAL client - {apiKey.getItem(SETTINGS.apiKeyIndex)['platform']}\n"
             "[OK] ffmpeg - /usr/bin/ffmpeg\n"
             "[OK] Token - valid for country US\n"
             "[SUCCESS] Doctor finished.\n"

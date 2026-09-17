@@ -41,8 +41,6 @@ class LangPortuguese(object):
     PRINT_LATEST_VERSION = "Última Versão:"
 
     CHANGE_DOWNLOAD_PATH = "Caminho do download('0' Não Modificar):"
-    CHANGE_AUDIO_QUALITY = "Qualidade De Áudio('0'-Normal,'1'-Alta,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Qualidade Do Vídeo(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Verificar existência do arquivo antes de baixar a faixa('0'-Não,'1'-Sim):"
     CHANGE_INCLUDE_EP = "Incluir singles e EPs quando baixar álbums de um artista('0'-Não,'1'-Sim):"
     CHANGE_SAVE_COVERS = "Salvar Capas('0'-Não,'1'-Sim):"

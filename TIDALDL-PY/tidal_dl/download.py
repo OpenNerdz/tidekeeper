@@ -337,16 +337,6 @@ def __setUserProgressMax__(userProgress, size):
     __callProgressSink__(userProgress, "setMaxNum", size)
 
 
-def __addUserProgress__(userProgress, size, progressLock=None):
-    if size <= 0:
-        return
-    if progressLock is not None:
-        with progressLock:
-            __callProgressSink__(userProgress, "addCurNum", size)
-        return
-    __callProgressSink__(userProgress, "addCurNum", size)
-
-
 def __noteProgress__(progress, userProgress, size, progressLock=None):
     if size <= 0:
         return
@@ -635,6 +625,8 @@ def __downloadUrls__(
 
 def __downloadErrorHint__(err):
     text = str(err or "").lower()
+    if "playback client rejected" in text:
+        return " (hint: login kept; try HiFi or --quality-priority Max,HiFi,High,Normal)"
     if any(item in text for item in ("429", "too many requests", "rate limit")):
         return " (hint: raise the request interval in settings and retry)"
     if any(item in text for item in ("4022", "client referenced", "log in again")):

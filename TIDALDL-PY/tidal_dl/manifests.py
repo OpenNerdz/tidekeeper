@@ -5,6 +5,10 @@ from urllib.parse import urljoin
 from xml.etree import ElementTree
 
 
+class ProtectedManifestError(ValueError):
+    """The manifest requires an encryption scheme this downloader cannot play."""
+
+
 def _text(value):
     return value.decode('utf-8-sig') if isinstance(value, bytes) else value
 
@@ -58,6 +62,10 @@ def dash_segments(content):
     root = ElementTree.fromstring(content)
     for element in root.iter():
         element.tag = element.tag.rsplit('}', 1)[-1]
+        if element.tag == 'ContentProtection':
+            # Returning these URLs would save encrypted media as a successful
+            # download. Reject the manifest before extracting any segments.
+            raise ProtectedManifestError('DRM-protected DASH streams are not supported.')
 
     def base(parent, node):
         child = node.find('BaseURL')

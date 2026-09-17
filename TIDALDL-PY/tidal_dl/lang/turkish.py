@@ -41,8 +41,6 @@ class LangTurkish(object):
     PRINT_LATEST_VERSION = "Güncelleme Mevcut:"
 
     CHANGE_DOWNLOAD_PATH = ">>> İndirme Konumu ('0' aynı kalsın): "
-    CHANGE_AUDIO_QUALITY = ">>> Ses Kalitesi ('0'-Normal,'1'-Yüksek,'2'-HiFi,'3'-[M]aster,'4'-Max): "
-    CHANGE_VIDEO_QUALITY = ">>> Video Kalitesi (1080, 720, 480, 360): "
     CHANGE_CHECK_EXIST = ">>> Dosya daha önce indirilmiş mi diye kontrol edilsin mi ?('0'-Hayır,'1'-Evet): "
     CHANGE_INCLUDE_EP = ">>> Artist'in tüm albümlerini indirirken Single'leri ve EP'leri de dahil edilsin mi ?('0'-Hayır,'1'-Evet): "
     CHANGE_SAVE_COVERS = ">>> Albüm kapağı indirilsin mi?('0'-Hayır,'1'-Evet): "

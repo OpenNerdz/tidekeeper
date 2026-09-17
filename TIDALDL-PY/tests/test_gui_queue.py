@@ -490,6 +490,39 @@ class GuiQueueTests(unittest.TestCase):
             expected = '100%' if item is second else ''
             self.assertEqual(self.window.queue_table.item(row, 5).text(), expected)
 
+    def test_quality_menu_excludes_master_and_preserves_legacy_profile_fallbacks(self):
+        from tidal_dl.enums import AUDIO_QUALITY_ORDER, AudioQuality
+        from tidal_dl.settings import SETTINGS
+        self.assertEqual(
+            [self.window.audio_quality.itemData(i) for i in range(self.window.audio_quality.count())],
+            [quality.name for quality in AUDIO_QUALITY_ORDER],
+        )
+        cases = [
+            ([], ['Max', 'HiFi']),
+            ([AudioQuality.Master], ['Max', 'HiFi']),
+            ([AudioQuality.Master, AudioQuality.Max, AudioQuality.High], ['Max', 'High']),
+        ]
+        for saved, expected in cases:
+            with self.subTest(saved=saved):
+                SETTINGS.audioQuality = AudioQuality.Master
+                SETTINGS.audioQualityPriority = saved
+                self.window.refresh_settings()
+                values = self.window.collect_settings_values()
+                self.assertEqual(values['audioQuality'], 'Max')
+                self.assertEqual(values['audioQualityPriority'], expected)
+                # Displaying migrated settings must not write or mutate the profile.
+                self.assertEqual(SETTINGS.audioQuality, AudioQuality.Master)
+                self.assertEqual(SETTINGS.audioQualityPriority, saved)
+
+    def test_client_menu_uses_saved_ids_not_list_offsets(self):
+        from tidal_dl.settings import SETTINGS
+        self.assertEqual([self.window.api_client.itemData(i)
+                          for i in range(self.window.api_client.count())], [1, 4])
+        for index in (1, 4):
+            SETTINGS.apiKeyIndex = index
+            self.window.refresh_settings()
+            self.assertEqual(self.window.collect_settings_values()['apiKeyIndex'], index)
+
     def test_audio_selection_controls_effective_priority(self):
         from tidal_dl.enums import AudioQuality
         from tidal_dl.gui_app.backend import TidekeeperBackend

@@ -41,8 +41,6 @@ class LangPolish(object):
     PRINT_LATEST_VERSION = "Najnowsza wersja:"
 
     CHANGE_DOWNLOAD_PATH = "Ścieżka pobierania('0'-bez zmian):"
-    CHANGE_AUDIO_QUALITY = "Jakość audio('0'-Normalna,'1'-Wysoka,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Jakość wideo(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Sprawdź istniejący plik przed pobraniem utworu('0'-Nie,'1'-Tak):"
     CHANGE_INCLUDE_EP = "Uwzględnij single i EP podczas pobierania albumów wykonawcy('0'-Nie,'1'-Tak):"
     CHANGE_SAVE_COVERS = "Zapisz okładki('0'-Nie,'1'-Tak):"

@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from .enums import AudioQuality, Type, VideoQuality
+from .enums import AudioQuality, Type, VideoQuality, audio_quality_fallbacks
 from .environment import getDefaultDownloadPath
 from .lang.language import LANG
 
@@ -63,12 +63,7 @@ def _atomicWrite(path, content, binary=False, mode=0o600):
 
 
 def getDefaultAudioQualityPriority():
-    return [
-        AudioQuality.Max,
-        AudioQuality.HiFi,
-        AudioQuality.High,
-        AudioQuality.Normal,
-    ]
+    return audio_quality_fallbacks(AudioQuality.Max)
 
 
 class Settings(aigpy.model.ModelBase):

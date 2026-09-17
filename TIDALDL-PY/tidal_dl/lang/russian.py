@@ -41,8 +41,6 @@ class LangRussian(object):
     PRINT_LATEST_VERSION = "Последняя версия:"
 
     CHANGE_DOWNLOAD_PATH = "Место сохранения('0'-Отмена):"
-    CHANGE_AUDIO_QUALITY = "Качество аудио('0'-Стандарт,'1'-Высокое,'2'-HiFi,'3'-MQA,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Качество видео(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Проверять наличие перед загрузкой('0'-Нет,'1'-Да):"
     CHANGE_INCLUDE_EP = "Включать синглы и миньоны в дискографию('0'-Нет'1'-Да):"
     CHANGE_SAVE_COVERS = "Сохранять обложки('0'-Нет,'1'-Да):"

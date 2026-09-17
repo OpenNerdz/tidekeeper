@@ -16,7 +16,7 @@ import time
 import aigpy
 
 from . import apiKey
-from .enums import AudioQuality, Type, VideoQuality
+from .enums import AUDIO_QUALITY_ORDER, AudioQuality, Type, VideoQuality
 from .inputs import parse_direct_inputs
 from .lang.language import LANG
 from .model import Album, Artist, Mix, Playlist, Track, Video
@@ -158,10 +158,6 @@ def start_mix(obj: Mix, videoOnly=False, progress=None):
     return success
 
 
-def start_file(string, videoOnly=False, progress=None):
-    return start(string, videoOnly, progress=progress)
-
-
 def start_type(etype: Type, obj, videoOnly=False, progress=None):
     if etype == Type.Album:
         return start_album(obj, videoOnly, progress=progress)
@@ -251,10 +247,11 @@ def changePathSettings():
 
 def changeQualitySettings():
     Printf.settings()
+    audio_choices = ", ".join(f"'{item.value}'-{item.name}" for item in AUDIO_QUALITY_ORDER)
     SETTINGS.audioQuality = AudioQuality(
-        int(Printf.enterLimit(LANG.select.CHANGE_AUDIO_QUALITY,
+        int(Printf.enterLimit(f"{LANG.select.SETTING_AUDIO_QUALITY} ({audio_choices}):",
                               LANG.select.MSG_INPUT_ERR,
-                              ['0', '1', '2', '3', '4', '5'])))
+                              [str(item.value) for item in AUDIO_QUALITY_ORDER])))
     priority = Printf.enter(
         "Audio quality priority comma list, blank for single quality, e.g. Atmos,High,Lossless,Low:"
     )
@@ -262,9 +259,10 @@ def changeQualitySettings():
     if SETTINGS.audioQualityPriority:
         SETTINGS.audioQuality = SETTINGS.audioQualityPriority[0]
     SETTINGS.videoQuality = VideoQuality(
-        int(Printf.enterLimit(LANG.select.CHANGE_VIDEO_QUALITY,
+        int(Printf.enterLimit(f"{LANG.select.SETTING_VIDEO_QUALITY} "
+                              f"({', '.join(str(item.value) for item in reversed(VideoQuality))}):",
                               LANG.select.MSG_INPUT_ERR,
-                              ['1080', '720', '480', '360'])))
+                              [str(item.value) for item in reversed(VideoQuality)])))
     SETTINGS.save()
 
 
@@ -310,10 +308,8 @@ def changeSettings():
 
 def changeApiKey():
     item = apiKey.getItem(SETTINGS.apiKeyIndex)
-    ver = apiKey.getVersion()
 
     Printf.info(f'Current APIKeys: {str(SETTINGS.apiKeyIndex)} {item["platform"]}-{item["formats"]}')
-    Printf.info(f'Current Version: {str(ver)}')
     Printf.apikeys(apiKey.getItems())
     index = int(Printf.enterLimit("APIKEY index:", LANG.select.MSG_INPUT_ERR, apiKey.getLimitIndexs()))
 

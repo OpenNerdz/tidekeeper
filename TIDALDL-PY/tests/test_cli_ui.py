@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import tidal_dl
-from tidal_dl import printf
+from tidal_dl import apiKey, events, printf
 from tidal_dl.printf import Printf
 from tidal_dl.paths import PATHS
 from tidal_dl.settings import SETTINGS, TOKEN
@@ -85,21 +85,39 @@ class CliUiTests(unittest.TestCase):
         self.assertNotIn("1 Login/refresh   2 Logout", text)
 
     def test_compact_api_key_picker_uses_simple_lines(self):
-        items = [
-            {"valid": "False", "platform": "Old", "formats": "Normal/High"},
-            {"valid": "True", "platform": "Tidekeeper OAuth", "formats": "Normal/High/HiFi/Master"},
-        ]
         output = io.StringIO()
 
         with mock.patch.object(printf, "isTermux", return_value=True):
             with redirect_stdout(output):
-                Printf.apikeys(items)
+                Printf.apikeys(apiKey.getItems())
 
         text = output.getvalue()
         self.assertIn("Tidal clients", text)
-        self.assertIn("0 old - Old", text)
-        self.assertIn("1 OK - Tidekeeper OAuth", text)
+        self.assertIn("1 - Fire TV (legacy)", text)
+        self.assertIn("4 - Tidal TV", text)
         self.assertNotIn("+", text)
+
+    def test_wide_api_key_picker_preserves_sparse_ids(self):
+        with mock.patch.object(Printf, '__isCompact__', return_value=False), \
+             mock.patch.object(Printf, '__gettable__') as table:
+            Printf.apikeys(apiKey.getItems())
+        self.assertEqual([row[0] for row in table.call_args.args[1]], [1, 4])
+
+    def test_quality_menu_uses_current_qualities_and_all_resolutions(self):
+        from tidal_dl.enums import AudioQuality, VideoQuality
+        self._restoreGlobalSettings()
+        with mock.patch.object(Printf, 'settings'), mock.patch.object(SETTINGS, 'save'), \
+             mock.patch.object(Printf, 'enter', return_value=''), \
+             mock.patch.object(Printf, 'enterLimit', side_effect=['5', '240']) as enter:
+            events.changeQualitySettings()
+        audio, video = enter.call_args_list
+        self.assertIn("'5'-Atmos", audio.args[0])
+        self.assertNotIn('Master', audio.args[0])
+        self.assertNotIn('3', audio.args[2])
+        self.assertIn('240', video.args[0])
+        self.assertIn('240', video.args[2])
+        self.assertEqual(SETTINGS.audioQuality, AudioQuality.Atmos)
+        self.assertEqual(SETTINGS.videoQuality, VideoQuality.P240)
 
     def test_track_output_shows_quality_fallback(self):
         output = io.StringIO()

@@ -108,12 +108,6 @@ class HttpReliabilityTests(unittest.TestCase):
             self.assertFalse(path.exists())
         self.assertEqual(session.request.call_count, download.DOWNLOAD_RETRIES)
 
-    def test_cover_http_error_is_not_returned_as_image_bytes(self):
-        result = response(503, content=b'Service unavailable')
-        with mock.patch.object(self.api.session, 'get', return_value=result):
-            self.assertFalse(self.api.getCoverData('cover-id'))
-        result.close.assert_called_once()
-
     def test_retry_after_accepts_dates_and_bounds_invalid_delays(self):
         now = 1700000000
         future = format_datetime(datetime.fromtimestamp(now + 12, timezone.utc), usegmt=True)

@@ -41,8 +41,6 @@ class LangKorean(object):
     PRINT_LATEST_VERSION = "최신 버전:"
 
     CHANGE_DOWNLOAD_PATH = "다운로드 경로('0'-변경 안 함):"
-    CHANGE_AUDIO_QUALITY = "음질('0'-보통,'1'-높음,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "영상 화질(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "다운로드 트랙 전에 존재하는 파일 확인('0'-아니요,'1'-예):"
     CHANGE_INCLUDE_EP = "아티스트 앨범 다운로드시 싱글 및 EP 포함('0'-아니요,'1'-예):"
     CHANGE_SAVE_COVERS = "커버 저장('0'-아니요,'1'-예):"

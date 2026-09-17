@@ -132,6 +132,14 @@ instead. Check the installed version with `tidekeeper --version`.
 ### Choose quality
 
 `Max` is the default and requests the best available standard audio quality.
+A single legacy `Master` selection requests lossless FLAC: Max first, then HiFi.
+TIDAL [retired MQA in July 2024](https://support.tidal.com/hc/en-us/articles/25876825185425-Audio-Format-Updates).
+To choose your own fallback order, use `--quality-priority Max,HiFi,High,Normal`.
+Other single-quality selections remain strict, and lists of fallback qualities
+keep their order (`Master` is treated as `Max`).
+DRM-protected DASH streams are rejected; fallback can use unencrypted streams
+offered by TIDAL for your account.
+
 Dolby Atmos is optional because it is often a separate version of an album or
 track. Select **Atmos** in the desktop app or use:
 
@@ -223,12 +231,24 @@ tidekeeper --doctor
 tidekeeper --paths
 ```
 
-### Login succeeds but a download fails with HTTP 404
+### Session removed after updating or changing clients
 
-Update Tidekeeper, close it completely, reopen it, and sign in again. Current
-versions automatically remove sessions created by an old TIDAL client. If you
+Sign in again after the client changes. Current versions automatically remove
+sessions created by an old TIDAL client. If you
 use a standalone app, make sure you downloaded the latest executable rather
 than only pressing its Update button.
+
+### Login succeeds, but playback returns HTTP 404 / subStatus 4022
+
+A playback rejection alone does not mean your login is invalid. Tidekeeper
+keeps the session and tries its alternate manifest endpoint and any configured
+quality fallbacks. Try **HiFi** or `--quality-priority Max,HiFi,High,Normal`.
+Legacy **Master** settings now use FLAC automatically.
+
+If all attempts fail, include the endpoint, client label, country, and quality
+from the error in your issue report. Repeatedly logging in with the same client
+may not change its playback availability. A client rejection on a catalog
+request still clears the unusable session after a failed refresh.
 
 ### Repeated HTTP 429 errors
 

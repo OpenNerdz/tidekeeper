@@ -41,8 +41,6 @@ class LangDutch(object):
     PRINT_LATEST_VERSION = "Laatste versie:"
 
     CHANGE_DOWNLOAD_PATH = "Downloadpad('0'-niet wijzigen):"
-    CHANGE_AUDIO_QUALITY = "Audiokwaliteit('0'-Normaal,'1'-Hoog,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Videokwaliteit (1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Controleer het bestaande bestand voordat u de track downloadt('0'-Nee,'1'-Ja):"
     CHANGE_INCLUDE_EP = "Voeg singles en EP's toe bij het downloaden van de albums van een artiest('0'-Nee,'1'-Ja):"
     CHANGE_SAVE_COVERS = "Covers opslaan('0'-Nee,'1'-Ja):"

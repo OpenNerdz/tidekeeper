@@ -100,12 +100,10 @@ setup(
     ],
     keywords="tidal music downloader cli gui lossless atmos",
     python_requires=">=3.10",
-    # Keep pins aligned with requirements.txt (single source of intent).
+    # One runtime dependency list for source installs, wheels and sdists.
     install_requires=[
-        "aigpy>=2022.7.8.1",
-        "requests>=2.34.2",
-        "pycryptodome",
-        "prettytable>=3.18.0",
+        line.strip() for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
     ],
     extras_require={
         "gui": ["PySide6>=6.5"],

@@ -41,8 +41,6 @@ class LangVietnamese(object):
     PRINT_LATEST_VERSION = "Bản mới nhất:"
 
     CHANGE_DOWNLOAD_PATH = "Đường dẫn tải về('0' không đổi):"
-    CHANGE_AUDIO_QUALITY = "Chất lượng âm thanh('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Chất lượng video(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Kiểm tra tệp đã tồn tại chưa trước khi tải('0'-Không,'1'-Có):"
     CHANGE_INCLUDE_EP = "Bao gồm đĩa đơn và EPs khi tải tất cả nhạc của nghệ sĩ('0'-Không,'1'-Có):"
     CHANGE_SAVE_COVERS = "Tải ảnh bìa('0'-Không,'1'-Có):"

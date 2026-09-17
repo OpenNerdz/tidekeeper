@@ -41,8 +41,6 @@ class LangChinese(object):
     PRINT_LATEST_VERSION = "最新版本:"
 
     CHANGE_DOWNLOAD_PATH = "下载路径('0' 不修改):"
-    CHANGE_AUDIO_QUALITY = "音频质量('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "视频质量(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "下载前检查是否有已下载的文件('0'-不,'1'-是):"
     CHANGE_INCLUDE_EP = "下载歌手专辑时包含其EP单曲('0'-不,'1'-是):"
     CHANGE_SAVE_COVERS = "保存封面('0'-不,'1'-是):"

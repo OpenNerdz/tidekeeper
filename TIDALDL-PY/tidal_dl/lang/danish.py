@@ -41,8 +41,6 @@ class LangDanish(object):
     PRINT_LATEST_VERSION = "Seneste version:"
 
     CHANGE_DOWNLOAD_PATH = "Download stil('0' ændrer ikke):"
-    CHANGE_AUDIO_QUALITY = "Lydkvalitet('0'-Normal,'1'-Høj,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Videokvalitet(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Kontrollér filens eksistens før download('0'-Nej,'1'-Ja):"
     CHANGE_INCLUDE_EP = "Inkluder singler og EP'er når der downloades en kunstners album('0'-Nej,'1'-Ja):"
     CHANGE_SAVE_COVERS = "Gem omslag('0'-Nej,'1'-Ja):"

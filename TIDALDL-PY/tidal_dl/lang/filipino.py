@@ -41,8 +41,6 @@ class LangFilipino(object):
     PRINT_LATEST_VERSION = "Pinakabagong Version:"
 
     CHANGE_DOWNLOAD_PATH = "Paroroonan ng Download('0' walang babaguhin):"
-    CHANGE_AUDIO_QUALITY = "Kalidad ng Audio('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Kalidad ng Audio Video(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Suriin kung naidownload na bago mag download muli('0'-Hindi,'1'-Oo):"
     CHANGE_INCLUDE_EP = "Isama ang singles at EPs sa pagdownload ng mga album mula sa artist('0'-Hindi,'1'-Oo):"
     CHANGE_SAVE_COVERS = "I-save ang mga covers('0'-Hindi,'1'-Oo):"

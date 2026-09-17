@@ -20,6 +20,33 @@ class AudioQuality(Enum):
     Atmos = 5
 
 
+AUDIO_QUALITY_ORDER = (
+    AudioQuality.Atmos, AudioQuality.Max, AudioQuality.HiFi,
+    AudioQuality.High, AudioQuality.Normal,
+)
+
+
+def audio_quality_fallbacks(quality):
+    """Order current qualities without reintroducing retired MQA requests."""
+    if quality == AudioQuality.Master:
+        return [quality] + audio_quality_fallbacks(AudioQuality.HiFi)
+    if quality not in AUDIO_QUALITY_ORDER:
+        return [quality]
+    return list(AUDIO_QUALITY_ORDER[AUDIO_QUALITY_ORDER.index(quality):])
+
+
+def playback_quality_priority(qualities):
+    """Migrate legacy Master to FLAC, preserving explicit fallback order."""
+    qualities = list(qualities)
+    priority = list(dict.fromkeys(
+        AudioQuality.Max if item == AudioQuality.Master else item for item in qualities
+    ))
+    if qualities == [AudioQuality.Master]:
+        # MQA replacements may only be CD quality. Keep this migration lossless.
+        priority.append(AudioQuality.HiFi)
+    return priority
+
+
 class VideoQuality(Enum):
     P240 = 240
     P360 = 360

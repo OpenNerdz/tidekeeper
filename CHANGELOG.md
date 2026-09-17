@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026.9.17.1 - 2026-09-17
+
+- Fix issue #65's login loop: playback-only HTTP 404/subStatus 4022 no longer
+  refreshes or erases a newly authorized session. Alternate manifest requests
+  and configured quality fallbacks can run; catalog client rejection still
+  clears an unusable session without retrying with an empty bearer token.
+- Treat legacy Master (retired MQA) selections as lossless FLAC. A single Master
+  selection tries Max then HiFi; explicit fallback orders remain in control,
+  and no fallback ladder requests retired MQA.
+- Include the playback endpoint, client label, country, and quality in 4022
+  diagnostics without tokens or secrets, and stop recommending repeated logout
+  for playback-only failures.
+- Reject DRM-protected DASH manifests before downloading their segments. Use
+  available clear streams within the configured fallback order instead of
+  saving encrypted audio and reporting it as a successful download.
+- Remove disabled login clients from both selectors without renumbering saved
+  client IDs. Keep current sessions and supported legacy profiles compatible.
+- Share current quality/fallback choices across playback, CLI and desktop;
+  migrate saved Master settings in the desktop and include 240p in the CLI.
+- Remove unused helpers and the obsolete issue-18 live script. Consolidate
+  terminal help, translated quality prompts, demo choices and dependency pins.
+
 ## 2026.9.17.0 - 2026-09-17
 
 - Replace the Android Auto OAuth client, which could authorize a login but produced unusable 4022 sessions,

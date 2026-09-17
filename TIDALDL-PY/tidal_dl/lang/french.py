@@ -41,8 +41,6 @@ class LangFrench(object):
     PRINT_LATEST_VERSION = "Dernière version:"
 
     CHANGE_DOWNLOAD_PATH = "Emplacement des téléchargements('0' ne pas modifier):"
-    CHANGE_AUDIO_QUALITY = "Qualité audio('0'-Normal,'1'-High,'2'-HiFi,'3'-Master,'4'-Max):"
-    CHANGE_VIDEO_QUALITY = "Qualité Video(1080, 720, 480, 360):"
     CHANGE_CHECK_EXIST = "Vérifier l'existence du fichier avant le téléchargement('0'-Non,'1'-Oui):"
     CHANGE_INCLUDE_EP = "Inclure les singles et les EPs lors du téléchargement des albums d'un artiste('0'-Non,'1'-Oui):"
     CHANGE_SAVE_COVERS = "Sauvegarder les couvertures('0'-Non,'1'-Oui):"
