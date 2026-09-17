@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026.9.17.0 - 2026-09-17
 
 - Replace the Android Auto OAuth client, which could authorize a login but produced unusable 4022 sessions,
   with the current TV device-flow client.
