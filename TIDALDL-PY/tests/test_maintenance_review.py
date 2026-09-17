@@ -64,6 +64,45 @@ class MaintenanceReviewTests(unittest.TestCase):
         self.assertIsNone(token.refreshToken)
         self.assertIsNone(token.countryCode)
 
+    def test_token_file_preserves_originating_client(self):
+        path = self.root / 'token.json'
+        token = TokenSettings()
+        token.read(str(path))
+        token.userid = 7
+        token.clientId = 'client-one'
+        token.accessToken = 'saved-token'
+        token.save()
+
+        loaded = TokenSettings()
+        loaded.read(str(path))
+
+        self.assertEqual(loaded.clientId, 'client-one')
+        self.assertEqual(loaded.accessToken, 'saved-token')
+
+    def test_client_change_clears_legacy_or_mismatched_session(self):
+        api = TidalAPI()
+        api.apiKey = {'clientId': 'current-client'}
+        TOKEN.userid = 7
+        TOKEN.countryCode = 'US'
+        TOKEN.clientId = None
+        TOKEN.accessToken = 'legacy-token'
+        TOKEN.refreshToken = 'legacy-refresh'
+
+        with mock.patch.object(TOKEN, 'save') as save:
+            self.assertTrue(api.clearSavedSessionIfClientChanged())
+
+        self.assertIsNone(TOKEN.accessToken)
+        self.assertIsNone(TOKEN.refreshToken)
+        self.assertIsNone(TOKEN.clientId)
+        save.assert_called_once_with()
+
+        TOKEN.clientId = 'current-client'
+        TOKEN.accessToken = 'current-token'
+        with mock.patch.object(TOKEN, 'save') as save:
+            self.assertFalse(api.clearSavedSessionIfClientChanged())
+        self.assertEqual(TOKEN.accessToken, 'current-token')
+        save.assert_not_called()
+
     def test_settings_reread_uses_defaults_after_corruption(self):
         settings = Settings()
         path = self.root / 'settings.json'

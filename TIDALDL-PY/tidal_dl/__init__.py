@@ -240,6 +240,7 @@ def main():
         SETTINGS.apiKeyIndex = apiKey.getDefaultIndex()
         SETTINGS.save()
     TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
+    TIDAL_API.clearSavedSessionIfClientChanged()
 
     if len(sys.argv) > 1:
         exit_code = mainCommand()

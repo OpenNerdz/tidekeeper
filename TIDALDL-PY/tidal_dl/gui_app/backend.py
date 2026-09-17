@@ -253,6 +253,7 @@ class TidekeeperBackend:
             SETTINGS.apiKeyIndex = apiKey.getDefaultIndex()
             SETTINGS.save()
         TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
+        TIDAL_API.clearSavedSessionIfClientChanged()
         self._sync_api_login_key_from_token()
 
     def load_queue(self):
@@ -306,6 +307,7 @@ class TidekeeperBackend:
     def _save_api_login_key_to_token(self, expires_after: float | None = None):
         TOKEN.userid = TIDAL_API.key.userId
         TOKEN.countryCode = TIDAL_API.key.countryCode
+        TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
         TOKEN.accessToken = TIDAL_API.key.accessToken
         TOKEN.refreshToken = TIDAL_API.key.refreshToken
         if expires_after is not None:

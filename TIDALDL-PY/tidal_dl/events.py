@@ -321,6 +321,7 @@ def changeApiKey():
         SETTINGS.apiKeyIndex = index
         SETTINGS.save()
         TIDAL_API.apiKey = apiKey.getItem(index)
+        TIDAL_API.clearSavedSession()
         return True
     return False
 
@@ -379,6 +380,7 @@ def loginByWeb():
 
             TOKEN.userid = TIDAL_API.key.userId
             TOKEN.countryCode = TIDAL_API.key.countryCode
+            TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
             TOKEN.accessToken = TIDAL_API.key.accessToken
             TOKEN.refreshToken = TIDAL_API.key.refreshToken
             TOKEN.expiresAfter = time.time() + int(TIDAL_API.key.expiresIn)
@@ -414,6 +416,7 @@ def loginByConfig():
 
             TOKEN.userid = TIDAL_API.key.userId
             TOKEN.countryCode = TIDAL_API.key.countryCode
+            TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
             TOKEN.accessToken = TIDAL_API.key.accessToken
             TOKEN.refreshToken = TIDAL_API.key.refreshToken
             TOKEN.expiresAfter = time.time() + int(TIDAL_API.key.expiresIn)
@@ -457,6 +460,7 @@ def loginByAccessToken():
     TOKEN.refreshToken = refreshToken
     TIDAL_API.key.refreshToken = refreshToken
     TOKEN.userid = TIDAL_API.key.userId
+    TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
     TOKEN.expiresAfter = 0
     TOKEN.countryCode = TIDAL_API.key.countryCode
     TOKEN.save()

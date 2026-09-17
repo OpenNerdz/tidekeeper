@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Replace the Android Auto OAuth client, which could authorize a login but produced unusable 4022 sessions,
+  with the current TV device-flow client.
+- Record the client that issued each saved token and require one clean login when an update changes clients,
+  preventing incompatible legacy sessions from reaching the first download.
+
 ## 2026.9.15.0 - 2026-09-15
 
 - Replace the retired default TIDAL OAuth client and clear saved sessions that TIDAL rejects with subStatus 4022,

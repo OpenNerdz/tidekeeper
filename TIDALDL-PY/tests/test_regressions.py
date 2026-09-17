@@ -483,6 +483,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         old_values = {
             "userid": events.TOKEN.userid,
             "countryCode": events.TOKEN.countryCode,
+            "clientId": events.TOKEN.clientId,
             "accessToken": events.TOKEN.accessToken,
             "refreshToken": events.TOKEN.refreshToken,
             "expiresAfter": events.TOKEN.expiresAfter,
@@ -528,6 +529,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         old_values = {
             "userid": events.TOKEN.userid,
             "countryCode": events.TOKEN.countryCode,
+            "clientId": events.TOKEN.clientId,
             "accessToken": events.TOKEN.accessToken,
             "refreshToken": events.TOKEN.refreshToken,
             "expiresAfter": events.TOKEN.expiresAfter,
@@ -562,6 +564,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         old_values = {
             "userid": events.TOKEN.userid,
             "countryCode": events.TOKEN.countryCode,
+            "clientId": events.TOKEN.clientId,
             "accessToken": events.TOKEN.accessToken,
             "refreshToken": events.TOKEN.refreshToken,
             "expiresAfter": events.TOKEN.expiresAfter,
@@ -832,6 +835,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         old_values = {
             "userid": events.TOKEN.userid,
             "countryCode": events.TOKEN.countryCode,
+            "clientId": events.TOKEN.clientId,
             "accessToken": events.TOKEN.accessToken,
             "refreshToken": events.TOKEN.refreshToken,
             "expiresAfter": events.TOKEN.expiresAfter,
@@ -874,6 +878,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         old_values = {
             "userid": events.TOKEN.userid,
             "countryCode": events.TOKEN.countryCode,
+            "clientId": events.TOKEN.clientId,
             "accessToken": events.TOKEN.accessToken,
             "refreshToken": events.TOKEN.refreshToken,
             "expiresAfter": events.TOKEN.expiresAfter,

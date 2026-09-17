@@ -266,6 +266,7 @@ class Settings(aigpy.model.ModelBase):
 class TokenSettings(aigpy.model.ModelBase):
     userid = None
     countryCode = None
+    clientId = None
     accessToken = None
     refreshToken = None
     expiresAfter = 0
@@ -292,7 +293,7 @@ class TokenSettings(aigpy.model.ModelBase):
                 data = json.loads(self.__decode__(txt))
                 if not isinstance(data, dict):
                     raise ValueError("token root must be a JSON object")
-                for name in ('userid', 'countryCode', 'accessToken', 'refreshToken'):
+                for name in ('userid', 'countryCode', 'clientId', 'accessToken', 'refreshToken'):
                     value = data.get(name)
                     valid = isinstance(value, str) or (name == 'userid' and type(value) is int)
                     setattr(self, name, value if valid else None)

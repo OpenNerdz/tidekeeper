@@ -11,7 +11,7 @@
 import json
 __KEYS_JSON__ = '''
 {
-    "version": "2026.9.15",
+    "version": "2026.9.17",
     "keys": [
         {
             "platform": "Fire TV",
@@ -46,12 +46,12 @@ __KEYS_JSON__ = '''
             "from": "morguldir (https://github.com/morguldir/python-tidal/commit/50f1afcd2079efb2b4cf694ef5a7d67fdf619d09)"
         },
         {
-            "platform": "Android Auto",
-            "formats": "Normal/High/HiFi/Master",
-            "clientId": "zU4XHVVkc2tDPo4t",
-            "clientSecret": "VJKhDFqJPqvsPVNBV6ukXTJmwlvbttP7wlMlrc72se4=",
+            "platform": "Tidal TV",
+            "formats": "Normal/High/HiFi",
+            "clientId": "4N3n6Q1x95LL5K7p",
+            "clientSecret": "oKOXfJW371cX6xaZ0PyhgGNBdNLlBZd4AKKYougMjik=",
             "valid": "True",
-            "from": "1nikolas (https://github.com/yaronzz/Tidal-Media-Downloader/pull/840)"
+            "from": "np3ir/tiddl-elvigilante (TV device flow)"
         }
     ]
 }

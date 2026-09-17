@@ -190,10 +190,22 @@ class TidalAPI(object):
             self.clearSession()
             TOKEN.userid = None
             TOKEN.countryCode = None
+            TOKEN.clientId = None
             TOKEN.accessToken = None
             TOKEN.refreshToken = None
             TOKEN.expiresAfter = 0
             TOKEN.save()
+
+    def clearSavedSessionIfClientChanged(self):
+        """Discard tokens minted for a different (or unknown legacy) client."""
+        if aigpy.string.isNull(getattr(TOKEN, 'accessToken', None)):
+            return False
+        active_client_id = str(self.apiKey.get('clientId') or '')
+        saved_client_id = str(getattr(TOKEN, 'clientId', None) or '')
+        if not active_client_id or saved_client_id == active_client_id:
+            return False
+        self.clearSavedSession()
+        return True
 
     def clearSessionCaches(self):
         with self._streamCacheLock:
@@ -292,6 +304,7 @@ class TidalAPI(object):
 
                 TOKEN.userid = self.key.userId
                 TOKEN.countryCode = self.key.countryCode
+                TOKEN.clientId = self.apiKey.get('clientId')
                 TOKEN.accessToken = self.key.accessToken
                 TOKEN.refreshToken = self.key.refreshToken
                 TOKEN.expiresAfter = time.time() + int(self.key.expiresIn)
