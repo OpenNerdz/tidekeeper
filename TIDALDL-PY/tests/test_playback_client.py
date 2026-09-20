@@ -107,7 +107,7 @@ class PlaybackClientTests(unittest.TestCase):
         denied.close.assert_called()
         self.assertIn('4022', error.exception.errorCodes)
         message = str(error.exception)
-        for detail in ('Tidal TV', 'US', 'LOSSLESS', 'playbackinfopostpaywall', 'kept'):
+        for detail in (self.api.apiKey['platform'], 'US', 'LOSSLESS', 'playbackinfopostpaywall', 'kept'):
             self.assertIn(detail, message)
         for secret in ('private-access', 'private-refresh', self.api.apiKey['clientSecret']):
             self.assertNotIn(secret, message)

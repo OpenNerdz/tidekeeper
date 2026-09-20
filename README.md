@@ -131,7 +131,11 @@ instead. Check the installed version with `tidekeeper --version`.
 
 ### Choose quality
 
-`Max` is the default and requests the best available standard audio quality.
+`Max` is the default and requests the best available standard audio quality,
+including 24-bit/192 kHz FLAC when the track and account offer it. New profiles
+use the **Tidal HiRes** client for Max playback. Existing profiles that still use
+**Tidal TV** can select **Tidal HiRes** in the desktop Advanced settings or
+terminal API-client menu, save, and sign in once with the new client.
 A single legacy `Master` selection requests lossless FLAC: Max first, then HiFi.
 TIDAL [retired MQA in July 2024](https://support.tidal.com/hc/en-us/articles/25876825185425-Audio-Format-Updates).
 To choose your own fallback order, use `--quality-priority Max,HiFi,High,Normal`.
@@ -249,6 +253,14 @@ If all attempts fail, include the endpoint, client label, country, and quality
 from the error in your issue report. Repeatedly logging in with the same client
 may not change its playback availability. A client rejection on a catalog
 request still clears the unusable session after a failed refresh.
+
+### Max downloads are only 16-bit/44.1 kHz
+
+Max is a ceiling, not an upsampling target: tracks whose best source is HiFi
+correctly remain 16-bit. For tracks marked Max, select the **Tidal HiRes** client
+in Advanced settings (or terminal menu option 7), save, sign in again, and keep
+audio quality set to **Max**. The older **Tidal TV** client remains available for
+accounts where its more conservative playback support is preferable.
 
 ### Repeated HTTP 429 errors
 

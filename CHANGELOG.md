@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.9.20.0 - 2026-09-20
+
+- Add a current HiRes-capable TIDAL device-flow client and use it for new
+  profiles, enabling Max streams up to 24-bit/192 kHz when offered by the track
+  and account. Preserve the TV client at its stable index for existing sessions
+  and manual fallback.
+
 ## 2026.9.17.1 - 2026-09-17
 
 - Fix issue #65's login loop: playback-only HTTP 404/subStatus 4022 no longer

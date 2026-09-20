@@ -95,13 +95,14 @@ class CliUiTests(unittest.TestCase):
         self.assertIn("Tidal clients", text)
         self.assertIn("1 - Fire TV (legacy)", text)
         self.assertIn("4 - Tidal TV", text)
+        self.assertIn("5 - Tidal HiRes", text)
         self.assertNotIn("+", text)
 
     def test_wide_api_key_picker_preserves_sparse_ids(self):
         with mock.patch.object(Printf, '__isCompact__', return_value=False), \
              mock.patch.object(Printf, '__gettable__') as table:
             Printf.apikeys(apiKey.getItems())
-        self.assertEqual([row[0] for row in table.call_args.args[1]], [1, 4])
+        self.assertEqual([row[0] for row in table.call_args.args[1]], [1, 4, 5])
 
     def test_quality_menu_uses_current_qualities_and_all_resolutions(self):
         from tidal_dl.enums import AudioQuality, VideoQuality

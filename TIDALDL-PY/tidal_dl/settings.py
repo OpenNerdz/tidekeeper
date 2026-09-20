@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import tempfile
 
+from .apiKey import getDefaultIndex
 from .enums import AudioQuality, Type, VideoQuality, audio_quality_fallbacks
 from .environment import getDefaultDownloadPath
 from .lang.language import LANG
@@ -72,7 +73,7 @@ class Settings(aigpy.model.ModelBase):
     saveCovers = True
     language = 0
     lyricFile = False
-    apiKeyIndex = 4
+    apiKeyIndex = getDefaultIndex()
     showProgress = True
     showTrackInfo = True
     saveAlbumInfo = False

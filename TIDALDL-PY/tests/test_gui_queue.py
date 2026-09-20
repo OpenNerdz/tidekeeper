@@ -517,8 +517,8 @@ class GuiQueueTests(unittest.TestCase):
     def test_client_menu_uses_saved_ids_not_list_offsets(self):
         from tidal_dl.settings import SETTINGS
         self.assertEqual([self.window.api_client.itemData(i)
-                          for i in range(self.window.api_client.count())], [1, 4])
-        for index in (1, 4):
+                          for i in range(self.window.api_client.count())], [1, 4, 5])
+        for index in (1, 4, 5):
             SETTINGS.apiKeyIndex = index
             self.window.refresh_settings()
             self.assertEqual(self.window.collect_settings_values()['apiKeyIndex'], index)

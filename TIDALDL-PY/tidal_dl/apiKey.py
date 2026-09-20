@@ -25,8 +25,15 @@ __API_KEYS__ = {
         "clientSecret": "oKOXfJW371cX6xaZ0PyhgGNBdNLlBZd4AKKYougMjik=",
         "from": "np3ir/tiddl-elvigilante (TV device flow)",
     },
+    5: {
+        "platform": "Tidal HiRes",
+        "formats": "Normal/High/HiFi/Max (up to 24-bit/192 kHz)",
+        "clientId": "fX2JxdmntZWK0ixT",
+        "clientSecret": "1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg=",
+        "from": "tamland/python-tidal (OAuth device flow)",
+    },
 }
-DEFAULT_API_KEY_INDEX = 4
+DEFAULT_API_KEY_INDEX = 5
 __ERROR_KEY__ = {
     'platform': 'None',
     'formats': '',
