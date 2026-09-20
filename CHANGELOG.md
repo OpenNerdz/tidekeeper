@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.9.20.3 - 2026-09-20
+
+- Reject preview-only OpenAPI manifests and retry the same format through the
+  playback usage, preventing short high-resolution previews from being saved
+  and reported as complete tracks.
+- Keep the selected audio quality ahead of saved fallback entries, including
+  older or hand-edited profiles, so choosing Max cannot silently start at HiFi.
+
 ## 2026.9.20.2 - 2026-09-20
 
 - Treat numeric DASH representation IDs as identifiers while retaining

@@ -248,16 +248,19 @@ def changePathSettings():
 def changeQualitySettings():
     Printf.settings()
     audio_choices = ", ".join(f"'{item.value}'-{item.name}" for item in AUDIO_QUALITY_ORDER)
-    SETTINGS.audioQuality = AudioQuality(
+    selected_quality = AudioQuality(
         int(Printf.enterLimit(f"{LANG.select.SETTING_AUDIO_QUALITY} ({audio_choices}):",
                               LANG.select.MSG_INPUT_ERR,
                               [str(item.value) for item in AUDIO_QUALITY_ORDER])))
     priority = Printf.enter(
-        "Audio quality priority comma list, blank for single quality, e.g. Atmos,High,Lossless,Low:"
+        "Fallback qualities comma list, blank for selected quality only, e.g. HiFi,High,Normal:"
     )
-    SETTINGS.audioQualityPriority = SETTINGS.getAudioQualityPriority(priority)
-    if SETTINGS.audioQualityPriority:
-        SETTINGS.audioQuality = SETTINGS.audioQualityPriority[0]
+    fallbacks = SETTINGS.getAudioQualityPriority(priority)
+    SETTINGS.audioQuality = selected_quality
+    SETTINGS.audioQualityPriority = (
+        [selected_quality] + [item for item in fallbacks if item != selected_quality]
+        if fallbacks else []
+    )
     SETTINGS.videoQuality = VideoQuality(
         int(Printf.enterLimit(f"{LANG.select.SETTING_VIDEO_QUALITY} "
                               f"({', '.join(str(item.value) for item in reversed(VideoQuality))}):",

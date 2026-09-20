@@ -165,7 +165,11 @@ class Settings(aigpy.model.ModelBase):
     def getDownloadAudioQualityPriority(self):
         priority = self.getAudioQualityPriority(self.audioQualityPriority)
         if priority:
-            return priority
+            # The primary selector is authoritative. Older profiles (and
+            # hand-edited JSON) can retain a fallback list whose first item no
+            # longer matches it; letting that stale item win makes a Max
+            # selection silently download a lower quality.
+            return [self.audioQuality] + [item for item in priority if item != self.audioQuality]
         return [self.audioQuality]
 
     def getVideoQuality(self, value):

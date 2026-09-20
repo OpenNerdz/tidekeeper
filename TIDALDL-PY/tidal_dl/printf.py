@@ -27,7 +27,7 @@ from .environment import isTermux
 from .lang.language import LANG
 
 
-VERSION = '2026.9.20.2'
+VERSION = '2026.9.20.3'
 PROJECT_URL = 'https://github.com/OpenNerdz/tidekeeper'
 
 print_mutex = threading.Lock()
@@ -127,8 +127,9 @@ class Printf(object):
     @staticmethod
     def settings():
         data = SETTINGS
+        configuredPriority = data.getAudioQualityPriority(data.audioQualityPriority)
         qualityPriority = ",".join(
-            item.name for item in data.getAudioQualityPriority(data.audioQualityPriority)
+            item.name for item in (data.getDownloadAudioQualityPriority() if configuredPriority else [])
         ) or "off"
 
         def label(key, fallback):
@@ -183,7 +184,7 @@ class Printf(object):
         compact = Printf.__isCompact__()
         path = Printf.__shorten__(data.downloadPath, 42 if compact else 68)
         audio = Printf.__enumName__(data.audioQuality)
-        priority = data.getAudioQualityPriority(data.audioQualityPriority)
+        priority = data.getDownloadAudioQualityPriority()
         if priority:
             audio = ">".join(item.name for item in priority)
         video = Printf.__enumName__(data.videoQuality)

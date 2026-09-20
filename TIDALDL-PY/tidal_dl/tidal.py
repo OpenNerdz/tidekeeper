@@ -1184,7 +1184,7 @@ class TidalAPI(object):
         for usage in usages or self.__openApiManifestUsages__():
             for attemptFormats in formatAttempts:
                 try:
-                    return self.__getOpenApiTrackManifestOnce__(id, attemptFormats, usage)
+                    attributes = self.__getOpenApiTrackManifestOnce__(id, attemptFormats, usage)
                 except TidalApiError as e:
                     last_error = e
                     if not self.__isRetryableManifestError__(e):
@@ -1195,6 +1195,24 @@ class TidalAPI(object):
                         attemptFormats,
                         e,
                     )
+                    continue
+
+                presentation = str(attributes.get('trackPresentation') or 'FULL').strip().upper()
+                if presentation == 'PREVIEW':
+                    # DOWNLOAD can return a valid, full-fidelity manifest that
+                    # contains only a short preview. Codec/sample-rate checks
+                    # cannot detect that truncation, so retry the same formats
+                    # with PLAYBACK and never report a preview as completed.
+                    last_error = TidalStreamUnavailable(
+                        'TIDAL returned a preview-only stream instead of the full track.'
+                    )
+                    logging.debug(
+                        "Track manifest usage=%s formats=%s returned PREVIEW; trying next usage.",
+                        usage,
+                        attemptFormats,
+                    )
+                    break
+                return attributes
         raise last_error
 
     def __getOpenApiTrackManifestOnce__(self, id, formats, usage):

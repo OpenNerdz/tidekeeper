@@ -161,6 +161,30 @@ class PlaybackClientTests(unittest.TestCase):
         self.assertIn('kept', str(error.exception))
         self.assertSessionKept()
 
+    def test_preview_download_manifest_retries_same_formats_for_playback(self):
+        preview = {'trackPresentation': 'PREVIEW', 'formats': ['FLAC_HIRES']}
+        full = {'trackPresentation': 'FULL', 'formats': ['FLAC_HIRES']}
+        with mock.patch.object(
+            self.api, '__getOpenApiTrackManifestOnce__', side_effect=[preview, full],
+        ) as manifest:
+            result = self.api.__getOpenApiTrackManifest__(465909959, ['FLAC_HIRES'])
+
+        self.assertEqual(result, full)
+        self.assertEqual(manifest.call_args_list, [
+            mock.call(465909959, ['FLAC_HIRES'], 'DOWNLOAD'),
+            mock.call(465909959, ['FLAC_HIRES'], 'PLAYBACK'),
+        ])
+
+    def test_preview_only_manifest_is_rejected(self):
+        preview = {'trackPresentation': 'PREVIEW', 'formats': ['FLAC_HIRES']}
+        with mock.patch.object(
+            self.api, '__getOpenApiTrackManifestOnce__', return_value=preview,
+        ) as manifest:
+            with self.assertRaisesRegex(TidalStreamUnavailable, 'preview-only'):
+                self.api.__getOpenApiTrackManifest__(465909959, ['FLAC_HIRES'])
+
+        self.assertEqual(manifest.call_count, 2)
+
     def test_catalog_4022_still_clears_unusable_session_without_legacy_retry(self):
         with mock.patch.object(self.api.session, 'get', return_value=rejected()) as get, \
                 mock.patch.object(self.api, '__refreshSavedAccessToken__', return_value=False):

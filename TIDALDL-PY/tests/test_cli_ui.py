@@ -120,6 +120,19 @@ class CliUiTests(unittest.TestCase):
         self.assertEqual(SETTINGS.audioQuality, AudioQuality.Atmos)
         self.assertEqual(SETTINGS.videoQuality, VideoQuality.P240)
 
+    def test_quality_menu_keeps_selected_quality_ahead_of_fallbacks(self):
+        from tidal_dl.enums import AudioQuality
+        self._restoreGlobalSettings()
+        with mock.patch.object(Printf, 'settings'), mock.patch.object(SETTINGS, 'save'), \
+             mock.patch.object(Printf, 'enter', return_value='HiFi,High,Normal'), \
+             mock.patch.object(Printf, 'enterLimit', side_effect=['4', '240']):
+            events.changeQualitySettings()
+
+        self.assertEqual(SETTINGS.audioQuality, AudioQuality.Max)
+        self.assertEqual(SETTINGS.getDownloadAudioQualityPriority(), [
+            AudioQuality.Max, AudioQuality.HiFi, AudioQuality.High, AudioQuality.Normal,
+        ])
+
     def test_track_output_shows_quality_fallback(self):
         output = io.StringIO()
         track = SimpleNamespace(

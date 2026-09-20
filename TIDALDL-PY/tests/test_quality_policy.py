@@ -3,7 +3,7 @@ import unittest
 from tidal_dl.enums import (
     AUDIO_QUALITY_ORDER, AudioQuality, audio_quality_fallbacks, playback_quality_priority,
 )
-from tidal_dl.settings import getDefaultAudioQualityPriority
+from tidal_dl.settings import Settings, getDefaultAudioQualityPriority
 
 
 class QualityPolicyTests(unittest.TestCase):
@@ -23,6 +23,18 @@ class QualityPolicyTests(unittest.TestCase):
         for saved, expected in cases:
             with self.subTest(saved=saved):
                 self.assertEqual(playback_quality_priority(iter(saved)), expected)
+
+    def test_selected_quality_leads_stale_saved_fallbacks(self):
+        settings = Settings()
+        settings.audioQuality = AudioQuality.Max
+        settings.audioQualityPriority = [
+            AudioQuality.HiFi, AudioQuality.High, AudioQuality.Normal, AudioQuality.Atmos,
+        ]
+
+        self.assertEqual(settings.getDownloadAudioQualityPriority(), [
+            AudioQuality.Max, AudioQuality.HiFi, AudioQuality.High,
+            AudioQuality.Normal, AudioQuality.Atmos,
+        ])
 
 
 if __name__ == '__main__':
