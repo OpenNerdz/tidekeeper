@@ -8,6 +8,14 @@ from tidal_dl.settings import SETTINGS
 
 
 class PathTests(unittest.TestCase):
+    def test_portable_component_sanitizer_blocks_controls_devices_and_traversal(self):
+        from tidal_dl.paths import __fixPath__, __safeTemplatePath__
+
+        self.assertNotIn('\0', __fixPath__('bad\0name'))
+        self.assertEqual(__fixPath__('CON'), '_CON')
+        self.assertEqual(__fixPath__('name. '), 'name')
+        self.assertEqual(__safeTemplatePath__('../outside/track'), 'outside/track')
+
     def test_dash_flac_in_mp4_container_uses_m4a_extension(self):
         stream = StreamUrl()
         stream.url = "https://example.invalid/init.mp4"

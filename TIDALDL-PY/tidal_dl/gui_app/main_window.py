@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QSizePolicy,
     QSplitter,
+    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -579,9 +580,22 @@ class MainWindow(QMainWindow):
         fix_height(self.request_interval)
         self.checks["downloadDelay"].toggled.connect(self._update_request_interval_enabled)
 
+        self.concurrent_tracks = QSpinBox()
+        self.concurrent_tracks.setRange(1, 8)
+        self.concurrent_tracks.setToolTip("Tracks processed at once when parallel downloads are enabled.")
+        self.concurrent_tracks.setFixedWidth(72)
+        self.segment_workers = QSpinBox()
+        self.segment_workers.setRange(1, 8)
+        self.segment_workers.setToolTip("Segments fetched at once per track; all media traffic is capped globally.")
+        self.segment_workers.setFixedWidth(72)
+        fix_height(self.concurrent_tracks)
+        fix_height(self.segment_workers)
+
         downloads = FormSection("Downloads")
         downloads.add_widget(self.checks["checkExist"])
         downloads.add_widget(self.checks["multiThread"])
+        downloads.add_layout(row(label("Tracks at once", "Meta"), None, self.concurrent_tracks))
+        downloads.add_layout(row(label("Segments per track", "Meta"), None, self.segment_workers))
         delay_row = row(self.checks["downloadDelay"], None, self.request_interval)
         downloads.add_layout(delay_row)
         downloads.add_widget(self.checks["adaptiveRateLimit"])
@@ -1465,6 +1479,8 @@ class MainWindow(QMainWindow):
         self.request_interval.setValue(
             max(0.0, float(getattr(SETTINGS, "requestIntervalSeconds", 1.0) or 0.0))
         )
+        self.concurrent_tracks.setValue(getattr(SETTINGS, "concurrentTracks", 3))
+        self.segment_workers.setValue(getattr(SETTINGS, "segmentsPerTrack", 4))
         self._update_request_interval_enabled(self.checks["downloadDelay"].isChecked())
         self.album_format.setText(SETTINGS.albumFolderFormat)
         self.playlist_format.setText(SETTINGS.playlistFolderFormat)
@@ -1483,6 +1499,8 @@ class MainWindow(QMainWindow):
         for widget in self.checks.values():
             widget.toggled.connect(self._update_settings_dirty)
         self.request_interval.valueChanged.connect(self._update_settings_dirty)
+        self.concurrent_tracks.valueChanged.connect(self._update_settings_dirty)
+        self.segment_workers.valueChanged.connect(self._update_settings_dirty)
 
     def _update_settings_dirty(self):
         if self._loading_settings or self._saved_settings_values is None:
@@ -1574,6 +1592,8 @@ class MainWindow(QMainWindow):
         }
         values.update({key: checkbox.isChecked() for key, checkbox in self.checks.items()})
         values["requestIntervalSeconds"] = float(self.request_interval.value())
+        values["concurrentTracks"] = int(self.concurrent_tracks.value())
+        values["segmentsPerTrack"] = int(self.segment_workers.value())
         return values
 
     def apply_settings_for_download(self):

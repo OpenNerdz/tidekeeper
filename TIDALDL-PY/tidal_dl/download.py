@@ -11,14 +11,17 @@
 
 from .runtime import check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
+import json
 import os
 import shutil
 import subprocess
 import time
 import tempfile
+from functools import wraps
 from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock, local
+from threading import BoundedSemaphore, Lock, local
+from urllib.parse import urljoin
 
 import aigpy
 import requests
@@ -32,20 +35,34 @@ from .settings import SETTINGS
 from .tidal import TIDAL_API
 from .manifests import hls_segments
 from .http import retry_delay
-from .transfer_state import prepare_transfer, complete_transfer, audio_identity, video_identity, record_completion, is_completed
+from .transfer_state import (
+    prepare_transfer, complete_transfer, audio_identity, video_identity,
+    record_completion, is_completed, completion_state,
+)
 from .runtime import run_process, redact
+from .network_policy import validate_media_url
 
 
 DOWNLOAD_TIMEOUT = (5, 60)
 DEFAULT_PART_SIZE = 1048576
 TRACK_THREAD_COUNT = 5
 VIDEO_THREAD_COUNT = 8
+MAX_MEDIA_CONNECTIONS = 8
 DOWNLOAD_RETRIES = 4
 DOWNLOAD_CHUNK_SIZE = 256 * 1024
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 FAILED_TRACKS_FILE = "failed-tracks.txt"
 failed_track_log_lock = Lock()
 download_session_state = local()
+media_connection_slots = BoundedSemaphore(MAX_MEDIA_CONNECTIONS)
+
+
+def __connectionLimited__(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with media_connection_slots:
+            return function(*args, **kwargs)
+    return wrapped
 
 
 def __httpSession__():
@@ -145,12 +162,30 @@ def __shouldRetryDownload__(error=None):
 
 
 def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
+    follow_redirects = bool(kwargs.pop('allow_redirects', False))
     last_error = None
     for attempt in range(attempts):
         check_cancelled()
         response = None
         try:
-            response = __httpSession__().request(method, url, timeout=DOWNLOAD_TIMEOUT, **kwargs)
+            current_url = url
+            for redirect_count in range(6):
+                validate_media_url(current_url)
+                response = __httpSession__().request(
+                    method, current_url, timeout=DOWNLOAD_TIMEOUT, allow_redirects=False, **kwargs
+                )
+                if not follow_redirects or response.status_code not in (301, 302, 303, 307, 308):
+                    break
+                location = response.headers.get('Location')
+                if not location:
+                    break
+                next_url = urljoin(current_url, location)
+                validate_media_url(next_url)
+                response.close()
+                response = None
+                current_url = next_url
+            else:
+                raise requests.TooManyRedirects('Media URL exceeded five redirects.')
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < attempts - 1:
                 response.close()
                 cancellable_sleep(__retryDelay__(response, attempt))
@@ -204,6 +239,7 @@ def __contentTotalSize__(response):
     return -1
 
 
+@__connectionLimited__
 def __contentLength__(url):
     """Probe remote size via HEAD, falling back to a 1-byte Range GET."""
     try:
@@ -349,6 +385,7 @@ def __noteProgress__(progress, userProgress, size, progressLock=None):
     __callProgressSink__(userProgress, "addCurNum", size)
 
 
+@__connectionLimited__
 def __downloadSingleUrl__(
         url,
         outputPath,
@@ -524,13 +561,14 @@ def __downloadUrls__(
         threadNum=1,
         chunkSize=DOWNLOAD_CHUNK_SIZE,
         probeSize=True,
-        expectedSize=None):
+        expectedSize=None,
+        sourceIdentity=None):
     urls = [url for url in (urls or []) if not aigpy.string.isNull(url)]
     if len(urls) <= 0:
         return False, "URL list is empty."
 
     __ensureParentDir__(outputPath)
-    source_matches = prepare_transfer(outputPath, urls)
+    source_matches = prepare_transfer(outputPath, urls, source_identity=sourceIdentity)
 
     if expectedSize is not None:
         totalSize = expectedSize
@@ -683,6 +721,89 @@ def __skipPath__(path, stream):
         if is_completed(candidate, audio_identity(stream)):
             return candidate
     return None
+
+
+def __existingMediaState__(path, stream):
+    candidates = [path]
+    if SETTINGS.saveAsFlac and __isFlacInM4a__(stream):
+        candidates.append(__containerFallbackPath__(path))
+    identity = audio_identity(stream)
+    for candidate in candidates:
+        media_complete, metadata_complete = completion_state(candidate, identity)
+        if media_complete:
+            return candidate, metadata_complete
+    return None, False
+
+
+def __manifestMediaFacts__(stream):
+    return {
+        key: value for key, value in {
+            'quality': getattr(stream, 'soundQuality', None),
+            'codec': getattr(stream, 'codec', None),
+            'bitDepth': getattr(stream, 'bitDepth', None),
+            'sampleRate': getattr(stream, 'sampleRate', None),
+            'bandwidth': getattr(stream, 'bandwidth', None),
+            'channels': getattr(stream, 'channels', None),
+            'representation': getattr(stream, 'representationId', None),
+            'manifestHash': getattr(stream, 'manifestHash', None),
+        }.items() if value not in (None, '')
+    }
+
+
+def __verifyMediaQuality__(path, stream):
+    """Probe final audio when ffprobe is available and retain verified facts."""
+    facts = __manifestMediaFacts__(stream)
+    ffprobe = shutil.which('ffprobe')
+    if not ffprobe or __localFileSize__(path) < 4096:
+        return facts
+    completed = run_process(
+        [ffprobe, '-v', 'error', '-select_streams', 'a:0',
+         '-show_entries', 'stream=codec_name,sample_rate,bits_per_sample,bits_per_raw_sample,channels',
+         '-of', 'json', path],
+        capture_output=True,
+        timeout=60,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or '').strip()
+        raise RuntimeError('Downloaded media failed ffprobe validation: ' + (detail or 'unknown error'))
+    try:
+        streams = json.loads(completed.stdout or '{}').get('streams') or []
+        probed = streams[0]
+    except (ValueError, IndexError, TypeError, AttributeError) as error:
+        raise RuntimeError('Downloaded media contains no readable audio stream.') from error
+
+    def integer(value):
+        try:
+            number = int(value)
+            return number if number > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    actual = {
+        'codec': probed.get('codec_name'),
+        'sampleRate': integer(probed.get('sample_rate')),
+        'bitDepth': integer(probed.get('bits_per_raw_sample')) or integer(probed.get('bits_per_sample')),
+        'channels': integer(probed.get('channels')),
+        'verifiedBy': 'ffprobe',
+    }
+    expected_codec = str(getattr(stream, 'codec', '') or '').lower()
+    actual_codec = str(actual.get('codec') or '').lower()
+    if 'flac' in expected_codec and actual_codec != 'flac':
+        raise RuntimeError(f'Downloaded media codec is {actual_codec or "unknown"}, expected FLAC.')
+    expected_rate = integer(getattr(stream, 'sampleRate', None))
+    if expected_rate and actual['sampleRate'] and actual['sampleRate'] != expected_rate:
+        raise RuntimeError(
+            f'Downloaded media sample rate is {actual["sampleRate"]} Hz, expected {expected_rate} Hz.'
+        )
+    expected_depth = integer(getattr(stream, 'bitDepth', None))
+    if expected_depth and actual['bitDepth'] and actual['bitDepth'] < expected_depth:
+        raise RuntimeError(
+            f'Downloaded media bit depth is {actual["bitDepth"]}, expected {expected_depth}.'
+        )
+    facts.update({key: value for key, value in actual.items() if value not in (None, '')})
+    return facts
 
 
 def __exportFlacFromContainer__(path, stream):
@@ -1141,6 +1262,7 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
             userProgress,
             VIDEO_THREAD_COUNT,
             probeSize=False,
+            sourceIdentity=identity,
         )
         if check:
             path = __finalizeVideoFile__(partPath, path)
@@ -1244,6 +1366,40 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             Printf.success(aigpy.path.getFileName(skipPath) + " (skip:already exists!)")
             return True, ''
 
+        # A completed audio file whose tag write failed is repaired in place;
+        # never fetch or decrypt the media bytes a second time just for tags.
+        existingPath, metadataComplete = __existingMediaState__(path, stream)
+        if existingPath is not None and not metadataComplete:
+            try:
+                contributors = TIDAL_API.getTrackContributors(track.id)
+            except DownloadCancelled:
+                raise
+            except Exception:
+                contributors = None
+            lyrics = __saveLyricsForTrack__(track, existingPath)
+            try:
+                __setMetaData__(track, album, existingPath, contributors, lyrics)
+                facts = __verifyMediaQuality__(existingPath, stream)
+                record_completion(existingPath, audio_identity(stream), media_facts=facts)
+                __removeFile__(partPath)
+                __removeFile__(partPath + '.source.json')
+                __removeDir__(partsDir)
+                Printf.success(title + ' (metadata repaired)')
+            except DownloadCancelled:
+                raise
+            except Exception as error:
+                # A failed tagger may have partially touched the container.
+                # Re-probe before preserving it as media-complete.
+                facts = __verifyMediaQuality__(existingPath, stream)
+                record_completion(
+                    existingPath, audio_identity(stream), metadata_complete=False, media_facts=facts
+                )
+                logging.warning("Unable to repair metadata for %s: %s", existingPath, error)
+                Printf.info(f"Downloaded '{title}', but metadata tagging is still incomplete: {str(error)}")
+                if hasattr(userProgress, 'note_warning'):
+                    userProgress.note_warning(f'Metadata could not be saved for {title}')
+            return True, ''
+
         # download
         logging.info("[DL Track] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.url)
 
@@ -1256,8 +1412,9 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         # count for segmented audio and avoids an up-front parallel burst.
         check, err = __downloadUrls__(
             stream.urls, partPath, SETTINGS.showProgress and not SETTINGS.multiThread,
-            userProgress, TRACK_THREAD_COUNT if SETTINGS.multiThread else 1,
+            userProgress, SETTINGS.segmentsPerTrack if SETTINGS.multiThread else 1,
             max(int(partSize), 64 * 1024), probeSize=False,
+            sourceIdentity=audio_identity(stream),
         )
         if not check:
             __logFailedTrack__(track, album, playlist, err)
@@ -1294,12 +1451,21 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             Printf.info(f"Downloaded '{title}', but metadata tagging was skipped: {str(e)}")
             if hasattr(userProgress, 'note_warning'):
                 userProgress.note_warning(f'Metadata could not be saved for {title}')
+        # Verify after tagging too: a failed writer must not leave a corrupt
+        # container marked as media-complete.
+        media_facts = __verifyMediaQuality__(processingPath, stream)
         check_cancelled()
         os.replace(processingPath, path)
-        record_completion(path, audio_identity(stream), metadata_complete=metadata_complete)
-        if metadata_complete:
-            __removeFile__(partPath)
-            __removeFile__(partPath + '.source.json')
+        record_completion(
+            path,
+            audio_identity(stream),
+            metadata_complete=metadata_complete,
+            media_facts=media_facts,
+        )
+        # The final media is complete regardless of whether optional metadata
+        # succeeded. Its receipt is enough for a tag-only retry.
+        __removeFile__(partPath)
+        __removeFile__(partPath + '.source.json')
         Printf.success(title)
 
         return True, ''
@@ -1367,7 +1533,7 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
         return success
     else:
         futures = {}
-        with ThreadPoolExecutor(max_workers=TRACK_THREAD_COUNT) as thread_pool:
+        with ThreadPoolExecutor(max_workers=SETTINGS.concurrentTracks) as thread_pool:
             for index, item in enumerate(tracks):
                 check_cancelled()
                 itemAlbum = album

@@ -32,6 +32,9 @@ class HttpReliabilityTests(unittest.TestCase):
         printer = mock.patch('tidal_dl.tidal.print')
         printer.start()
         self.addCleanup(printer.stop)
+        url_policy = mock.patch.object(download, 'validate_media_url', return_value=True)
+        url_policy.start()
+        self.addCleanup(url_policy.stop)
         for name, value in [('downloadDelay', False), ('adaptiveRateLimit', False)]:
             patcher = mock.patch.object(SETTINGS, name, value)
             patcher.start()
@@ -62,6 +65,19 @@ class HttpReliabilityTests(unittest.TestCase):
             with self.assertRaises(TidalApiError):
                 self.api.__getPlaybackData__(1, {})
         get.assert_called_once()
+
+    def test_generic_v4_not_found_falls_through_to_unversioned_endpoint(self):
+        missing = TidalApiError('not found', 404)
+        payload = {'trackid': 1}
+        with mock.patch.object(self.api, '__getOnce__', side_effect=[missing, payload]) as get:
+            self.assertEqual(self.api.__getPlaybackData__(1, {}), payload)
+        self.assertEqual(get.call_count, 2)
+        self.assertTrue(get.call_args_list[0].args[0].endswith('/v4'))
+        self.assertFalse(get.call_args_list[1].args[0].endswith('/v4'))
+
+    def test_track_specific_not_found_does_not_poison_quality_for_session(self):
+        self.api.__markPlaybackParamBlocked__('LOSSLESS', TidalApiError('not found', 404))
+        self.assertFalse(self.api._playbackBlockedParams)
 
     def test_catalog_closes_success_and_failure_responses(self):
         for status in (200, 403):

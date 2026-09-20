@@ -216,7 +216,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             )
             token_path = paths.getTrackPath(track, self._stream(), self._album())
             self.assertTrue(
-                token_path.endswith("Primary-Name|Primary-Name, Feat|111, 222|111|Primary-Name.m4a")
+                token_path.endswith("Primary-Name-Primary-Name, Feat-111, 222-111-Primary-Name.m4a")
             )
         finally:
             for key, value in old_values.items():
@@ -242,7 +242,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             )
             token_path = paths.getVideoPath(video)
             self.assertTrue(
-                token_path.endswith("Primary-Name|Primary-Name, Feat|111, 222|111|Primary-Name.mp4")
+                token_path.endswith("Primary-Name-Primary-Name, Feat-111, 222-111-Primary-Name.mp4")
             )
         finally:
             for key, value in old_values.items():
@@ -265,13 +265,13 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             track.artist = self._artist(None, None)
             track_path = paths.getTrackPath(track, self._stream(), self._album())
             self.assertNotIn("None", track_path)
-            self.assertTrue(track_path.endswith("//Track.m4a"))
+            self.assertTrue(track_path.endswith("/Track.m4a"))
 
             video = self._video()
             video.artist = self._artist(None, None)
             video_path = paths.getVideoPath(video)
             self.assertNotIn("None", video_path)
-            self.assertTrue(video_path.endswith("//Video.mp4"))
+            self.assertTrue(video_path.endswith("/Video.mp4"))
         finally:
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
@@ -377,7 +377,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         ), mock.patch.object(paths.SETTINGS, "downloadPath", "/tmp/tidekeeper"):
             path = paths.getAlbumPath(album)
 
-        self.assertEqual(path, "/tmp/tidekeeper/Album///0")
+        self.assertEqual(path, "/tmp/tidekeeper/Album/0")
 
     def test_album_items_include_tracks_when_stream_ready_missing(self):
         api = TidalAPI()
@@ -416,7 +416,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         ):
             path = paths.getAlbumPath(album)
 
-        self.assertTrue(path.endswith("///Album"))
+        self.assertTrue(path.endswith("/Album"))
         self.assertNotIn("None", path)
 
     def test_album_items_skip_unstreamable_tracks_instead_of_treating_them_as_videos(self):
@@ -745,23 +745,23 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         finally:
             events.SETTINGS.downloadDelay = old_delay
 
-    def test_playback_rate_limit_skips_openapi_manifest(self):
+    def test_openapi_rate_limit_skips_playback_manifest(self):
         api = TidalAPI()
 
         with mock.patch.object(
             api,
-            "__getPlaybackData__",
-            side_effect=TidalApiError("Get operation failed: HTTP 429", statusCode=429),
-        ) as playback_get, mock.patch.object(
-            api,
             "__getOpenApiTrackManifest__",
-        ) as openapi_get:
+            side_effect=TidalApiError("Get operation failed: HTTP 429", statusCode=429),
+        ) as openapi_get, mock.patch.object(
+            api,
+            "__getPlaybackData__",
+        ) as playback_get:
             with self.assertRaises(TidalApiError) as ctx:
                 api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
 
         self.assertIn("429", str(ctx.exception))
-        playback_get.assert_called_once()
-        openapi_get.assert_not_called()
+        openapi_get.assert_called_once_with(456, ["FLAC"])
+        playback_get.assert_not_called()
 
     def test_playback_403_does_not_retry(self):
         api = TidalAPI()
@@ -790,7 +790,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
     def test_blocked_playback_param_skips_repeat_probe(self):
         api = TidalAPI()
-        api._playbackBlockedParams.add("LOSSLESS")
+        api._playbackBlockedParams["LOSSLESS"] = float("inf")
         uri = "data:application/dash+xml;base64," + base64.b64encode(
             self._dash_manifest("flac").encode("utf-8")
         ).decode("utf-8")
@@ -1839,7 +1839,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             "https://example.invalid/1.mp4",
             "https://example.invalid/2.mp4",
         ])
-        playback_get.assert_called_once_with(456, _playback_params("LOSSLESS"))
+        playback_get.assert_not_called()
         openapi_get.assert_called_once_with(456, ["FLAC"])
 
     def test_max_openapi_fallback_requests_flac_hires(self):

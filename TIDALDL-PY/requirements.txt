@@ -3,3 +3,4 @@ aigpy>=2022.7.8.1
 requests>=2.34.2
 pycryptodome
 prettytable>=3.18.0
+defusedxml>=0.7.1

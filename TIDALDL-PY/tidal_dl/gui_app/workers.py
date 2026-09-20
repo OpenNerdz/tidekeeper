@@ -156,6 +156,12 @@ class ItemProgressReporter:
     def updateStream(self, stream):
         label = getattr(stream, 'soundQuality', '') or getattr(stream, 'resolution', '')
         codec = getattr(stream, 'codec', '')
+        bit_depth = getattr(stream, 'bitDepth', None)
+        sample_rate = getattr(stream, 'sampleRate', None)
+        if bit_depth or sample_rate:
+            depth = f'{bit_depth}-bit' if bit_depth else '?-bit'
+            rate = f'{int(sample_rate) / 1000:g} kHz' if sample_rate else '? kHz'
+            label = f'{label} {depth}/{rate}'.strip()
         with self._lock:
             if label:
                 self._qualities.add(f'{label} ({codec})' if codec else label)

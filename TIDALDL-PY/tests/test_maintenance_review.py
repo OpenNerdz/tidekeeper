@@ -88,7 +88,8 @@ class MaintenanceReviewTests(unittest.TestCase):
         TOKEN.accessToken = 'legacy-token'
         TOKEN.refreshToken = 'legacy-refresh'
 
-        with mock.patch.object(TOKEN, 'save') as save:
+        revoked = mock.Mock(status_code=204, close=mock.Mock())
+        with mock.patch.object(TOKEN, 'save') as save, mock.patch.object(api.session, 'post', return_value=revoked):
             self.assertTrue(api.clearSavedSessionIfClientChanged())
 
         self.assertIsNone(TOKEN.accessToken)

@@ -79,6 +79,8 @@ class Settings(aigpy.model.ModelBase):
     saveAlbumInfo = False
     downloadVideos = True
     multiThread = False
+    concurrentTracks = 3
+    segmentsPerTrack = 4
     downloadDelay = True
     requestIntervalSeconds = 3.0
     adaptiveRateLimit = True
@@ -202,10 +204,12 @@ class Settings(aigpy.model.ModelBase):
                             if not math.isfinite(value):
                                 raise ValueError('expected finite seconds')
                             value = min(300.0, max(0.0, value))
-                        elif name in ('apiKeyIndex', 'language'):
+                        elif name in ('apiKeyIndex', 'language', 'concurrentTracks', 'segmentsPerTrack'):
                             value = int(value)
                             if value < 0:
                                 raise ValueError('expected a nonnegative index')
+                            if name in ('concurrentTracks', 'segmentsPerTrack'):
+                                value = min(8, max(1, value))
                         elif isinstance(default, str):
                             if not isinstance(value, str) or not value.strip():
                                 raise ValueError('expected nonempty text')
@@ -239,6 +243,8 @@ class Settings(aigpy.model.ModelBase):
             self.adaptiveRateLimit = True
         if getattr(self, 'saveAsFlac', None) is None:
             self.saveAsFlac = False
+        self.concurrentTracks = min(8, max(1, int(getattr(self, 'concurrentTracks', 3) or 3)))
+        self.segmentsPerTrack = min(8, max(1, int(getattr(self, 'segmentsPerTrack', 4) or 4)))
         if not hasSavedSettings:
             self.downloadPath = getDefaultDownloadPath()
             self.audioQuality = AudioQuality.Max

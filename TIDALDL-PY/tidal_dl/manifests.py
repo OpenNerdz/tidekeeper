@@ -2,7 +2,12 @@
 import math
 import re
 from urllib.parse import urljoin
-from xml.etree import ElementTree
+
+from defusedxml import ElementTree
+
+
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_MANIFEST_NODES = 200000
 
 
 class ProtectedManifestError(ValueError):
@@ -10,7 +15,21 @@ class ProtectedManifestError(ValueError):
 
 
 def _text(value):
-    return value.decode('utf-8-sig') if isinstance(value, bytes) else value
+    if isinstance(value, bytes):
+        if len(value) > MAX_MANIFEST_BYTES:
+            raise ValueError('Manifest is too large.')
+        return value.decode('utf-8-sig')
+    value = str(value)
+    if len(value.encode('utf-8')) > MAX_MANIFEST_BYTES:
+        raise ValueError('Manifest is too large.')
+    return value
+
+
+def _xml_root(content):
+    root = ElementTree.fromstring(_text(content))
+    if sum(1 for _ in root.iter()) > MAX_MANIFEST_NODES:
+        raise ValueError('DASH manifest contains too many XML nodes.')
+    return root
 
 
 def hls_segments(content, base_url):
@@ -58,8 +77,9 @@ def _seconds(value):
     return sum(float(part or 0) * factor for part, factor in zip(match.groups(), (3600, 60, 1)))
 
 
-def dash_segments(content):
-    root = ElementTree.fromstring(content)
+def dash_representations(content):
+    """Return bounded, clear audio representations and their quality facts."""
+    root = _xml_root(content)
     for element in root.iter():
         element.tag = element.tag.rsplit('}', 1)[-1]
         if element.tag == 'ContentProtection':
@@ -144,7 +164,58 @@ def dash_segments(content):
                 urls = [urljoin(prefix, expand(attrs['initialization'], rep, number, 0))]
                 urls.extend(urljoin(prefix, expand(attrs['media'], rep, number + index, timestamp))
                             for index, timestamp in enumerate(timestamps))
-                tracks.append(urls)
+                representation_id = rep.get('id', '')
+                bit_depth = rep.get('audioBitDepth', adaptation.get('audioBitDepth', ''))
+                if not bit_depth:
+                    # Current TIDAL manifests also encode this as FLAC,192000,24.
+                    match = re.search(r'(?:^|,)(\d{1,2})$', representation_id)
+                    bit_depth = match.group(1) if match else ''
+                sample_rate = rep.get('audioSamplingRate', adaptation.get('audioSamplingRate', ''))
+                channels = ''
+                channel_node = rep.find('AudioChannelConfiguration')
+                if channel_node is None:
+                    channel_node = adaptation.find('AudioChannelConfiguration')
+                if channel_node is not None:
+                    channels = channel_node.get('value', '')
+
+                def integer(value):
+                    try:
+                        return int(value)
+                    except (TypeError, ValueError):
+                        return None
+
+                tracks.append({
+                    'urls': urls,
+                    'id': representation_id,
+                    'codec': rep.get('codecs', adaptation.get('codecs', '')),
+                    'mimeType': media_type,
+                    'bandwidth': integer(rep.get('bandwidth')),
+                    'sampleRate': integer(sample_rate),
+                    'bitDepth': integer(bit_depth),
+                    'channels': integer(channels),
+                })
     if not tracks:
         raise ValueError('DASH manifest contains no supported audio representations.')
     return tracks
+
+
+def _quality_key(representation):
+    codec = str(representation.get('codec') or '').lower()
+    lossless = int('flac' in codec or 'alac' in codec)
+    return (
+        lossless,
+        int(representation.get('bitDepth') or 0),
+        int(representation.get('sampleRate') or 0),
+        int(representation.get('bandwidth') or 0),
+        int(representation.get('channels') or 0),
+    )
+
+
+def best_dash_representation(content):
+    """Select the highest-fidelity representation instead of trusting XML order."""
+    return max(dash_representations(content), key=_quality_key)
+
+
+def dash_segments(content):
+    """Backward-compatible URL-only view used by older callers and tests."""
+    return [item['urls'] for item in dash_representations(content)]

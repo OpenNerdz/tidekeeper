@@ -504,6 +504,8 @@ class TidekeeperBackend:
         SETTINGS.saveAlbumInfo = values["saveAlbumInfo"]
         SETTINGS.downloadVideos = values["downloadVideos"]
         SETTINGS.multiThread = values["multiThread"]
+        SETTINGS.concurrentTracks = min(8, max(1, int(values.get("concurrentTracks", 3))))
+        SETTINGS.segmentsPerTrack = min(8, max(1, int(values.get("segmentsPerTrack", 4))))
         SETTINGS.downloadDelay = values["downloadDelay"]
         SETTINGS.requestIntervalSeconds = max(0.0, float(values.get("requestIntervalSeconds", 1.0) or 0.0))
         SETTINGS.adaptiveRateLimit = values.get("adaptiveRateLimit", True)

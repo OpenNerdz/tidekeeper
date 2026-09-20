@@ -14,7 +14,7 @@ import tidal_dl
 from tidal_dl import download
 from tidal_dl.enums import Type, VideoQuality
 from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend, queue_item
-from tidal_dl.manifests import dash_segments, hls_segments, hls_variants
+from tidal_dl.manifests import best_dash_representation, dash_segments, hls_segments, hls_variants
 from tidal_dl.paths import PATHS
 from tidal_dl.runtime import DownloadCancelled, job_context, redact, run_process
 from tidal_dl.settings import SETTINGS, TOKEN, Settings
@@ -59,6 +59,9 @@ class ReliabilityTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.settings = copy.deepcopy(SETTINGS.__dict__)
         self.addCleanup(self.restore_settings)
+        url_policy = mock.patch.object(download, 'validate_media_url', return_value=True)
+        url_policy.start()
+        self.addCleanup(url_policy.stop)
 
     def restore_settings(self):
         SETTINGS.__dict__.clear()
@@ -100,6 +103,18 @@ class ReliabilityTests(unittest.TestCase):
         path = str(self.root / 'part')
         prepare_transfer(path, ['https://cdn.invalid/file?signature=dummy-secret'])
         self.assertNotIn('dummy-secret', Path(path + '.source.json').read_text())
+
+    def test_refreshed_signature_keeps_resumable_segments(self):
+        path = str(self.root / 'part')
+        prepare_transfer(path, ['https://cdn.invalid/media?token=first&format=flac'])
+        parts = Path(path + '.parts')
+        parts.mkdir()
+        completed = parts / '00000000.part'
+        completed.write_bytes(b'complete')
+        prepare_transfer(path, ['https://cdn.invalid/media?token=second&format=flac'])
+        self.assertTrue(completed.exists())
+        prepare_transfer(path, ['https://cdn.invalid/media?token=third&format=aac'])
+        self.assertFalse(parts.exists())
 
     def test_matching_416_promotes_complete_partial(self):
         path = str(self.root / 'part')
@@ -166,14 +181,14 @@ class ReliabilityTests(unittest.TestCase):
             self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
             self.assertEqual(len(warnings), 1)
             self.assertFalse(is_completed(path, audio_identity(stream)))
-            self.assertTrue(Path(path + '.part').is_file())
+            self.assertFalse(Path(path + '.part').exists(), 'Completed media should not be retained twice')
 
             SETTINGS.checkExist = True
             warnings.clear()
             tag.side_effect = None
             self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
             self.assertEqual(tag.call_count, 2)
-            self.assertEqual(request.call_count, 1, 'Retry should reuse the completed transfer')
+            self.assertEqual(request.call_count, 1, 'Retry should repair tags without another CDN request')
             self.assertFalse(warnings)
             self.assertTrue(is_completed(path, audio_identity(stream)))
             self.assertFalse(Path(path + '.part').exists())
@@ -317,6 +332,25 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(dash_segments(manifest), [['https://cdn.invalid/audio/init', 'https://cdn.invalid/000.m4s',
                                                   'https://cdn.invalid/002.m4s', 'https://cdn.invalid/004.m4s']])
 
+    def test_dash_selects_highest_fidelity_representation(self):
+        manifest = '''<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" mediaPresentationDuration="PT2S">
+          <Period><AdaptationSet contentType="audio" mimeType="audio/mp4">
+          <SegmentTemplate timescale="1" duration="2" initialization="$RepresentationID$/init"
+            media="$RepresentationID$/$Number$.m4s"/>
+          <Representation id="FLAC,44100,16" codecs="flac" bandwidth="900000" audioSamplingRate="44100"/>
+          <Representation id="FLAC,192000,24" codecs="flac" bandwidth="5000000" audioSamplingRate="192000"/>
+          </AdaptationSet></Period></MPD>'''
+        selected = best_dash_representation(manifest)
+        self.assertEqual(selected['id'], 'FLAC,192000,24')
+        self.assertEqual(selected['bitDepth'], 24)
+        self.assertEqual(selected['sampleRate'], 192000)
+
+    def test_dash_rejects_entities_and_oversized_input(self):
+        with self.assertRaises(Exception):
+            dash_segments('<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><MPD>&xxe;</MPD>')
+        with self.assertRaisesRegex(ValueError, 'too large'):
+            dash_segments(' ' * (2 * 1024 * 1024 + 1))
+
     def test_manual_login_preserves_supplied_refresh_token(self):
         backend = TidekeeperBackend()
         with mock.patch.dict(TOKEN.__dict__, {'refreshToken': 'old-refresh'}), \
@@ -341,7 +375,7 @@ class ReliabilityTests(unittest.TestCase):
         api.apiKey = {'clientId': 'dummy'}
         api._streamCache['old'] = 'stream'
         api._artistAlbumsCache['old'] = 'album'
-        api._playbackBlockedParams.add('HIGH')
+        api._playbackBlockedParams['HIGH'] = float('inf')
         def complete_after_logout(*args):
             api.clearSession()
             return {'user': {'userId': 1, 'countryCode': 'US'}, 'access_token': 'access',
@@ -352,6 +386,18 @@ class ReliabilityTests(unittest.TestCase):
         self.assertFalse(api._streamCache)
         self.assertFalse(api._artistAlbumsCache)
         self.assertFalse(api._playbackBlockedParams)
+
+    def test_logout_revokes_remote_session_before_clearing_local_token(self):
+        api = TidalAPI()
+        api.key.accessToken = 'private-access'
+        result = Response(status=204)
+        with mock.patch.object(api.session, 'post', return_value=result) as post, \
+                mock.patch.object(api, 'clearSavedSession') as clear:
+            self.assertTrue(api.logoutSavedSession())
+        self.assertEqual(post.call_args.args[0], 'https://api.tidal.com/v1/logout')
+        self.assertEqual(post.call_args.kwargs['headers']['authorization'], 'Bearer private-access')
+        self.assertTrue(result.closed)
+        clear.assert_called_once_with()
 
     def test_requeue_creates_independent_state_and_source(self):
         source = SearchItem(Type.Track, 'Song', '', '', '1', '', SimpleNamespace(id=1), status='Done')

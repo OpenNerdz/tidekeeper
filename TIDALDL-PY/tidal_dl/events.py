@@ -277,6 +277,12 @@ def changeSettings():
     SETTINGS.downloadVideos = Printf.enterBool(LANG.select.CHANGE_DOWNLOAD_VIDEOS)
     SETTINGS.lyricFile = Printf.enterBool(LANG.select.CHANGE_ADD_LRC_FILE)
     SETTINGS.multiThread = Printf.enterBool(LANG.select.CHANGE_MULITHREAD_DOWNLOAD)
+    if SETTINGS.multiThread:
+        try:
+            SETTINGS.concurrentTracks = min(8, max(1, int(Printf.enter("Concurrent tracks (1-8):"))))
+            SETTINGS.segmentsPerTrack = min(8, max(1, int(Printf.enter("Segments per track (1-8):"))))
+        except (TypeError, ValueError):
+            Printf.info("Keeping existing concurrency limits.")
     SETTINGS.usePlaylistFolder = Printf.enterBool(LANG.select.SETTING_USE_PLAYLIST_FOLDER + "('0'-No,'1'-Yes):")
     SETTINGS.downloadDelay = Printf.enterBool(LANG.select.CHANGE_USE_DOWNLOAD_DELAY)
     interval_prompt = getattr(
@@ -317,7 +323,7 @@ def changeApiKey():
         SETTINGS.apiKeyIndex = index
         SETTINGS.save()
         TIDAL_API.apiKey = apiKey.getItem(index)
-        TIDAL_API.clearSavedSession()
+        TIDAL_API.logoutSavedSession()
         return True
     return False
 
@@ -429,7 +435,7 @@ def loginByConfig():
 
 
 def logout():
-    TIDAL_API.clearSavedSession()
+    TIDAL_API.logoutSavedSession()
     Printf.success("Logged out.")
     return True
 

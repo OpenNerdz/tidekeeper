@@ -40,7 +40,10 @@ tidekeeper-gui
 
 If you do not want to install Python, download the terminal or desktop app for
 your operating system from the [latest GitHub Release](https://github.com/OpenNerdz/tidekeeper/releases/latest).
-Builds are available for Windows, macOS, Linux x86-64, and Linux ARM64.
+Builds are available for Windows x86-64, macOS Apple Silicon and Intel, Linux
+x86-64, and Linux ARM64. Unix downloads are `.tar.gz` archives so executable
+permissions survive extraction. Each release includes `SHA256SUMS` and GitHub
+build-provenance attestations.
 
 Standalone apps cannot replace themselves during an update. Download a newer
 file from the Releases page when a new version is available.
@@ -132,8 +135,12 @@ instead. Check the installed version with `tidekeeper --version`.
 ### Choose quality
 
 `Max` is the default and requests the best available standard audio quality,
-including 24-bit/192 kHz FLAC when the track and account offer it. New profiles
-use the **Tidal HiRes** client for Max playback. Existing profiles that still use
+including 24-bit/192 kHz FLAC when the track and account offer it. Tidekeeper
+uses a fixed FLAC manifest first, chooses the highest-fidelity representation
+from its measured codec/bit-depth/sample-rate/bandwidth fields, and uses the
+playback API as a separate fallback. When `ffprobe` is installed, the finished
+audio stream is checked and its actual properties are stored in the completion
+receipt. New profiles use the **Tidal HiRes** client for Max playback. Existing profiles that still use
 **Tidal TV** can select **Tidal HiRes** in the desktop Advanced settings or
 terminal API-client menu, save, and sign in once with the new client.
 A single legacy `Master` selection requests lossless FLAC: Max first, then HiFi.

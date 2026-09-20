@@ -13,6 +13,9 @@ import subprocess
 import sys
 import aigpy
 import datetime
+import hashlib
+import re
+import unicodedata
 
 from .enums import AudioQuality, Type
 from .model import StreamUrl
@@ -20,15 +23,53 @@ from .tidal import TIDAL_API
 from .settings import SETTINGS
 
 
+WINDOWS_RESERVED_NAMES = {
+    'CON', 'PRN', 'AUX', 'NUL',
+    *(f'COM{number}' for number in range(1, 10)),
+    *(f'LPT{number}' for number in range(1, 10)),
+}
+MAX_COMPONENT_BYTES = 240
+
+
+def __truncateComponent__(value, original):
+    encoded = value.encode('utf-8')
+    if len(encoded) <= MAX_COMPONENT_BYTES:
+        return value
+    suffix = '-' + hashlib.sha256(original.encode('utf-8')).hexdigest()[:10]
+    budget = MAX_COMPONENT_BYTES - len(suffix.encode('ascii'))
+    clipped = encoded[:budget]
+    while clipped:
+        try:
+            return clipped.decode('utf-8').rstrip(' .') + suffix
+        except UnicodeDecodeError as error:
+            clipped = clipped[:error.start]
+    return '_' + suffix
+
+
 def __fixPath__(name: str):
-    return aigpy.path.replaceLimitChar(name, '-').strip()
+    """Return one portable, non-empty filesystem component."""
+    original = unicodedata.normalize('NFC', str(name or ''))
+    if not original:
+        return ''
+    value = ''.join('-' if unicodedata.category(char).startswith('C') else char for char in original)
+    value = re.sub(r'[<>:"/\\|?*]+', '-', value)
+    value = re.sub(r'\s+', ' ', value).strip().rstrip(' .')
+    if value in ('', '.', '..'):
+        value = '_'
+    stem = value.split('.', 1)[0].upper()
+    if stem in WINDOWS_RESERVED_NAMES:
+        value = '_' + value
+    return __truncateComponent__(value, original)
 
 
 
 def __safeTemplatePath__(path):
-    if not sys.platform.startswith('win'):
-        return path
-    return '/'.join(__fixPath__(part) for part in path.split('/'))
+    # Templates intentionally use '/' for subfolders on every platform. Treat
+    # backslashes as separators too, then sanitize every component so '..', an
+    # absolute path, controls, or Windows device names cannot escape the chosen
+    # download directory.
+    parts = re.split(r'[/\\]+', str(path or ''))
+    return '/'.join(__fixPath__(part) for part in parts if part not in ('', '.', '..')) or '_'
 
 def __getYear__(releaseDate: str):
     if releaseDate is None or releaseDate == '':

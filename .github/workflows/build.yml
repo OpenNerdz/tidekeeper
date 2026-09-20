@@ -2,13 +2,13 @@ name: Build
 
 on:
   push:
-    branches: [main, working]
     tags: ["v*"]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write
+  attestations: write
 
 jobs:
   checks:
@@ -23,13 +23,17 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            asset-name: macOS
-          - os: ubuntu-latest
-            asset-name: Linux
+            asset-name: macOS-arm64
+          - os: macos-15-intel
+            asset-name: macOS-x86_64
+          # PyInstaller does not bundle glibc. Build x86_64 on the oldest
+          # supported runner so the executable works on newer distributions.
+          - os: ubuntu-22.04
+            asset-name: Linux-x86_64
           - os: ubuntu-24.04-arm
-            asset-name: linux-arm64
+            asset-name: Linux-arm64
           - os: windows-latest
-            asset-name: Windows
+            asset-name: Windows-x86_64
 
     steps:
       - name: Checkout repo
@@ -121,12 +125,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p release-assets
-          EXT=""
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            EXT=".exe"
+            cp "dist/tidekeeper.exe" "release-assets/tidekeeper-${{ matrix.asset-name }}.exe"
+            cp "dist/tidekeeper-gui.exe" "release-assets/tidekeeper-gui-${{ matrix.asset-name }}.exe"
+          else
+            chmod +x dist/tidekeeper dist/tidekeeper-gui
+            tar -czf "release-assets/tidekeeper-${{ matrix.asset-name }}.tar.gz" -C dist tidekeeper
+            tar -czf "release-assets/tidekeeper-gui-${{ matrix.asset-name }}.tar.gz" -C dist tidekeeper-gui
           fi
-          cp "dist/tidekeeper${EXT}" "release-assets/tidekeeper-${{ matrix.asset-name }}${EXT}"
-          cp "dist/tidekeeper-gui${EXT}" "release-assets/tidekeeper-gui-${{ matrix.asset-name }}${EXT}"
         working-directory: TIDALDL-PY
 
       - name: Upload artifact
@@ -139,12 +145,23 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: tidekeeper-*
           path: release-assets
           merge-multiple: true
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-assets/*
       - name: Create release after all platform builds succeed
         uses: softprops/action-gh-release@v3
         with:

@@ -27,7 +27,7 @@ from .environment import isTermux
 from .lang.language import LANG
 
 
-VERSION = '2026.9.20.0'
+VERSION = '2026.9.20.1'
 PROJECT_URL = 'https://github.com/OpenNerdz/tidekeeper'
 
 print_mutex = threading.Lock()
@@ -161,6 +161,8 @@ class Printf(object):
             [LANG.select.SETTING_LANGUAGE, LANG.getLangName(data.language)],
             [LANG.select.SETTING_ADD_LRC_FILE, data.lyricFile],
             [LANG.select.SETTING_MULITHREAD_DOWNLOAD, data.multiThread],
+            ["Concurrent tracks", getattr(data, "concurrentTracks", 3)],
+            ["Segments per track", getattr(data, "segmentsPerTrack", 4)],
             [LANG.select.SETTING_APIKEY, f"[{data.apiKeyIndex}]" + apiKey.getItem(data.apiKeyIndex)['formats']],
             [LANG.select.SETTING_DOWNLOAD_DELAY, data.downloadDelay],
             [label("SETTING_REQUEST_INTERVAL_SECONDS", "Request delay seconds"), data.requestIntervalSeconds],
@@ -319,6 +321,12 @@ class Printf(object):
         if stream is not None:
             tb.add_row(["Get-Q", str(stream.soundQuality)])
             tb.add_row(["Get-Codec", str(stream.codec)])
+            bit_depth = getattr(stream, 'bitDepth', None)
+            sample_rate = getattr(stream, 'sampleRate', None)
+            if bit_depth or sample_rate:
+                depth = f"{bit_depth}-bit" if bit_depth else "unknown depth"
+                rate = f"{int(sample_rate) / 1000:g} kHz" if sample_rate else "unknown rate"
+                tb.add_row(["Actual format", f"{depth} / {rate}"])
             if stream.fallbackReason:
                 tb.add_row(["Requested-Q", str(stream.requestedQuality)])
                 tb.add_row(["Fallback", f"{stream.fallbackQuality} ({stream.fallbackReason})"])

@@ -25,6 +25,12 @@ class StreamUrl(aigpy.model.ModelBase):
         self.fallbackError = None
         self.manifestMimeType = None
         self.container = None
+        self.bitDepth = None
+        self.sampleRate = None
+        self.bandwidth = None
+        self.channels = None
+        self.representationId = None
+        self.manifestHash = None
 
 
 class VideoStreamUrl(aigpy.model.ModelBase):
@@ -215,3 +221,5 @@ class StreamRespond(aigpy.model.ModelBase):
         self.videoQuality = None
         self.manifestMimeType = None
         self.manifest = None
+        self.bitDepth = None
+        self.sampleRate = None

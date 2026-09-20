@@ -19,6 +19,9 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
 class DownloadBackendTests(unittest.TestCase):
     def setUp(self):
+        self.url_policy = mock.patch.object(download, "validate_media_url", return_value=True)
+        self.url_policy.start()
+        self.addCleanup(self.url_policy.stop)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
         self.source = self.root / "source"
@@ -370,6 +373,11 @@ class DownloadBackendTests(unittest.TestCase):
 
 
 class DownloadRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.url_policy = mock.patch.object(download, "validate_media_url", return_value=True)
+        self.url_policy.start()
+        self.addCleanup(self.url_policy.stop)
+
     def test_http_request_does_not_retry_not_found(self):
         response = mock.Mock(status_code=404, headers={})
         response.raise_for_status.side_effect = requests.HTTPError(response=response)

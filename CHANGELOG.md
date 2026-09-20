@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.9.20.1 - 2026-09-20
+
+- Prefer TIDAL's fixed OpenAPI FLAC manifests for HiFi and Max, then use the
+  playback API as an independent fallback. Select the highest-fidelity DASH
+  representation by codec, bit depth, sample rate, and bandwidth instead of
+  trusting response order; expose those facts in the CLI, desktop progress,
+  and completion receipt, with optional `ffprobe` verification.
+- Let generic v4 playback 404s fall through to unversioned and legacy routes.
+  Cache only explicit client-entitlement blocks and expire those capability
+  decisions instead of poisoning a quality for the entire process.
+- Revoke TIDAL sessions remotely on logout and client changes. Harden remote
+  manifests with entity, size, node, private-network URL, credential, and
+  redirect checks.
+- Repair failed metadata directly on verified media without downloading it
+  again. Use fast sampled fingerprints for routine skip checks, retain resume
+  state across renewed signed CDN URLs, and keep media-selecting query fields
+  in the transfer identity.
+- Replace the legacy filename filter with portable Unicode-aware component and
+  traversal protection. Separate track and segment concurrency while capping
+  all simultaneous media connections.
+- Build release binaries only for tags, add distinct Apple Silicon and Intel
+  macOS packages, use Ubuntu 22.04 for wider x86-64 compatibility, preserve
+  Unix executable modes in archives, and publish SHA-256 checksums plus GitHub
+  build-provenance attestations.
+
 ## 2026.9.20.0 - 2026-09-20
 
 - Add a current HiRes-capable TIDAL device-flow client and use it for new
