@@ -1,10 +1,14 @@
 import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
-from tidal_dl.model import Album, Artist, StreamUrl
-from tidal_dl.paths import __getExtension__, PATHS, getAlbumPath, openPath
+from tidal_dl.enums import AudioQuality
+from tidal_dl.model import Album, Artist, StreamUrl, Track, Video
+from tidal_dl.paths import __getExtension__, PATHS, getAlbumPath, getTrackPath, getVideoPath, openPath
 from tidal_dl.settings import SETTINGS
+from tidal_dl.transfer_state import prepare_transfer, record_completion
 
 
 class PathTests(unittest.TestCase):
@@ -15,6 +19,46 @@ class PathTests(unittest.TestCase):
         self.assertEqual(__fixPath__('CON'), '_CON')
         self.assertEqual(__fixPath__('name. '), 'name')
         self.assertEqual(__safeTemplatePath__('../outside/track'), 'outside/track')
+
+    def test_long_media_names_leave_room_for_all_pipeline_files(self):
+        stream = StreamUrl()
+        stream.url = 'https://example.invalid/audio.mp4'
+        stream.codec, stream.container = 'flac', 'mp4'
+        stream.soundQuality = 'DOLBY_ATMOS'
+        for title in ('A' * 400, '音楽' * 150):
+            for kind in ('track', 'video'):
+                with self.subTest(title=title[:4], kind=kind), tempfile.TemporaryDirectory() as directory, \
+                        mock.patch.multiple(SETTINGS, downloadPath=directory, audioQuality=AudioQuality.Atmos,
+                                            saveAsFlac=True, trackFileFormat='nested/{TrackTitle}',
+                                            videoFileFormat='nested/{VideoTitle}'):
+                    item = Track() if kind == 'track' else Video()
+                    item.title = title
+                    path = getTrackPath(item, stream) if kind == 'track' else getVideoPath(item)
+                    Path(path).parent.mkdir(parents=True, exist_ok=True)
+                    prepare_transfer(path + '.part', [stream.url])
+                    Path(path).write_bytes(b'complete media')
+                    record_completion(path, {'id': 'fixture'})
+                    stem = os.path.splitext(path)[0]
+                    pipeline_paths = [
+                        path + '.part.download', path + '.part.tmp.2147483647',
+                        path + '.tmp.2147483647.mp4', stem + '.lrc.tmp.2147483647',
+                        stem + '.processing.2147483647.flac.tmp.2147483647.flac',
+                    ]
+                    for temporary in pipeline_paths:
+                        self.assertLessEqual(len(os.path.basename(temporary).encode('utf-8')), 255)
+                        Path(temporary).touch()
+                    self.assertTrue(Path(path + '.tidekeeper.json').exists())
+
+    def test_long_media_names_remain_distinct_and_deterministic(self):
+        stream = StreamUrl()
+        stream.url, stream.codec, stream.container = 'https://example.invalid/audio.flac', 'flac', 'flac'
+        track = Track()
+        with mock.patch.object(SETTINGS, 'trackFileFormat', '{TrackTitle}'):
+            track.title = 'A' * 400 + 'one'
+            first = getTrackPath(track, stream)
+            self.assertEqual(getTrackPath(track, stream), first)
+            track.title = 'A' * 400 + 'two'
+            self.assertNotEqual(getTrackPath(track, stream), first)
 
     def test_dash_flac_in_mp4_container_uses_m4a_extension(self):
         stream = StreamUrl()

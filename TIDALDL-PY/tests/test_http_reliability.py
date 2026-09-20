@@ -10,6 +10,7 @@ from unittest import mock
 import requests
 
 from tidal_dl import download
+from tidal_dl.model import Album, Track
 from tidal_dl.runtime import DownloadCancelled, job_context
 from tidal_dl.settings import SETTINGS
 from tidal_dl.tidal import TidalAPI, TidalApiError
@@ -159,6 +160,7 @@ class HttpReliabilityTests(unittest.TestCase):
             session = download.__httpSession__()
             try:
                 self.assertEqual(session.get_adapter('https://').max_retries.total, 0)
+                self.assertEqual(session.get_adapter('https://')._pool_maxsize, 1)
             finally:
                 session.close()
 
@@ -192,6 +194,45 @@ class HttpReliabilityTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 download.__downloadSingleUrl__('https://example.invalid/media', str(path))
             self.assertFalse(path.exists())
+
+    def test_metadata_artwork_follows_validated_redirects(self):
+        redirect = response(302, headers={'Location': 'https://cdn.example/cover.jpg'}, content=b'redirect page')
+        image = response(content=b'image bytes')
+        session = mock.Mock()
+        session.request.side_effect = [redirect, image]
+        tag = mock.Mock()
+
+        def save_artwork(path):
+            self.assertEqual(Path(path).read_bytes(), b'image bytes')
+            return True
+
+        tag.save.side_effect = save_artwork
+        track, album = Track(), Album()
+        album.cover = 'cover-id'
+        track.album, track.title = album, 'Fixture'
+        with mock.patch.object(download, '__httpSession__', return_value=session), \
+                mock.patch.object(download.aigpy.tag, 'TagTool', return_value=tag), \
+                mock.patch.object(download, 'validate_media_url') as validate:
+            download.__setMetaData__(track, album, 'fixture.flac', None, '')
+        self.assertEqual(session.request.call_count, 2)
+        self.assertEqual(session.request.call_args.args[1], 'https://cdn.example/cover.jpg')
+        validate.assert_any_call('https://cdn.example/cover.jpg')
+        self.assertTrue(all(call.kwargs['allow_redirects'] is False for call in session.request.call_args_list))
+        redirect.close.assert_called_once()
+        image.close.assert_called_once()
+        tag.save.assert_called_once()
+        self.assertFalse(Path(tag.save.call_args.args[0]).exists())
+
+    def test_rejected_redirect_closes_response_without_retry(self):
+        redirect = response(302, headers={'Location': 'https://cdn.example/cover.jpg'})
+        session = mock.Mock()
+        session.request.return_value = redirect
+        with mock.patch.object(download, '__httpSession__', return_value=session), \
+                mock.patch.object(download, 'validate_media_url', side_effect=[True, ValueError('rejected')]):
+            with self.assertRaisesRegex(ValueError, 'rejected'):
+                download.__httpRequest__('GET', 'https://resources.example/cover.jpg', allow_redirects=True)
+        session.request.assert_called_once()
+        redirect.close.assert_called_once()
 
 
 if __name__ == '__main__':

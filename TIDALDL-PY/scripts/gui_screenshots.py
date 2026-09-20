@@ -59,8 +59,8 @@ def _validate_interactions(window) -> list[str]:
     if not window.direct_queue_button.isEnabled() or not window.direct_download_button.isEnabled():
         failures.append("links: direct actions are disabled with input")
     window.direct_video_only.setChecked(True)
-    direct_item = window.direct_item_from_input()
-    if direct_item is None or not direct_item.video_only:
+    direct_items = window.direct_items_from_input()
+    if len(direct_items) != 1 or not direct_items[0].video_only:
         failures.append("links: direct videos-only checkbox is not applied")
     window.direct_video_only.setChecked(False)
 

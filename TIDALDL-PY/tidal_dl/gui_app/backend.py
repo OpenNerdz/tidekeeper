@@ -244,6 +244,7 @@ def queue_progress_percent(snapshot: dict) -> int:
 class TidekeeperBackend:
     def __init__(self):
         self._download_active = False
+        self.defer_session_revocation = None
 
     def initialize(self):
         configure_logging(PATHS.getLogPath())
@@ -374,8 +375,11 @@ class TidekeeperBackend:
         return replace(self.auth_status(), fresh_login=True)
 
     def logout(self) -> AuthStatus:
-        logout()
+        logout(revoke=self.defer_session_revocation)
         return self.auth_status()
+
+    def revoke_session(self, access_token):
+        return TIDAL_API.revokeSession(access_token)
 
     def search(self, text: str, kind: Type) -> List[SearchItem]:
         text = text.strip()
@@ -540,7 +544,7 @@ class TidekeeperBackend:
         if SETTINGS.apiKeyIndex != previous_api_key_index:
             # Tokens are bound to the client id. Applying a new key to an old
             # token produces 4022 errors on the next search/download.
-            logout()
+            self.logout()
             TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
             return {"reauth_required": True}
         return {"reauth_required": False}
@@ -557,7 +561,7 @@ class TidekeeperBackend:
             SETTINGS.apiKeyIndex = apiKey.getDefaultIndex()
         changed_client = SETTINGS.apiKeyIndex != previous_client
         if changed_client:
-            logout()
+            self.logout()
         TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
         return {"reauth_required": changed_client}
 

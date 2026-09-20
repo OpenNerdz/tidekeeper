@@ -29,14 +29,17 @@ WINDOWS_RESERVED_NAMES = {
     *(f'LPT{number}' for number in range(1, 10)),
 }
 MAX_COMPONENT_BYTES = 240
+# Leave room for extensions, receipts, and nested processing/remux suffixes
+# (including two process IDs) on filesystems with a 255-byte component limit.
+MAX_MEDIA_STEM_BYTES = 200
 
 
-def __truncateComponent__(value, original):
+def __truncateComponent__(value, original, max_bytes=MAX_COMPONENT_BYTES):
     encoded = value.encode('utf-8')
-    if len(encoded) <= MAX_COMPONENT_BYTES:
+    if len(encoded) <= max_bytes:
         return value
     suffix = '-' + hashlib.sha256(original.encode('utf-8')).hexdigest()[:10]
-    budget = MAX_COMPONENT_BYTES - len(suffix.encode('ascii'))
+    budget = max_bytes - len(suffix.encode('ascii'))
     clipped = encoded[:budget]
     while clipped:
         try:
@@ -70,6 +73,13 @@ def __safeTemplatePath__(path):
     # download directory.
     parts = re.split(r'[/\\]+', str(path or ''))
     return '/'.join(__fixPath__(part) for part in parts if part not in ('', '.', '..')) or '_'
+
+
+def __safeMediaPath__(path, extension):
+    directory, separator, stem = __safeTemplatePath__(path).rpartition('/')
+    stem = __truncateComponent__(stem, stem, MAX_MEDIA_STEM_BYTES)
+    return directory + separator + stem + extension
+
 
 def __getYear__(releaseDate: str):
     if releaseDate is None or releaseDate == '':
@@ -170,8 +180,7 @@ def getAlbumPath(album):
     retpath = retpath.replace(R"{ReleaseDate}", __fixPath__(__tokenValue__(album.releaseDate)))
     retpath = retpath.replace(R"{RecordType}", __tokenValue__(album.type))
     retpath = retpath.replace(R"{None}", "")
-    retpath = __safeTemplatePath__(retpath.strip())
-    return f"{SETTINGS.downloadPath}/{__safeTemplatePath__(retpath)}"
+    return f"{SETTINGS.downloadPath}/{__safeTemplatePath__(retpath.strip())}"
 
 def getPlaylistPath(playlist):
     playlistName = __fixPath__(playlist.title)
@@ -239,10 +248,10 @@ def getTrackPath(track, stream, album=None, playlist=None):
     retpath = retpath.replace(R"{DurationSeconds}", __tokenValue__(track.duration or 0))
     retpath = retpath.replace(R"{Duration}", __fixPath__(__getDurationStr__(track.duration or 0)))
     retpath = retpath.replace(R"{TrackID}", __tokenValue__(track.id))
-    retpath = __safeTemplatePath__(retpath.strip())
+    retpath = retpath.strip()
     if __isAtmosStream__(stream) and SETTINGS.audioQuality == AudioQuality.Atmos and not hasStreamIdentifier:
         retpath += " [Dolby Atmos]"
-    return f"{base}/{retpath}{extension}"
+    return f"{base}/{__safeMediaPath__(retpath, extension)}"
 
 
 def getVideoPath(video, album=None, playlist=None):
@@ -283,8 +292,7 @@ def getVideoPath(video, album=None, playlist=None):
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{VideoYear}", year)
     retpath = retpath.replace(R"{VideoID}", str(video.id))
-    retpath = __safeTemplatePath__(retpath.strip())
-    return f"{base}/{retpath}{extension}"
+    return f"{base}/{__safeMediaPath__(retpath.strip(), extension)}"
 
 def openPath(path):
     target = os.path.abspath(os.path.expanduser(path or SETTINGS.downloadPath))

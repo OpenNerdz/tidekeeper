@@ -45,7 +45,6 @@ from .network_policy import validate_media_url
 
 DOWNLOAD_TIMEOUT = (5, 60)
 DEFAULT_PART_SIZE = 1048576
-TRACK_THREAD_COUNT = 5
 VIDEO_THREAD_COUNT = 8
 MAX_MEDIA_CONNECTIONS = 8
 DOWNLOAD_RETRIES = 4
@@ -69,10 +68,12 @@ def __httpSession__():
     session = getattr(download_session_state, "session", None)
     if session is None:
         session = requests.Session()
-        pool_size = max(TRACK_THREAD_COUNT, VIDEO_THREAD_COUNT) + 2
         # Request/transfer loops own retries so cancellation and attempt limits
-        # apply to every network attempt, including connection failures.
-        adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=0)
+        # apply to every network attempt, including connection failures. Each
+        # thread owns its session and makes only one request at a time.
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=MAX_MEDIA_CONNECTIONS, pool_maxsize=1, max_retries=0,
+        )
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         download_session_state.session = session
@@ -200,6 +201,10 @@ def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
             if retry:
                 cancellable_sleep(__retryDelay__(getattr(e, "response", None), attempt))
                 continue
+            raise
+        except Exception:
+            if response is not None:
+                response.close()
             raise
     raise last_error
 
@@ -711,22 +716,12 @@ def __containerFallbackPath__(path):
     return path.rsplit('.', 1)[0] + '.m4a'
 
 
-def __skipPath__(path, stream):
-    if not SETTINGS.checkExist:
-        return None
-    candidates = [path]
-    if SETTINGS.saveAsFlac and __isFlacInM4a__(stream):
-        candidates.append(__containerFallbackPath__(path))
-    for candidate in candidates:
-        if is_completed(candidate, audio_identity(stream)):
-            return candidate
-    return None
-
-
 def __existingMediaState__(path, stream):
     candidates = [path]
     if SETTINGS.saveAsFlac and __isFlacInM4a__(stream):
-        candidates.append(__containerFallbackPath__(path))
+        fallback = __containerFallbackPath__(path)
+        if fallback != path:
+            candidates.append(fallback)
     identity = audio_identity(stream)
     for candidate in candidates:
         media_complete, metadata_complete = completion_state(candidate, identity)
@@ -1139,7 +1134,7 @@ def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
     artwork = None
     try:
         if coverpath:
-            response = __httpRequest__('GET', coverpath)
+            response = __httpRequest__('GET', coverpath, allow_redirects=True)
             try:
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as output:
                     artwork = output.name
@@ -1358,17 +1353,16 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         if userProgress is not None:
             userProgress.updateStream(stream)
 
-        # check exist
-        skipPath = __skipPath__(path, stream)
-        if skipPath is not None:
+        # Inspect receipts once for both skipping and metadata-only repair.
+        existingPath, metadataComplete = __existingMediaState__(path, stream)
+        if SETTINGS.checkExist and existingPath is not None and metadataComplete:
             if SETTINGS.lyricFile:
-                __saveLyricsForTrack__(track, skipPath)
-            Printf.success(aigpy.path.getFileName(skipPath) + " (skip:already exists!)")
+                __saveLyricsForTrack__(track, existingPath)
+            Printf.success(aigpy.path.getFileName(existingPath) + " (skip:already exists!)")
             return True, ''
 
         # A completed audio file whose tag write failed is repaired in place;
         # never fetch or decrypt the media bytes a second time just for tags.
-        existingPath, metadataComplete = __existingMediaState__(path, stream)
         if existingPath is not None and not metadataComplete:
             try:
                 contributors = TIDAL_API.getTrackContributors(track.id)

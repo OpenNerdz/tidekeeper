@@ -434,8 +434,8 @@ def loginByConfig():
         return False
 
 
-def logout():
-    TIDAL_API.logoutSavedSession()
+def logout(revoke=None):
+    TIDAL_API.logoutSavedSession(revoke=revoke)
     Printf.success("Logged out.")
     return True
 

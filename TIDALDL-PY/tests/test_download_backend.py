@@ -344,7 +344,7 @@ class DownloadBackendTests(unittest.TestCase):
             download.SETTINGS.saveAsFlac = True
             download.SETTINGS.checkExist = True
             with mock.patch.object(download, "__remoteSize__", return_value=-1):
-                self.assertEqual(download.__skipPath__(str(existing), stream), str(existing))
+                self.assertEqual(download.__existingMediaState__(str(existing), stream), (str(existing), True))
         finally:
             for key, value in old_values.items():
                 setattr(download.SETTINGS, key, value)
@@ -366,7 +366,7 @@ class DownloadBackendTests(unittest.TestCase):
             download.SETTINGS.saveAsFlac = True
             download.SETTINGS.checkExist = True
             with mock.patch.object(download, "__remoteSize__", return_value=-1):
-                self.assertIsNone(download.__skipPath__(str(existing), stream))
+                self.assertEqual(download.__existingMediaState__(str(existing), stream), (None, False))
         finally:
             for key, value in old_values.items():
                 setattr(download.SETTINGS, key, value)
@@ -529,7 +529,7 @@ class GuiDownloadStatusTests(unittest.TestCase):
                 with mock.patch.object(download, "__resolveTrackForAtmosDownload__", return_value=(track, None)), \
                      mock.patch.object(download, "__getTrackStream__", return_value=stream), \
                      mock.patch.object(download, "getTrackPath", return_value=path), \
-                     mock.patch.object(download, "__skipPath__", return_value=None), \
+                     mock.patch.object(download, "__existingMediaState__", return_value=(None, False)), \
                      mock.patch.object(download, "__remoteSize__") as probe, \
                      mock.patch.object(download, "__isReusableAssembledFile__", return_value=False), \
                      mock.patch.object(download, "__localFileSize__", return_value=0), \

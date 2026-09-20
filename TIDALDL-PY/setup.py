@@ -106,7 +106,7 @@ setup(
         if line.strip() and not line.lstrip().startswith("#")
     ],
     extras_require={
-        "gui": ["PySide6>=6.5"],
+        "gui": ["PySide6-Essentials>=6.5"],
         "dev": ["ruff>=0.8.0"],
     },
     entry_points={'console_scripts': [

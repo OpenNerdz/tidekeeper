@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026.9.20.2 - 2026-09-20
+
+- Treat numeric DASH representation IDs as identifiers while retaining
+  bit-depth detection for FLAC-family IDs, preventing incorrect quality
+  selection and false verification failures.
+- Reserve filename space for transfer receipts, temporary processing files,
+  and FLAC remux output, including long Unicode titles.
+- Follow validated redirects when embedding artwork and close rejected redirect
+  responses.
+- Clear local login state immediately on logout and client changes, and revoke
+  desktop sessions in a background worker without affecting a newer login.
+- Use the smaller PySide6 Essentials dependency for the desktop, consolidate
+  completion checks and path sanitization, and right-size per-thread HTTP pools.
+- Remove redundant helpers and archived investigation notes; exclude development
+  caches, tests, and generated screenshots from the Docker build context.
+
 ## 2026.9.20.1 - 2026-09-20
 
 - Prefer TIDAL's fixed OpenAPI FLAC manifests for HiFi and Max, then use the

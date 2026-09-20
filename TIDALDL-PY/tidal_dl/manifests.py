@@ -167,8 +167,11 @@ def dash_representations(content):
                 representation_id = rep.get('id', '')
                 bit_depth = rep.get('audioBitDepth', adaptation.get('audioBitDepth', ''))
                 if not bit_depth:
-                    # Current TIDAL manifests also encode this as FLAC,192000,24.
-                    match = re.search(r'(?:^|,)(\d{1,2})$', representation_id)
+                    # Current TIDAL manifests also encode this in identifiers
+                    # such as FLAC,192000,24 and FLAC_HIRES,192000,24.
+                    match = re.fullmatch(
+                        r'FLAC(?:_[A-Z0-9]+)*,\d+,(\d{1,2})', representation_id, re.IGNORECASE,
+                    )
                     bit_depth = match.group(1) if match else ''
                 sample_rate = rep.get('audioSamplingRate', adaptation.get('audioSamplingRate', ''))
                 channels = ''

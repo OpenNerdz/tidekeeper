@@ -201,9 +201,20 @@ class TidalAPI(object):
             TOKEN.expiresAfter = 0
             TOKEN.save()
 
-    def logoutSavedSession(self):
-        """Best-effort server revocation followed by unconditional local logout."""
+    def logoutSavedSession(self, revoke=None):
+        """Clear local state immediately, then revoke the captured session.
+
+        The desktop can supply a dispatcher to run revocation in a worker.
+        That worker must never clear local state belonging to a later login.
+        """
         access_token = self.key.accessToken or getattr(TOKEN, 'accessToken', None)
+        self.clearSavedSession()
+        if not access_token:
+            return False
+        return (revoke or self.revokeSession)(access_token)
+
+    def revokeSession(self, access_token):
+        """Best-effort remote revocation without changing current login state."""
         revoked = False
         try:
             if access_token:
@@ -220,8 +231,6 @@ class TidalAPI(object):
                     response.close()
         except requests.RequestException as error:
             logging.warning('Unable to revoke the TIDAL session remotely: %s', type(error).__name__)
-        finally:
-            self.clearSavedSession()
         return revoked
 
     def clearSavedSessionIfClientChanged(self):

@@ -597,6 +597,23 @@ class GuiQueueTests(unittest.TestCase):
         self.window._device_login_polled(AuthStatus('late', 'US', 0, True, fresh_login=True))
         self.assertNotIn('Login complete.', self.window.account_log.toPlainText())
 
+    def test_logout_dispatches_remote_revocation_without_waiting(self):
+        from tidal_dl.gui_app.backend import TidekeeperBackend
+        from tidal_dl.tidal import TIDAL_API
+
+        with mock.patch.object(self.backend, 'logout', lambda: TidekeeperBackend.logout(self.backend)), \
+                mock.patch.object(TIDAL_API, 'clearSavedSession') as clear, \
+                mock.patch.object(TIDAL_API.key, 'accessToken', 'old-access'), \
+                mock.patch.object(self.backend, 'revoke_session', return_value=True) as revoke, \
+                mock.patch.object(self.window, 'start_worker') as start:
+            self.window.logout()
+            clear.assert_called_once_with()
+            revoke.assert_not_called()
+            self.assertIn('Logged out.', self.window.account_log.toPlainText())
+            worker = start.call_args.args[0]
+            worker.run()
+            revoke.assert_called_once_with('old-access')
+
     def test_active_download_locks_settings_and_account_controls(self):
         self.window.download_in_progress = True
         self.window.update_action_states()

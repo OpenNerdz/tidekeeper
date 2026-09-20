@@ -1327,7 +1327,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                  mock.patch.object(download.TIDAL_API, "getAlbum", return_value=atmos_album), \
                  mock.patch.object(download, "__getTrackStream__", return_value=stream) as get_stream, \
                  mock.patch.object(download, "getTrackPath", return_value="/tmp/track.m4a"), \
-                 mock.patch.object(download, "__skipPath__", return_value="/tmp/track.m4a"), \
+                 mock.patch.object(download, "__existingMediaState__", return_value=("/tmp/track.m4a", True)), \
                  mock.patch.object(download, "__saveLyricsForTrack__", return_value=None), \
                  mock.patch.object(download.Printf, "success"), \
                  mock.patch.object(download.Printf, "info"):

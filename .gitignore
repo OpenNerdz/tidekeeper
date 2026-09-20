@@ -7,6 +7,7 @@ __pycache__/
 .eggs/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -19,8 +20,7 @@ env/
 build/
 dist/
 *.spec
-TIDALDL-PY/build/
-TIDALDL-PY/dist/
+release-assets/
 TIDALDL-PY/exe/
 TIDALDL-PY/gui-screenshots/
 

@@ -16,3 +16,11 @@ install.sh
 **/venv
 **/exe
 **/download
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/gui-screenshots
+**/*.spec
+**/release-assets
+TIDALDL-PY/tests
+TIDALDL-PY/scripts

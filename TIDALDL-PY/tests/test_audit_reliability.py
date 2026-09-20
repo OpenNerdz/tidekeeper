@@ -144,7 +144,7 @@ class ReliabilityTests(unittest.TestCase):
         path = str(self.root / 'track.flac')
         Path(path).write_bytes(b'fLaC' + b'\0' * 2048)
         stream = SimpleNamespace(trackid=1, soundQuality='LOSSLESS', codec='flac', container='mp4')
-        self.assertIsNone(download.__skipPath__(path, stream))
+        self.assertEqual(download.__existingMediaState__(path, stream), (None, False))
 
     def test_receipt_rejects_tampering_and_different_quality(self):
         path = str(self.root / 'track.flac')
@@ -186,7 +186,9 @@ class ReliabilityTests(unittest.TestCase):
             SETTINGS.checkExist = True
             warnings.clear()
             tag.side_effect = None
-            self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
+            with mock.patch.object(download, 'completion_state', wraps=download.completion_state) as inspect:
+                self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
+                inspect.assert_called_once_with(path, audio_identity(stream))
             self.assertEqual(tag.call_count, 2)
             self.assertEqual(request.call_count, 1, 'Retry should repair tags without another CDN request')
             self.assertFalse(warnings)
@@ -338,10 +340,10 @@ class ReliabilityTests(unittest.TestCase):
           <SegmentTemplate timescale="1" duration="2" initialization="$RepresentationID$/init"
             media="$RepresentationID$/$Number$.m4s"/>
           <Representation id="FLAC,44100,16" codecs="flac" bandwidth="900000" audioSamplingRate="44100"/>
-          <Representation id="FLAC,192000,24" codecs="flac" bandwidth="5000000" audioSamplingRate="192000"/>
+          <Representation id="FLAC_HIRES,192000,24" codecs="flac" bandwidth="5000000" audioSamplingRate="192000"/>
           </AdaptationSet></Period></MPD>'''
         selected = best_dash_representation(manifest)
-        self.assertEqual(selected['id'], 'FLAC,192000,24')
+        self.assertEqual(selected['id'], 'FLAC_HIRES,192000,24')
         self.assertEqual(selected['bitDepth'], 24)
         self.assertEqual(selected['sampleRate'], 192000)
 
@@ -350,6 +352,38 @@ class ReliabilityTests(unittest.TestCase):
             dash_segments('<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><MPD>&xxe;</MPD>')
         with self.assertRaisesRegex(ValueError, 'too large'):
             dash_segments(' ' * (2 * 1024 * 1024 + 1))
+
+    def test_numeric_dash_ids_are_not_bit_depths(self):
+        manifest = '''<MPD mediaPresentationDuration="PT2S"><Period>
+          <AdaptationSet contentType="audio" mimeType="audio/mp4">
+          <SegmentTemplate duration="2" initialization="$RepresentationID$/init"
+            media="$RepresentationID$/$Number$.m4s"/>
+          <Representation id="1" codecs="flac" audioSamplingRate="192000" bandwidth="5000000"/>
+          <Representation id="2" codecs="flac" audioSamplingRate="44100" bandwidth="900000"/>
+          </AdaptationSet></Period></MPD>'''
+        selected = best_dash_representation(manifest)
+        self.assertEqual(selected['id'], '1')
+        self.assertIsNone(selected['bitDepth'])
+        self.assertEqual(selected['sampleRate'], 192000)
+
+    def test_numeric_dash_id_does_not_reject_valid_probed_audio(self):
+        manifest = '''<MPD mediaPresentationDuration="PT2S"><Period>
+          <AdaptationSet contentType="audio" mimeType="audio/mp4">
+          <SegmentTemplate duration="2" initialization="init" media="$Number$.m4s"/>
+          <Representation id="99" codecs="flac" audioSamplingRate="44100"/>
+          </AdaptationSet></Period></MPD>'''
+        api = TidalAPI()
+        self.addCleanup(api.session.close)
+        stream = api.__dashStreamUrl__('1', 'LOSSLESS', manifest)
+        probe = SimpleNamespace(returncode=0, stdout=json.dumps({'streams': [{
+            'codec_name': 'flac', 'sample_rate': '44100', 'bits_per_raw_sample': '16', 'channels': 2,
+        }]}))
+        with mock.patch.object(download, '__localFileSize__', return_value=8192), \
+                mock.patch.object(download.shutil, 'which', return_value='ffprobe'), \
+                mock.patch.object(download, 'run_process', return_value=probe):
+            facts = download.__verifyMediaQuality__('fixture.flac', stream)
+        self.assertEqual(facts['bitDepth'], 16)
+        self.assertEqual(facts['verifiedBy'], 'ffprobe')
 
     def test_manual_login_preserves_supplied_refresh_token(self):
         backend = TidekeeperBackend()
@@ -387,17 +421,49 @@ class ReliabilityTests(unittest.TestCase):
         self.assertFalse(api._artistAlbumsCache)
         self.assertFalse(api._playbackBlockedParams)
 
-    def test_logout_revokes_remote_session_before_clearing_local_token(self):
+    def test_logout_clears_local_session_before_remote_revocation(self):
         api = TidalAPI()
+        self.addCleanup(api.session.close)
         api.key.accessToken = 'private-access'
         result = Response(status=204)
-        with mock.patch.object(api.session, 'post', return_value=result) as post, \
-                mock.patch.object(api, 'clearSavedSession') as clear:
+
+        def revoke(*args, **kwargs):
+            self.assertFalse(api.key.accessToken)
+            return result
+
+        with mock.patch.object(api.session, 'post', side_effect=revoke) as post, \
+                mock.patch.object(api, 'clearSavedSession', side_effect=api.clearSession) as clear:
             self.assertTrue(api.logoutSavedSession())
         self.assertEqual(post.call_args.args[0], 'https://api.tidal.com/v1/logout')
         self.assertEqual(post.call_args.kwargs['headers']['authorization'], 'Bearer private-access')
         self.assertTrue(result.closed)
         clear.assert_called_once_with()
+
+    def test_delayed_revocation_cannot_clear_a_new_login(self):
+        api = TidalAPI()
+        self.addCleanup(api.session.close)
+        api.key.accessToken = 'old-access'
+        pending = []
+        with mock.patch.object(api, 'clearSavedSession', side_effect=api.clearSession) as clear, \
+                mock.patch.object(api.session, 'post', return_value=Response(status=204)) as post:
+            api.logoutSavedSession(revoke=pending.append)
+            self.assertFalse(api.key.accessToken)
+            post.assert_not_called()
+            self.assertEqual(pending, ['old-access'])
+            api.key.accessToken = 'new-access'
+            self.assertTrue(api.revokeSession(pending.pop()))
+            self.assertEqual(api.key.accessToken, 'new-access')
+            clear.assert_called_once_with()
+        self.assertEqual(post.call_args.kwargs['headers']['authorization'], 'Bearer old-access')
+
+    def test_remote_logout_failure_keeps_local_session_cleared(self):
+        api = TidalAPI()
+        self.addCleanup(api.session.close)
+        api.key.accessToken = 'private-access'
+        with mock.patch.object(api, 'clearSavedSession', side_effect=api.clearSession), \
+                mock.patch.object(api.session, 'post', side_effect=requests.Timeout):
+            self.assertFalse(api.logoutSavedSession())
+        self.assertFalse(api.key.accessToken)
 
     def test_requeue_creates_independent_state_and_source(self):
         source = SearchItem(Type.Track, 'Song', '', '', '1', '', SimpleNamespace(id=1), status='Done')

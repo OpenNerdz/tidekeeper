@@ -172,6 +172,7 @@ class MainWindow(QMainWindow):
         self.result_history: List[Tuple[List[SearchItem], str]] = []
         self.queue: List[SearchItem] = []
         self.active_workers = set()
+        self.backend.defer_session_revocation = self._revoke_session
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._poll_device_login)
         self.login_polling = False
@@ -1035,10 +1036,6 @@ class MainWindow(QMainWindow):
         if path:
             self.direct_text.setPlainText(path)
 
-    def direct_item_from_input(self):
-        items = self.direct_items_from_input()
-        return items[0] if items else None
-
     def direct_items_from_input(self) -> List[SearchItem]:
         try:
             tokens = parse_direct_inputs(self.direct_text.toPlainText())
@@ -1739,6 +1736,11 @@ class MainWindow(QMainWindow):
         self.backend.logout()
         self.refresh_auth_status()
         self.account_log.append("Logged out.")
+
+    def _revoke_session(self, access_token):
+        worker = TaskWorker(self.backend.revoke_session, access_token)
+        worker.signals.error.connect(self.account_log.append)
+        self.start_worker(worker)
 
     def closeEvent(self, event):
         if self.download_in_progress:
