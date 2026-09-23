@@ -306,14 +306,7 @@ class TidekeeperBackend:
         TIDAL_API.key.refreshToken = TOKEN.refreshToken
 
     def _save_api_login_key_to_token(self, expires_after: float | None = None):
-        TOKEN.userid = TIDAL_API.key.userId
-        TOKEN.countryCode = TIDAL_API.key.countryCode
-        TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
-        TOKEN.accessToken = TIDAL_API.key.accessToken
-        TOKEN.refreshToken = TIDAL_API.key.refreshToken
-        if expires_after is not None:
-            TOKEN.expiresAfter = expires_after
-        TOKEN.save()
+        TIDAL_API.saveKeyToToken(expires_after)
 
     def _ensure_catalog_session(self):
         self._sync_api_login_key_from_token()
@@ -334,7 +327,7 @@ class TidekeeperBackend:
             self._save_api_login_key_to_token()
         except Exception:
             if not aigpy.string.isNull(TOKEN.refreshToken) and TIDAL_API.refreshAccessToken(TOKEN.refreshToken):
-                self._save_api_login_key_to_token(time.time() + int(TIDAL_API.key.expiresIn))
+                self._save_api_login_key_to_token(TIDAL_API.keyExpiresAfter())
 
         self._sync_api_login_key_from_token()
         if aigpy.string.isNull(TIDAL_API.key.countryCode):
@@ -371,7 +364,7 @@ class TidekeeperBackend:
         with TIDAL_API._authStateLock:
             if generation != TIDAL_API._sessionGeneration:
                 return replace(self.auth_status(), fresh_login=False)
-            self._save_api_login_key_to_token(time.time() + int(TIDAL_API.key.expiresIn))
+            self._save_api_login_key_to_token(TIDAL_API.keyExpiresAfter())
         return replace(self.auth_status(), fresh_login=True)
 
     def logout(self) -> AuthStatus:

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026.9.23.0 - 2026-09-23
+
+- Write `AlbumInfo.txt` when TIDAL omits an album's volume count, listing every
+  track. A failure to write it is now reported without stopping the album
+  download.
+- Release the console output lock when a message cannot be printed, for
+  example when a pipe is closed or the console cannot encode the text. Before
+  this fix, all later output from download workers stopped.
+- Recognize TIDAL links regardless of hostname case, and keep the current
+  terminal language when the language choice is invalid.
+- Desktop: drop TIDAL links or `.txt` lists onto the window to add them to
+  Links, and disable **Run doctor** until the current check finishes.
+- Save login tokens and build OAuth requests in one shared place instead of
+  five copies, and remove settings normalization code that could never run.
+
 ## 2026.9.20.3 - 2026-09-20
 
 - Reject preview-only OpenAPI manifests and retry the same format through the

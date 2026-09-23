@@ -122,7 +122,7 @@ NAMING_HINT = (
     "{TrackTitle} {PlaylistName} {VideoTitle} {StreamQuality} {Codec} {Flag}"
 )
 RESULTS_EMPTY = (
-    "Search the TIDAL catalog or paste links.\n"
+    "Search the TIDAL catalog, paste links, or drop links and .txt lists here.\n"
     "Double-click an artist to browse their tracks."
 )
 QUEUE_EMPTY = "Nothing queued. Add results or links above."
@@ -200,6 +200,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1024, 620)
         self.resize(1180, 760)
         self.setStyleSheet(APP_STYLESHEET)
+        # Links dragged from a browser or .txt lists from a file manager land in Links.
+        self.setAcceptDrops(True)
         self._build()
         self.results_table.viewport().installEventFilter(self)
         self.queue_table.viewport().installEventFilter(self)
@@ -1048,6 +1050,40 @@ class MainWindow(QMainWindow):
         video_only = self.direct_video_only.isChecked()
         return [with_video_only(self.backend.direct_item(token), video_only) for token in tokens]
 
+    @staticmethod
+    def dropped_inputs(mime) -> List[str]:
+        """TIDAL URLs, IDs, or local list files carried by a drag-and-drop payload."""
+        values = []
+        if mime.hasUrls():
+            for url in mime.urls():
+                values.append(url.toLocalFile() if url.isLocalFile() else url.toString())
+        elif mime.hasText():
+            values.extend(mime.text().splitlines())
+        return [value.strip() for value in values if value and value.strip()]
+
+    def append_direct_inputs(self, values: List[str]):
+        """Stage inputs in Links for review instead of downloading on drop."""
+        if not values:
+            return
+        self._set_find_mode(FIND_MODE_LINKS)
+        existing = self.direct_text.toPlainText().rstrip()
+        self.direct_text.setPlainText("\n".join(filter(None, [existing, *values])))
+        self._set_queue_message(f"Added {self._plural(len(values), 'line')} to Links. Review, then add to the queue.")
+
+    def dragEnterEvent(self, event):  # noqa: N802 - Qt naming
+        if self.dropped_inputs(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):  # noqa: N802 - Qt naming
+        values = self.dropped_inputs(event.mimeData())
+        if not values:
+            event.ignore()
+            return
+        self.append_direct_inputs(values)
+        event.acceptProposedAction()
+
     def add_direct_to_queue(self):
         self._enqueue_items(self.direct_items_from_input())
 
@@ -1767,10 +1803,13 @@ class MainWindow(QMainWindow):
         self.start_worker(worker)
 
     def run_doctor(self):
+        # One check at a time: repeated clicks used to start parallel token checks.
         self.account_log.append("Running doctor…")
+        self.doctor_button.setEnabled(False)
         worker = TaskWorker(self.backend.run_doctor)
         worker.signals.result.connect(lambda output: self.account_log.append(output.strip()))
         worker.signals.error.connect(self.account_log.append)
+        worker.signals.finished.connect(lambda: self.doctor_button.setEnabled(True))
         self.start_worker(worker)
 
     def update_tidekeeper(self, include_gui: bool = True):

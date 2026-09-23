@@ -309,7 +309,12 @@ def changeSettings():
         "Save FLAC streams as .flac files when the stream is FLAC and ffmpeg can remux it "
         "(High quality remains M4A)('0'-No,'1'-Yes):",
     ))
-    SETTINGS.language = Printf.enter(LANG.select.CHANGE_LANGUAGE + "(" + LANG.getLangChoicePrint() + "):")
+    language = Printf.enter(LANG.select.CHANGE_LANGUAGE + "(" + LANG.getLangChoicePrint() + "):")
+    # Store the numeric index like the GUI does; invalid input keeps the current language.
+    if LANG.getLangName(language) and str(language).strip().isdigit():
+        SETTINGS.language = int(language)
+    else:
+        Printf.info("Keeping existing language.")
     LANG.setLang(SETTINGS.language)
     syncPlaybackRateLimiter()
     SETTINGS.save()
@@ -382,14 +387,7 @@ def loginByWeb():
 
             Printf.success(LANG.select.MSG_VALID_ACCESSTOKEN.format(
                 __displayTime__(int(TIDAL_API.key.expiresIn))))
-
-            TOKEN.userid = TIDAL_API.key.userId
-            TOKEN.countryCode = TIDAL_API.key.countryCode
-            TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
-            TOKEN.accessToken = TIDAL_API.key.accessToken
-            TOKEN.refreshToken = TIDAL_API.key.refreshToken
-            TOKEN.expiresAfter = time.time() + int(TIDAL_API.key.expiresIn)
-            TOKEN.save()
+            TIDAL_API.saveKeyToToken(TIDAL_API.keyExpiresAfter())
             return True
 
         raise Exception(LANG.select.AUTH_TIMEOUT)
@@ -418,14 +416,7 @@ def loginByConfig():
         if not aigpy.string.isNull(TOKEN.refreshToken) and TIDAL_API.refreshAccessToken(TOKEN.refreshToken):
             Printf.success(LANG.select.MSG_VALID_ACCESSTOKEN.format(
                 __displayTime__(int(TIDAL_API.key.expiresIn))))
-
-            TOKEN.userid = TIDAL_API.key.userId
-            TOKEN.countryCode = TIDAL_API.key.countryCode
-            TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
-            TOKEN.accessToken = TIDAL_API.key.accessToken
-            TOKEN.refreshToken = TIDAL_API.key.refreshToken
-            TOKEN.expiresAfter = time.time() + int(TIDAL_API.key.expiresIn)
-            TOKEN.save()
+            TIDAL_API.saveKeyToToken(TIDAL_API.keyExpiresAfter())
             return True
         else:
             logout()
@@ -461,11 +452,6 @@ def loginByAccessToken():
     if refreshToken == '0':
         refreshToken = None
 
-    TOKEN.accessToken = token
-    TOKEN.refreshToken = refreshToken
     TIDAL_API.key.refreshToken = refreshToken
-    TOKEN.userid = TIDAL_API.key.userId
-    TOKEN.clientId = TIDAL_API.apiKey.get('clientId')
-    TOKEN.expiresAfter = 0
-    TOKEN.countryCode = TIDAL_API.key.countryCode
-    TOKEN.save()
+    # Manually pasted tokens have no known lifetime.
+    TIDAL_API.saveKeyToToken(0)

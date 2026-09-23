@@ -1165,32 +1165,51 @@ def downloadCover(album):
     return True, ''
 
 
+def __volumeNumber__(item):
+    try:
+        return max(1, int(getattr(item, 'volumeNumber', 0) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def downloadAlbumInfo(album, tracks):
+    """Write the optional AlbumInfo.txt sidecar; a failure never aborts the album."""
     if album is None:
-        return
+        return False
 
-    path = getAlbumPath(album)
-    aigpy.path.mkdirs(path)
+    try:
+        tracks = list(tracks or [])
+        path = getAlbumPath(album) + '/AlbumInfo.txt'
+        infos = (
+            f"[ID]          {album.id}\n"
+            f"[Title]       {album.title}\n"
+            f"[Artists]     {TIDAL_API.getArtistsName(album.artists)}\n"
+            f"[ReleaseDate] {album.releaseDate}\n"
+            f"[SongNum]     {album.numberOfTracks}\n"
+            f"[Duration]    {album.duration}\n"
+            "\n"
+        )
 
-    path += '/AlbumInfo.txt'
-    infos = (
-        f"[ID]          {album.id}\n"
-        f"[Title]       {album.title}\n"
-        f"[Artists]     {TIDAL_API.getArtistsName(album.artists)}\n"
-        f"[ReleaseDate] {album.releaseDate}\n"
-        f"[SongNum]     {album.numberOfTracks}\n"
-        f"[Duration]    {album.duration}\n"
-        "\n"
-    )
-
-    for index in range(album.numberOfVolumes):
-        volumeNumber = index + 1
-        infos += f"===========CD {volumeNumber}=============\n"
-        for item in tracks:
-            if item.volumeNumber != volumeNumber:
-                continue
-            infos += f"{f'[{item.trackNumber}]':<8}{item.title}\n"
-    aigpy.file.write(path, infos, "w+")
+        # TIDAL can omit numberOfVolumes (None/0); fall back to the volumes the
+        # track list actually uses so every track is still listed.
+        try:
+            declaredVolumes = int(getattr(album, 'numberOfVolumes', 0) or 0)
+        except (TypeError, ValueError):
+            declaredVolumes = 0
+        volumeCount = max(declaredVolumes, max((__volumeNumber__(item) for item in tracks), default=1))
+        for volumeNumber in range(1, volumeCount + 1):
+            infos += f"===========CD {volumeNumber}=============\n"
+            for item in tracks:
+                if __volumeNumber__(item) != volumeNumber:
+                    continue
+                infos += f"{f'[{item.trackNumber}]':<8}{item.title}\n"
+        __writeTextFile__(path, infos)
+        return True
+    except DownloadCancelled:
+        raise
+    except Exception as e:
+        Printf.err(f"Save AlbumInfo.txt [{getattr(album, 'title', '')}] failed: {str(e)}")
+        return False
 
 
 def __finalizeVideoFile__(partPath, path):

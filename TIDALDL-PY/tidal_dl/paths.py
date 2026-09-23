@@ -105,10 +105,8 @@ def __getExtension__(stream: StreamUrl):
     if 'dash+xml' in manifestMimeType or 'mp4' in container:
         return '.m4a'
 
-    if '.flac' in stream.url:
+    if '.flac' in (stream.url or ''):
         return '.flac'
-    if '.mp4' in stream.url:
-        return '.m4a'
     return '.m4a'
 
 

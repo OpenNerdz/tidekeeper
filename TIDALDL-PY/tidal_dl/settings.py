@@ -228,27 +228,8 @@ class Settings(aigpy.model.ModelBase):
         self.audioQuality = self.getAudioQuality(self.audioQuality)
         self.audioQualityPriority = self.getAudioQualityPriority(self.audioQualityPriority)
         self.videoQuality = self.getVideoQuality(self.videoQuality)
-
-        if self.albumFolderFormat is None:
-            self.albumFolderFormat = self.getDefaultPathFormat(Type.Album)
-        if self.trackFileFormat is None:
-            self.trackFileFormat = self.getDefaultPathFormat(Type.Track)
-        if self.playlistFolderFormat is None:
-            self.playlistFolderFormat = self.getDefaultPathFormat(Type.Playlist)
-        if self.videoFileFormat is None:
-            self.videoFileFormat = self.getDefaultPathFormat(Type.Video)
-        if self.apiKeyIndex is None:
-            self.apiKeyIndex = 0
-        if getattr(self, 'requestIntervalSeconds', None) is None:
-            self.requestIntervalSeconds = 3.0
-        else:
-            self.requestIntervalSeconds = max(0.0, float(self.requestIntervalSeconds))
-        if getattr(self, 'adaptiveRateLimit', None) is None:
-            self.adaptiveRateLimit = True
-        if getattr(self, 'saveAsFlac', None) is None:
-            self.saveAsFlac = False
-        self.concurrentTracks = min(8, max(1, int(getattr(self, 'concurrentTracks', 3) or 3)))
-        self.segmentsPerTrack = min(8, max(1, int(getattr(self, 'segmentsPerTrack', 4) or 4)))
+        # Every other field was type-checked and range-clamped above (invalid
+        # values fall back to their non-None class default).
         if not hasSavedSettings:
             self.downloadPath = getDefaultDownloadPath()
             self.audioQuality = AudioQuality.Max

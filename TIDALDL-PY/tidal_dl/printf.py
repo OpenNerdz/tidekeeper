@@ -27,7 +27,7 @@ from .environment import isTermux
 from .lang.language import LANG
 
 
-VERSION = '2026.9.20.3'
+VERSION = '2026.9.23.0'
 PROJECT_URL = 'https://github.com/OpenNerdz/tidekeeper'
 
 print_mutex = threading.Lock()
@@ -266,24 +266,23 @@ class Printf(object):
             return default
         return ret
 
+    # A failed write (closed pipe, unencodable console text) must never leave
+    # the mutex held, or every later message from every worker would block.
     @staticmethod
     def err(string):
-        print_mutex.acquire()
-        print(aigpy.cmd.red(LANG.select.PRINT_ERR + " ") + string)
-        logging.info("Download error: %s", string)
-        print_mutex.release()
+        with print_mutex:
+            print(aigpy.cmd.red(LANG.select.PRINT_ERR + " ") + string)
+        logging.info("Error: %s", string)
 
     @staticmethod
     def info(string):
-        print_mutex.acquire()
-        print(aigpy.cmd.blue(LANG.select.PRINT_INFO + " ") + string)
-        print_mutex.release()
+        with print_mutex:
+            print(aigpy.cmd.blue(LANG.select.PRINT_INFO + " ") + string)
 
     @staticmethod
     def success(string):
-        print_mutex.acquire()
-        print(aigpy.cmd.green(LANG.select.PRINT_SUCCESS + " ") + string)
-        print_mutex.release()
+        with print_mutex:
+            print(aigpy.cmd.green(LANG.select.PRINT_SUCCESS + " ") + string)
 
     @staticmethod
     def album(data: Album):

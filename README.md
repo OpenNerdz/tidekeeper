@@ -210,6 +210,10 @@ The desktop app keeps search, links, results, and the download queue in one
 window. **Download now** starts immediately, while **Add to queue** lets you
 prepare several downloads before clicking **Start**.
 
+You can also drag TIDAL links from a browser, or `.txt` link lists from a file
+manager, onto the window. They are added to **Links** so you can review them
+before queueing.
+
 Completed items can be cleared without removing unfinished work. Failed,
 partial, interrupted, and cancelled items can be retried. Select an item to see
 its error details.

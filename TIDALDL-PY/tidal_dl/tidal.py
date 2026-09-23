@@ -244,6 +244,21 @@ class TidalAPI(object):
         self.logoutSavedSession()
         return True
 
+    def keyExpiresAfter(self):
+        """Absolute expiry for the token the auth server just issued."""
+        return time.time() + int(self.key.expiresIn)
+
+    def saveKeyToToken(self, expiresAfter=None):
+        """Persist the active login; every sign-in path writes the same fields."""
+        TOKEN.userid = self.key.userId
+        TOKEN.countryCode = self.key.countryCode
+        TOKEN.clientId = self.apiKey.get('clientId')
+        TOKEN.accessToken = self.key.accessToken
+        TOKEN.refreshToken = self.key.refreshToken
+        if expiresAfter is not None:
+            TOKEN.expiresAfter = expiresAfter
+        TOKEN.save()
+
     def clearSessionCaches(self):
         with self._streamCacheLock:
             self._streamCache.clear()
@@ -338,14 +353,7 @@ class TidalAPI(object):
             try:
                 if not self.refreshAccessToken(TOKEN.refreshToken):
                     return False
-
-                TOKEN.userid = self.key.userId
-                TOKEN.countryCode = self.key.countryCode
-                TOKEN.clientId = self.apiKey.get('clientId')
-                TOKEN.accessToken = self.key.accessToken
-                TOKEN.refreshToken = self.key.refreshToken
-                TOKEN.expiresAfter = time.time() + int(self.key.expiresIn)
-                TOKEN.save()
+                self.saveKeyToToken(self.keyExpiresAfter())
                 return True
             except (KeyError, TypeError, ValueError, OSError, requests.RequestException) as error:
                 logging.info("Unable to refresh saved access token: %s", error)
@@ -724,14 +732,15 @@ class TidalAPI(object):
                     response.close()
         raise TidalApiError("Auth operation failed after retries.")
 
-    def getDeviceCode(self) -> str:
-        data = {
-            'client_id': self.apiKey['clientId'],
-            'scope': 'r_usr w_usr w_sub'
-        }
+    def __oauthData__(self, **fields):
+        """OAuth form body for the active client, with its secret when it has one."""
+        data = {'client_id': self.apiKey['clientId'], **fields, 'scope': 'r_usr w_usr w_sub'}
         if not aigpy.string.isNull(self.apiKey.get('clientSecret')):
             data['client_secret'] = self.apiKey['clientSecret']
-        result = self.__post__('/device_authorization', data)
+        return data
+
+    def getDeviceCode(self) -> str:
+        result = self.__post__('/device_authorization', self.__oauthData__())
         if 'status' in result and result['status'] != 200:
             raise Exception("Device authorization failed. Please choose another apikey.")
 
@@ -744,15 +753,10 @@ class TidalAPI(object):
 
     def checkAuthStatus(self) -> bool:
         generation = self._sessionGeneration
-        data = {
-            'client_id': self.apiKey['clientId'],
-            'device_code': self.key.deviceCode,
-            'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-            'scope': 'r_usr w_usr w_sub'
-        }
-        if not aigpy.string.isNull(self.apiKey.get('clientSecret')):
-            data['client_secret'] = self.apiKey['clientSecret']
-        result = self.__post__('/token', data)
+        result = self.__post__('/token', self.__oauthData__(
+            device_code=self.key.deviceCode,
+            grant_type='urn:ietf:params:oauth:grant-type:device_code',
+        ))
         error = result.get('error')
         if error in ('authorization_pending', 'slow_down'):
             return False
@@ -761,10 +765,7 @@ class TidalAPI(object):
         if 'status' in result and result['status'] != 200:
             if result['status'] == 400 and result.get('sub_status') == 1002:
                 return False
-            elif result.get('error') in ('authorization_pending', 'slow_down'):
-                return False
-            else:
-                raise Exception("Error while checking for authorization. Trying again...")
+            raise Exception("Error while checking for authorization. Trying again...")
 
         # if auth is successful:
         with self._authStateLock:
@@ -798,15 +799,10 @@ class TidalAPI(object):
 
     def refreshAccessToken(self, refreshToken) -> bool:
         generation = self._sessionGeneration
-        data = {
-            'client_id': self.apiKey['clientId'],
-            'refresh_token': refreshToken,
-            'grant_type': 'refresh_token',
-            'scope': 'r_usr w_usr w_sub'
-        }
-        if not aigpy.string.isNull(self.apiKey.get('clientSecret')):
-            data['client_secret'] = self.apiKey['clientSecret']
-        result = self.__post__('/token', data)
+        result = self.__post__('/token', self.__oauthData__(
+            refresh_token=refreshToken,
+            grant_type='refresh_token',
+        ))
         if result.get('error') or ('status' in result and result['status'] != 200):
             return False
 
@@ -1838,7 +1834,8 @@ class TidalAPI(object):
         return matched
 
     def parseUrl(self, url):
-        if "tidal.com" not in url:
+        # Hostnames are case-insensitive; a pasted "TIDAL.com" link is still a link.
+        if "tidal.com" not in url.lower():
             return Type.Null, url
 
         parsed = urlparse(url)
@@ -1879,7 +1876,7 @@ class TidalAPI(object):
 
         etype, sid = self.parseUrl(string)
         lastError = None
-        for index, item in enumerate(Type):
+        for item in Type:
             if etype != Type.Null and etype != item:
                 continue
             if item == Type.Null:
