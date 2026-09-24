@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.24.0 - 2026-09-24
+
 - Desktop retries of failed artist and album downloads target the failed tracks
   and videos instead of downloading the collection again. Saved queues retain
   those failures across restarts; older failed rows can use matching entries in
