@@ -1596,6 +1596,6 @@ def downloadVideos(videos, album: Album, playlist=None, progress=None):
         if progress is not None:
             progress.finish_entry(index + 1, total, check)
             if not check and hasattr(progress, 'note_failed_video'):
-                progress.note_failed_video(item.id)
+                progress.note_failed_video(item.id, getattr(album, 'id', None))
         success = success and check
     return success

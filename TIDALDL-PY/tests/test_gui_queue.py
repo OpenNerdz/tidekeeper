@@ -1,6 +1,8 @@
 import os
 import unittest
 import copy
+import tempfile
+from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 
@@ -73,14 +75,25 @@ class GuiQueueTests(unittest.TestCase):
         self.assertEqual(done.status, "Done")
         self.assertEqual(queued.status, "Queued")
 
-    def test_retry_marks_legacy_failed_artist_for_log_lookup(self):
-        artist = self.SearchItem(self.Type.Artist, 'Artist', '', '', '42', '', None, status='Failed')
-        cancelled = self.SearchItem(self.Type.Artist, 'Cancelled', '', '', '43', '', None, status='Cancelled')
-        self.window.queue = [artist, cancelled]
-        with mock.patch.object(self.window, 'start_downloads'):
+    def test_retry_does_not_treat_an_incomplete_artist_as_a_complete_failure_list(self):
+        from tidal_dl.gui_app import backend as gui_backend
+        from tidal_dl.settings import SETTINGS
+
+        source = SimpleNamespace(id='42')
+        artist = self.SearchItem(self.Type.Artist, 'Artist', '', '', '42', '', source, status='Failed')
+        backend = gui_backend.TidekeeperBackend()
+        self.window.queue = [artist]
+        self.window.start_downloads = lambda items: backend.download(items[0])
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                mock.patch.object(SETTINGS, 'downloadPath', temp_dir), \
+                mock.patch.object(backend, '_ensure_catalog_session'), \
+                mock.patch.object(backend, 'artist_tracks', return_value=[SimpleNamespace(identifier='123')]), \
+                mock.patch.object(gui_backend.TIDAL_API, 'getTypeData', return_value=SimpleNamespace(id='123')), \
+                mock.patch.object(gui_backend, 'downloadTrack', return_value=(True, '')), \
+                mock.patch.object(gui_backend, 'start_type', return_value=True) as start_type:
+            (Path(temp_dir) / 'failed-tracks.txt').write_text('https://tidal.com/browse/track/123\n')
             self.window.retry_failed_downloads()
-        self.assertTrue(artist.legacy_retry_from_log)
-        self.assertFalse(cancelled.legacy_retry_from_log)
+        start_type.assert_called_once_with(self.Type.Artist, source, False)
 
     def test_start_queue_skips_completed_rows(self):
         done = self.SearchItem(self.Type.Track, "Done", "", "", "1", "", SimpleNamespace(id=1), status="Done")

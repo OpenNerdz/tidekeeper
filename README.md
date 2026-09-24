@@ -219,6 +219,9 @@ partial, interrupted, and cancelled items can be retried. Select an item to see
 its error details. For a completed artist or album attempt with failed tracks or
 videos, **Retry incomplete** downloads only those failed items. Interrupted
 collection attempts retry the collection so unattempted items are included.
+Older saved rows without complete retry details also revisit the collection,
+using the normal existing-file checks. Retried videos keep their original album
+folders and partial transfers.
 
 Settings affect the next download. Click **Save** if you want to keep them after
 restarting. Changing the TIDAL client signs you out automatically, so sign in

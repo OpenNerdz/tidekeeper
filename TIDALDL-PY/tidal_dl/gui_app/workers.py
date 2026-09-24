@@ -88,6 +88,7 @@ class ItemProgressReporter:
         self.warnings = []
         self.failed_track_ids = set()
         self.failed_video_ids = set()
+        self.failed_video_album_ids = {}
 
     def snapshot(self):
         with self._lock:
@@ -177,9 +178,14 @@ class ItemProgressReporter:
         with self._lock:
             self.failed_track_ids.add(str(identifier))
 
-    def note_failed_video(self, identifier):
+    def note_failed_video(self, identifier, album_id=None):
         with self._lock:
-            self.failed_video_ids.add(str(identifier))
+            identifier = str(identifier)
+            self.failed_video_ids.add(identifier)
+            if album_id is not None:
+                albums = self.failed_video_album_ids.setdefault(identifier, [])
+                if str(album_id) not in albums:
+                    albums.append(str(album_id))
 
 
 class DownloadWorker(QRunnable):

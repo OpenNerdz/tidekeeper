@@ -1280,11 +1280,6 @@ class MainWindow(QMainWindow):
             self._set_queue_message("No incomplete items to retry.")
             return
         for item in items:
-            item.legacy_retry_from_log = (
-                item.status == 'Failed'
-                and item.kind in (Type.Artist, Type.Album)
-                and not item.retry_failed_media_only
-            )
             item.status = "Queued"
             item.progress_percent = 0
             item.progress_label = ""
