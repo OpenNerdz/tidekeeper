@@ -86,6 +86,8 @@ class ItemProgressReporter:
         self._transferred = 0
         self._qualities = set()
         self.warnings = []
+        self.failed_track_ids = set()
+        self.failed_video_ids = set()
 
     def snapshot(self):
         with self._lock:
@@ -170,6 +172,14 @@ class ItemProgressReporter:
     def note_warning(self, message):
         with self._lock:
             self.warnings.append(message)
+
+    def note_failed_track(self, identifier):
+        with self._lock:
+            self.failed_track_ids.add(str(identifier))
+
+    def note_failed_video(self, identifier):
+        with self._lock:
+            self.failed_video_ids.add(str(identifier))
 
 
 class DownloadWorker(QRunnable):

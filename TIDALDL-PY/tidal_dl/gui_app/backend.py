@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -17,11 +18,12 @@ from .. import apiKey
 from ..diagnostics import runDoctor
 from ..enums import AudioQuality, Type, VideoQuality
 from ..events import loginByConfig, logout, start, start_type
+from ..download import FAILED_TRACKS_FILE, downloadTrack, downloadVideo
 from ..lang.language import LANG
 from ..paths import PATHS, openPath
 from ..printf import VERSION
 from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter, _atomicWrite
-from ..runtime import job_context, configure_logging, redact
+from ..runtime import DownloadCancelled, check_cancelled, job_context, configure_logging, redact
 from ..tidal import TIDAL_API
 from ..updater import run_update
 from .supporters import bundled_supporters, load_supporters
@@ -86,12 +88,39 @@ class SearchItem:
     job_id: str = field(default_factory=lambda: uuid4().hex)
     actual_quality: str = ""
     status_detail: str = ""
+    failed_track_ids: List[str] = field(default_factory=list)
+    failed_video_ids: List[str] = field(default_factory=list)
+    retry_failed_media_only: bool = False
+    legacy_retry_from_log: bool = False
 
 
 def queue_item(item, video_only=False):
     return replace(item, source=copy.deepcopy(item.source), video_only=video_only,
                    job_id=uuid4().hex, status='Queued', progress_percent=0,
-                   progress_label='', actual_quality='', status_detail='')
+                   progress_label='', actual_quality='', status_detail='',
+                   failed_track_ids=[], failed_video_ids=[], retry_failed_media_only=False,
+                   legacy_retry_from_log=False)
+
+
+def _media_ids(values):
+    """Keep only catalog IDs from persisted queue data."""
+    if not isinstance(values, list):
+        return []
+    return list(dict.fromkeys(str(value) for value in values if str(value).isdigit()))
+
+
+def _failed_tracks_since(path: Path, offset: int):
+    """Read the track links written to this job's failure log interval."""
+    try:
+        with path.open('rb') as source:
+            source.seek(0, os.SEEK_END)
+            if source.tell() < offset:
+                return []
+            source.seek(offset)
+            text = source.read().decode('utf-8', errors='replace')
+    except OSError:
+        return []
+    return list(dict.fromkeys(re.findall(r'^https://tidal\.com/browse/track/(\d+)\s*$', text, re.MULTILINE)))
 
 
 def queue_identity(item):
@@ -281,6 +310,11 @@ class TidekeeperBackend:
                                       video_only=bool(row.get('video_only')), status=status)
                     item.actual_quality = str(row.get('actual_quality', ''))
                     item.status_detail = redact(row.get('status_detail') or '')[:2000]
+                    item.failed_track_ids = _media_ids(row.get('failed_track_ids'))
+                    item.failed_video_ids = _media_ids(row.get('failed_video_ids'))
+                    item.retry_failed_media_only = bool(row.get('retry_failed_media_only')) and bool(
+                        item.failed_track_ids or item.failed_video_ids
+                    )
                     if status == 'Interrupted' and not item.status_detail:
                         item.status_detail = 'The previous run stopped before finishing. Resume to retry this item.'
                     items.append(item)
@@ -296,6 +330,9 @@ class TidekeeperBackend:
                  'video_only': item.video_only, 'status': item.status,
                  'actual_quality': item.actual_quality,
                  'status_detail': redact(item.status_detail)[:2000],
+                 'failed_track_ids': item.failed_track_ids,
+                 'failed_video_ids': item.failed_video_ids,
+                 'retry_failed_media_only': item.retry_failed_media_only,
                  'source': str(item.source) if item.kind == Type.Null else None} for item in items]
         _atomicWrite(str(Path(PATHS.getConfigDirectory()) / '.tidekeeper-queue.json'), json.dumps(rows))
 
@@ -459,20 +496,110 @@ class TidekeeperBackend:
 
     def download(self, item: SearchItem, log: LogCallback = None, progress=None):
         self._download_active = True
+        collection = item.kind in (Type.Artist, Type.Album)
+        retry_only = False
+        failed_log = Path(SETTINGS.downloadPath or '.') / FAILED_TRACKS_FILE
+        try:
+            log_offset = failed_log.stat().st_size
+        except OSError:
+            log_offset = 0
+        completed = False
+        retry_failures = ([], [])
         try:
             with job_context(log, getattr(progress, 'cancel_event', None), getattr(progress, 'note_warning', None)):
                 self._ensure_catalog_session()
+                if item.legacy_retry_from_log and collection and not item.video_only:
+                    item.failed_track_ids = self._legacy_failed_track_ids(item, failed_log)
+                    item.retry_failed_media_only = bool(item.failed_track_ids)
+                retry_only = collection and item.retry_failed_media_only and bool(
+                    item.failed_track_ids or item.failed_video_ids
+                )
                 kwargs = {"progress": progress} if progress is not None else {}
-                if item.kind == Type.Null:
+                if retry_only:
+                    ok, retry_failures = self._retry_failed_media(item, progress, log)
+                elif item.kind == Type.Null:
                     ok = start(str(item.source), item.video_only, **kwargs)
                 else:
                     if item.source is None:
                         item.source = TIDAL_API.getTypeData(item.identifier, item.kind)
                     ok = start_type(item.kind, item.source, item.video_only, **kwargs)
+                completed = True
         finally:
             self._download_active = False
+            item.legacy_retry_from_log = False
+            if completed:
+                tracks = list(getattr(progress, 'failed_track_ids', ())) if not ok else []
+                videos = list(getattr(progress, 'failed_video_ids', ())) if not ok else []
+                if not ok and retry_only:
+                    tracks.extend(retry_failures[0])
+                    videos.extend(retry_failures[1])
+                elif not ok and not tracks and not videos:
+                    tracks.extend(_failed_tracks_since(failed_log, log_offset))
+                item.failed_track_ids = _media_ids(tracks)
+                item.failed_video_ids = _media_ids(videos)
+                item.retry_failed_media_only = bool(collection and not ok and
+                                                    (item.failed_track_ids or item.failed_video_ids))
+            elif not retry_only:
+                # An exception or cancellation can leave collection entries unattempted.
+                item.retry_failed_media_only = False
         if not ok:
             raise RuntimeError(f"Download failed for {item.title}")
+
+    def _legacy_failed_track_ids(self, item, failed_log):
+        logged = _failed_tracks_since(failed_log, 0)
+        if not logged:
+            return []
+        if item.kind == Type.Artist:
+            candidates = self.artist_tracks(item)
+        else:
+            tracks, _ = TIDAL_API.getItems(item.identifier, Type.Album)
+            candidates = tracks
+        identifiers = {str(getattr(track, 'identifier', None) or getattr(track, 'id', '')) for track in candidates}
+        return [identifier for identifier in logged if identifier in identifiers]
+
+    def _retry_failed_media(self, item, progress, log):
+        entries = [(Type.Track, track_id) for track_id in item.failed_track_ids]
+        entries += [(Type.Video, video_id) for video_id in item.failed_video_ids]
+        failed_tracks, failed_videos = [], []
+        albums = {}
+        if progress is not None:
+            progress.begin_collection(len(entries))
+        for index, (kind, identifier) in enumerate(entries, 1):
+            check_cancelled()
+            if progress is not None:
+                progress.begin_entry(index, len(entries), identifier)
+            try:
+                source = TIDAL_API.getTypeData(identifier, kind)
+                if source is None:
+                    raise RuntimeError(f"{kind.name} {identifier} is no longer available")
+                entry_progress = progress.for_entry(index) if progress is not None else None
+                album = None
+                if kind == Type.Track or item.kind == Type.Album:
+                    album_id = getattr(getattr(source, 'album', None), 'id', None)
+                    if album_id is None and item.kind == Type.Album:
+                        album_id = item.identifier
+                    if album_id is not None:
+                        album_key = str(album_id)
+                        if album_key not in albums:
+                            albums[album_key] = TIDAL_API.getAlbum(album_id)
+                        album = albums[album_key]
+                    if item.kind == Type.Album and album is None:
+                        raise RuntimeError(f"Album {item.identifier} is no longer available")
+                if kind == Type.Video:
+                    ok, _ = downloadVideo(source, album, userProgress=entry_progress)
+                else:
+                    ok, _ = downloadTrack(source, album, userProgress=entry_progress)
+            except DownloadCancelled:
+                raise
+            except Exception as error:
+                ok = False
+                if log is not None:
+                    log(redact(f"Failed {kind.name.lower()} {identifier}: {error}\n"))
+            if progress is not None:
+                progress.finish_entry(index, len(entries), ok)
+            if not ok:
+                (failed_tracks if kind == Type.Track else failed_videos).append(identifier)
+        return not (failed_tracks or failed_videos), (failed_tracks, failed_videos)
 
     def apply_download_settings(self, values: dict):
         if values.get('apiKeyIndex') != SETTINGS.apiKeyIndex:

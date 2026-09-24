@@ -1542,6 +1542,8 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
             check, _ = downloadTrack(item, itemAlbum, playlist, **__trackProgressKwargs__(index))
             if progress is not None:
                 progress.finish_entry(index + 1, total, check)
+                if not check and hasattr(progress, 'note_failed_track'):
+                    progress.note_failed_track(item.id)
             success = success and check
         return success
     else:
@@ -1569,6 +1571,8 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
                 check, msg = future.result()
                 if progress is not None:
                     progress.finish_entry(index + 1, total, check)
+                    if not check and hasattr(progress, 'note_failed_track'):
+                        progress.note_failed_track(tracks[index].id)
                 if not check:
                     success = False
                     logging.error("Track download failed: %s", msg)
@@ -1591,5 +1595,7 @@ def downloadVideos(videos, album: Album, playlist=None, progress=None):
         check, _ = downloadVideo(item, album, playlist, **kwargs)
         if progress is not None:
             progress.finish_entry(index + 1, total, check)
+            if not check and hasattr(progress, 'note_failed_video'):
+                progress.note_failed_video(item.id)
         success = success and check
     return success

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Desktop retries of failed artist and album downloads target the failed tracks
+  and videos instead of downloading the collection again. Saved queues retain
+  those failures across restarts; older failed rows can use matching entries in
+  `failed-tracks.txt`.
+
 ## 2026.9.23.0 - 2026-09-23
 
 - Write `AlbumInfo.txt` when TIDAL omits an album's volume count, listing every

@@ -73,6 +73,15 @@ class GuiQueueTests(unittest.TestCase):
         self.assertEqual(done.status, "Done")
         self.assertEqual(queued.status, "Queued")
 
+    def test_retry_marks_legacy_failed_artist_for_log_lookup(self):
+        artist = self.SearchItem(self.Type.Artist, 'Artist', '', '', '42', '', None, status='Failed')
+        cancelled = self.SearchItem(self.Type.Artist, 'Cancelled', '', '', '43', '', None, status='Cancelled')
+        self.window.queue = [artist, cancelled]
+        with mock.patch.object(self.window, 'start_downloads'):
+            self.window.retry_failed_downloads()
+        self.assertTrue(artist.legacy_retry_from_log)
+        self.assertFalse(cancelled.legacy_retry_from_log)
+
     def test_start_queue_skips_completed_rows(self):
         done = self.SearchItem(self.Type.Track, "Done", "", "", "1", "", SimpleNamespace(id=1), status="Done")
         queued = self.SearchItem(self.Type.Track, "Queued", "", "", "3", "", SimpleNamespace(id=3), status="Queued")
