@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.24.1 - 2026-09-24
+
 - Keep unattempted albums and failed videos in desktop retries after a catalog
   error or when reopening older queues without complete failure details.
 - Preserve failed videos' album folders and partial transfers across retries
