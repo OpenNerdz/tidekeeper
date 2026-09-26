@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.26.0 - 2026-09-26
+
 - Make device login cancellable, ignore stale login replies, honor polling
   backoff, and prevent overlapping account changes and downloads. Clear manual
   token fields after sign-in and wait for background workers when closing.
