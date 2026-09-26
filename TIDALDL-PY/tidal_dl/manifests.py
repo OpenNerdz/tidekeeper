@@ -8,6 +8,9 @@ from defusedxml import ElementTree
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_MANIFEST_NODES = 200000
+MAX_SEGMENTS = 100000
+MAX_EXPANDED_URL_BYTES = 16 * 1024 * 1024
+MAX_TEMPLATE_WIDTH = 20
 
 
 class ProtectedManifestError(ValueError):
@@ -34,28 +37,49 @@ def _xml_root(content):
 
 def hls_segments(content, base_url):
     urls = []
-    for line in _text(content).splitlines():
+    expanded_bytes = 0
+    lines = [line.strip() for line in _text(content).strip().splitlines()]
+    for line in lines:
         line = line.strip()
         if not line:
             continue
-        if line.startswith('#EXT-X-KEY:') and 'METHOD=NONE' not in line:
-            raise ValueError('Encrypted HLS streams are not supported.')
+        if line.startswith('#EXT-X-KEY:'):
+            method = re.search(r'(?:^|,)METHOD=([^,]+)', line.split(':', 1)[1])
+            if method is None or method[1] != 'NONE':
+                raise ValueError('Encrypted HLS streams are not supported.')
+        if line.startswith('#EXT-X-STREAM-INF:'):
+            raise ValueError('Expected a media playlist, not an HLS variant list.')
         if line.startswith('#EXT-X-BYTERANGE:'):
             raise ValueError('HLS byte-range segments are not supported.')
+        location = None
         if line.startswith('#EXT-X-MAP:'):
             match = re.search(r'URI="([^"]+)"', line)
             if match is None or 'BYTERANGE=' in line:
                 raise ValueError('Unsupported HLS initialization segment.')
-            urls.append(urljoin(base_url, match.group(1)))
+            location = urljoin(base_url, match.group(1))
         elif not line.startswith('#'):
-            urls.append(urljoin(base_url, line))
+            location = urljoin(base_url, line)
+        if location is not None:
+            expanded_bytes += len(location.encode('utf-8'))
+            if expanded_bytes > MAX_EXPANDED_URL_BYTES:
+                raise ValueError('Expanded HLS manifest is too large.')
+            urls.append(location)
+        if len(urls) > MAX_SEGMENTS:
+            raise ValueError('HLS manifest has too many segments.')
+    if not lines or lines[0] != '#EXTM3U':
+        raise ValueError('Invalid HLS playlist header.')
+    if '#EXT-X-ENDLIST' not in lines:
+        raise ValueError('Live or unfinished HLS playlists are not supported.')
     return urls
 
 
 def hls_variants(content, base_url):
     attributes = None
     variants = []
-    for line in _text(content).splitlines():
+    lines = _text(content).strip().splitlines()
+    if not lines or lines[0] != '#EXTM3U':
+        raise ValueError('Invalid HLS playlist header.')
+    for line in lines:
         line = line.strip()
         if line.startswith('#EXT-X-STREAM-INF:'):
             resolution = re.search(r'RESOLUTION=(\d+)x(\d+)', line)
@@ -96,7 +120,10 @@ def dash_representations(content):
                   'Bandwidth': representation.get('bandwidth', ''), 'Number': number, 'Time': timestamp}
         def replace(match):
             value = values[match[1]]
-            return str(value).zfill(int(match[2])) if match[2] else str(value)
+            width = int(match[2] or 0)
+            if width > MAX_TEMPLATE_WIDTH:
+                raise ValueError('DASH number formatting width is too large.')
+            return str(value).zfill(width)
         result = re.sub(r'\$(RepresentationID|Bandwidth|Number|Time)(?:%0(\d+)d)?\$', replace,
                         pattern.replace('$$', '\x00')).replace('\x00', '$')
         if not result:
@@ -104,7 +131,11 @@ def dash_representations(content):
         return result
 
     tracks = []
-    for period in root.findall('Period'):
+    periods = root.findall('Period')
+    if len(periods) != 1:
+        raise ValueError('DASH requires a single complete period; multi-period audio is not supported.')
+    expanded_count = expanded_bytes = 0
+    for period in periods:
         duration = _seconds(period.get('duration'))
         if duration is None:
             duration = _seconds(root.get('mediaPresentationDuration'))
@@ -149,21 +180,31 @@ def dash_representations(content):
                                 raise ValueError('Unbounded DASH timeline is not supported.')
                             repeat = math.ceil((end - current) / step) - 1
                         count = repeat + 1
-                        if count < 0 or len(timestamps) + count > 100000:
+                        if count < 0 or len(timestamps) + count > MAX_SEGMENTS:
                             raise ValueError('Invalid or excessively large DASH timeline.')
                         timestamps.extend(current + offset * step for offset in range(count))
                         current += step * count
                 elif duration is not None and int(attrs.get('duration', 0)) > 0:
                     step = int(attrs['duration'])
                     count = math.ceil(duration * scale / step)
-                    if count > 100000:
+                    if count > MAX_SEGMENTS:
                         raise ValueError('DASH timeline is too large.')
                     timestamps = [offset * step for offset in range(count)]
                 else:
                     raise ValueError('DASH manifest has no finite segment timeline.')
-                urls = [urljoin(prefix, expand(attrs['initialization'], rep, number, 0))]
-                urls.extend(urljoin(prefix, expand(attrs['media'], rep, number + index, timestamp))
-                            for index, timestamp in enumerate(timestamps))
+                if not timestamps or expanded_count + len(timestamps) + 1 > MAX_SEGMENTS:
+                    raise ValueError('DASH manifest has no media segments or too many segments.')
+                urls = []
+                for pattern, segment_number, timestamp in [
+                    (attrs['initialization'], number, 0),
+                    *((attrs['media'], number + index, timestamp) for index, timestamp in enumerate(timestamps)),
+                ]:
+                    location = urljoin(prefix, expand(pattern, rep, segment_number, timestamp))
+                    expanded_bytes += len(location.encode('utf-8'))
+                    if expanded_bytes > MAX_EXPANDED_URL_BYTES:
+                        raise ValueError('Expanded DASH manifest is too large.')
+                    urls.append(location)
+                expanded_count += len(urls)
                 representation_id = rep.get('id', '')
                 bit_depth = rep.get('audioBitDepth', adaptation.get('audioBitDepth', ''))
                 if not bit_depth:

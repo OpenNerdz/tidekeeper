@@ -178,6 +178,9 @@ class MainWindow(QMainWindow):
         self.login_polling = False
         self.login_poll_inflight = False
         self.login_deadline = 0
+        self._device_request_inflight = False
+        self._device_login_worker = None
+        self._account_busy = False
         self.search_in_progress = False
         self.search_worker = None
         self._search_cancel_requested = False
@@ -296,6 +299,7 @@ class MainWindow(QMainWindow):
         self.search_type.setFixedWidth(112)
         self.search_type.setToolTip("Content type to search for.")
         self.search_text = QLineEdit()
+        self.search_text.setAccessibleName('Search TIDAL')
         self.search_text.setPlaceholderText("Artist, album, track, playlist or a TIDAL URL   (Ctrl+F)")
         self.search_text.setClearButtonEnabled(True)
         self.search_button = button("Search", tooltip="Search TIDAL for the selected content type.")
@@ -313,6 +317,7 @@ class MainWindow(QMainWindow):
 
     def _build_links_row(self) -> QWidget:
         self.direct_text = QTextEdit()
+        self.direct_text.setAccessibleName('TIDAL links or list files')
         self.direct_text.setObjectName("LinksInput")
         self.direct_text.setAcceptRichText(False)
         self.direct_text.setPlaceholderText(
@@ -372,6 +377,7 @@ class MainWindow(QMainWindow):
         header.addWidget(self.artist_videos_button)
 
         self.results_table = QTableWidget(0, 6)
+        self.results_table.setAccessibleName('Search results')
         configure_table(self.results_table, ["Type", "Title", "Artists", "Quality", "Duration", "ID"])
         fix_columns(self.results_table, {0: 80, 2: 130, 3: 160, 4: 72, 5: 104})
         self.results_table.itemSelectionChanged.connect(self.update_result_actions)
@@ -425,6 +431,7 @@ class MainWindow(QMainWindow):
             header.addWidget(widget)
 
         self.queue_table = QTableWidget(0, 6)
+        self.queue_table.setAccessibleName('Download queue')
         configure_table(self.queue_table, ["Type", "Title", "Artists", "Quality", "Status", "Progress"])
         fix_columns(self.queue_table, {0: 76, 2: 130, 3: 120, 4: 160, 5: 104})
         self.queue_table.setItemDelegateForColumn(4, StatusDelegate(self.queue_table))
@@ -726,9 +733,11 @@ class MainWindow(QMainWindow):
 
         token = FormSection("Manual token")
         self.access_token = QLineEdit()
+        self.access_token.setAccessibleName('Access token')
         self.access_token.setEchoMode(QLineEdit.Password)
         self.access_token.setPlaceholderText("Access token")
         self.refresh_token = QLineEdit()
+        self.refresh_token.setAccessibleName('Refresh token')
         self.refresh_token.setEchoMode(QLineEdit.Password)
         self.refresh_token.setPlaceholderText("Refresh token (optional)")
         fix_height(self.access_token, self.refresh_token)
@@ -852,6 +861,8 @@ class MainWindow(QMainWindow):
                 worker.signals.finished.disconnect(cleanup)
             except (RuntimeError, TypeError):
                 pass
+            if self._close_pending and not self.active_workers:
+                QTimer.singleShot(0, self.close)
 
         worker.signals.finished.connect(cleanup)
         self.thread_pool.start(worker)
@@ -1295,7 +1306,10 @@ class MainWindow(QMainWindow):
         if not items:
             self._set_queue_message("Nothing left to download.")
             return
-        if self.login_polling or self.login_poll_inflight:
+        if self._account_busy:
+            self._set_queue_message('Wait for the account operation to finish before downloading.')
+            return
+        if self.login_polling or self.login_poll_inflight or self._device_request_inflight:
             self._set_queue_message("Finish or cancel device login before downloading.")
             return
         try:
@@ -1379,7 +1393,7 @@ class MainWindow(QMainWindow):
         previous = scrollbar.value()
         cursor = self.download_log.textCursor()
         cursor.movePosition(QTextCursor.End)
-        cursor.insertText(text)
+        cursor.insertText(redact(text))
         if follow:
             scrollbar.setValue(scrollbar.maximum())
         else:
@@ -1399,8 +1413,9 @@ class MainWindow(QMainWindow):
         self.update_direct_actions()
         self.update_result_actions()
         self.update_queue_actions()
-        self.pages["settings"].setEnabled(not self.download_in_progress)
-        self.pages["account"].setEnabled(not self.download_in_progress)
+        self.pages["settings"].setEnabled(not (self.download_in_progress or self._account_busy
+                                              or self.login_polling or self._device_request_inflight))
+        self.pages["account"].setEnabled(not (self.download_in_progress or self._account_busy))
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt naming
         if event.type() == QEvent.Resize:
@@ -1682,23 +1697,61 @@ class MainWindow(QMainWindow):
         self.account_log.append(status.label)
 
     def refresh_saved_login(self):
+        if self._account_busy:
+            return
         self.refresh_login_button.setEnabled(False)
         self.account_log.append("Refreshing saved login…")
         worker = TaskWorker(self.backend.refresh_saved_login)
         worker.signals.result.connect(self.on_auth_result)
         worker.signals.error.connect(self.account_log.append)
-        worker.signals.finished.connect(lambda: self.refresh_login_button.setEnabled(True))
+        self._start_account_action(worker)
+
+    def _start_account_action(self, worker):
+        if self.login_polling or self._device_request_inflight:
+            self._cancel_device_login()
+        self._account_busy = True
+        self.update_action_states()
+        worker.signals.finished.connect(self._account_action_finished)
         self.start_worker(worker)
 
+    def _account_action_finished(self):
+        self._account_busy = False
+        self.token_login_button.setEnabled(True)
+        self.update_button.setEnabled(True)
+        self.refresh_auth_status()
+        self.update_action_states()
+
     def start_device_login(self):
+        if self._account_busy:
+            return
+        if self.login_polling or self._device_request_inflight:
+            self._cancel_device_login()
+            return
         self._login_generation += 1
         generation = self._login_generation
-        self.device_login_button.setEnabled(False)
+        self._device_request_inflight = True
+        self.device_login_button.setText('Cancel login')
+        self.update_action_states()
         self.account_log.append("Requesting device login…")
         worker = TaskWorker(self.backend.start_device_login)
+        self._device_login_worker = worker
         worker.signals.result.connect(lambda result: self._device_login_started(result) if generation == self._login_generation else None)
         worker.signals.error.connect(lambda error: self._device_login_error(error) if generation == self._login_generation else None)
+        worker.signals.finished.connect(lambda: self._device_request_finished(generation))
         self.start_worker(worker)
+
+    def _device_request_finished(self, generation):
+        if generation != self._login_generation:
+            return
+        self._device_request_inflight = False
+        self._device_login_worker = None
+        self.update_action_states()
+
+    def _cancel_device_login(self):
+        if self._device_login_worker is not None:
+            self._device_login_worker.cancel()
+        self.backend.cancel_device_login()
+        self._stop_device_login('Login cancelled.')
 
     def _show_login_challenge(self, url: str, code: str):
         self.login_url.setText(url)
@@ -1712,9 +1765,11 @@ class MainWindow(QMainWindow):
         self.account_log.append(f"Open {challenge.url}")
         self.account_log.append(f"Code: {challenge.user_code}")
         self.login_polling = True
+        self.device_login_button.setText('Cancel login')
         self.login_poll_inflight = False
-        self.login_deadline = time.time() + max(1, int(challenge.expires_in or 0))
+        self.login_deadline = time.monotonic() + max(1, int(challenge.expires_in or 0))
         self.poll_timer.start(max(1, challenge.interval) * 1000)
+        self.update_action_states()
 
     def _stop_device_login(self, message: str):
         self._login_generation += 1
@@ -1722,10 +1777,14 @@ class MainWindow(QMainWindow):
         self.login_polling = False
         self.login_poll_inflight = False
         self.login_deadline = 0
+        self._device_request_inflight = False
+        self._device_login_worker = None
         self.device_login_button.setEnabled(True)
+        self.device_login_button.setText('Start device login')
         self.login_challenge.hide()
         if message:
             self.account_log.append(message)
+        self.update_action_states()
 
     def _device_login_error(self, message: str):
         self._stop_device_login(message)
@@ -1733,14 +1792,18 @@ class MainWindow(QMainWindow):
     def _poll_device_login(self):
         if not self.login_polling or self.login_poll_inflight:
             return
-        if self.login_deadline and time.time() >= self.login_deadline:
+        if self.login_deadline and time.monotonic() >= self.login_deadline:
             self._stop_device_login("Login code expired. Start login again.")
             return
         self.login_poll_inflight = True
         worker = TaskWorker(self.backend.poll_device_login)
-        worker.signals.result.connect(self._device_login_polled)
-        worker.signals.error.connect(self._device_login_poll_error)
-        worker.signals.finished.connect(self._device_login_poll_finished)
+        generation = self._login_generation
+        worker.signals.result.connect(lambda status: self._device_login_polled(status)
+                                      if generation == self._login_generation else None)
+        worker.signals.error.connect(lambda error: self._device_login_poll_error(error)
+                                     if generation == self._login_generation else None)
+        worker.signals.finished.connect(lambda: self._device_login_poll_finished()
+                                        if generation == self._login_generation else None)
         self.start_worker(worker)
 
     def _device_login_polled(self, status):
@@ -1749,6 +1812,8 @@ class MainWindow(QMainWindow):
         self.refresh_auth_status()
         if getattr(status, "fresh_login", False):
             self._stop_device_login("Login complete.")
+        elif getattr(status, 'poll_interval', 0):
+            self.poll_timer.setInterval(max(1, status.poll_interval) * 1000)
 
     def _device_login_poll_error(self, message: str):
         lowered = (message or "").lower()
@@ -1779,17 +1844,29 @@ class MainWindow(QMainWindow):
         self.start_worker(worker)
 
     def closeEvent(self, event):
+        self._close_pending = True
         if self.download_in_progress:
-            self._close_pending = True
             self.cancel_downloads()
             event.ignore()
             return
         self.cancel_search()
+        if self.login_polling or self._device_request_inflight:
+            self._cancel_device_login()
         self._stop_device_login("")
+        for worker in list(self.active_workers):
+            # Interrupting pip while it replaces installed files can leave the
+            # application unusable. Let an active update finish before exit.
+            if getattr(worker, 'fn', None) != self.backend.update_app:
+                worker.cancel()
+        if self.active_workers:
+            event.ignore()
+            return
         self._save_queue()
         event.accept()
 
     def login_with_token(self):
+        if self._account_busy:
+            return
         access_token = self.access_token.text().strip()
         if not access_token:
             self.account_log.append("Enter an access token first.")
@@ -1797,10 +1874,14 @@ class MainWindow(QMainWindow):
         self.token_login_button.setEnabled(False)
         self.account_log.append("Saving manual token…")
         worker = TaskWorker(self.backend.login_by_access_token, access_token, self.refresh_token.text())
-        worker.signals.result.connect(self.on_auth_result)
+        worker.signals.result.connect(self._manual_login_succeeded)
         worker.signals.error.connect(self.account_log.append)
-        worker.signals.finished.connect(lambda: self.token_login_button.setEnabled(True))
-        self.start_worker(worker)
+        self._start_account_action(worker)
+
+    def _manual_login_succeeded(self, status):
+        self.access_token.clear()
+        self.refresh_token.clear()
+        self.on_auth_result(status)
 
     def run_doctor(self):
         # One check at a time: repeated clicks used to start parallel token checks.
@@ -1813,13 +1894,14 @@ class MainWindow(QMainWindow):
         self.start_worker(worker)
 
     def update_tidekeeper(self, include_gui: bool = True):
+        if self._account_busy:
+            return
         self.account_log.append("Updating Tidekeeper…")
         self.update_button.setEnabled(False)
         worker = TaskWorker(self.backend.update_app, include_gui)
         worker.signals.result.connect(lambda output: self.account_log.append(output.strip()))
         worker.signals.error.connect(self.account_log.append)
-        worker.signals.finished.connect(lambda: self.update_button.setEnabled(True))
-        self.start_worker(worker)
+        self._start_account_action(worker)
 
     # ------------------------------------------------------------------- demo
 

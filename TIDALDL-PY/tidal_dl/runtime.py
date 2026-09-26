@@ -8,10 +8,13 @@ import os
 import re
 import subprocess
 import time
+from threading import Lock, RLock
 
 _output = contextvars.ContextVar('tidekeeper_output', default=None)
 _cancel = contextvars.ContextVar('tidekeeper_cancel', default=None)
 _warning = contextvars.ContextVar('tidekeeper_warning', default=None)
+_output_locks = {}
+_output_locks_guard = Lock()
 
 
 class DownloadCancelled(Exception):
@@ -35,6 +38,31 @@ def check_cancelled():
     event = _cancel.get()
     if event is not None and event.is_set():
         raise DownloadCancelled('Download cancelled; partial transfers kept for retry.')
+
+
+@contextlib.contextmanager
+def output_lock(path):
+    """Serialize writers to one destination without blocking cancellation."""
+    key = os.path.normcase(os.path.realpath(path))
+    with _output_locks_guard:
+        lock, users = _output_locks.get(key, (RLock(), 0))
+        _output_locks[key] = lock, users + 1
+    acquired = False
+    try:
+        while not acquired:
+            check_cancelled()
+            acquired = lock.acquire(timeout=0.1)
+        check_cancelled()
+        yield
+    finally:
+        if acquired:
+            lock.release()
+        with _output_locks_guard:
+            remaining = _output_locks[key][1] - 1
+            if remaining:
+                _output_locks[key] = lock, remaining
+            else:
+                del _output_locks[key]
 
 
 def sleep(seconds):
@@ -83,14 +111,16 @@ def run_process(args, timeout=300, check=False, capture_output=False, **kwargs):
 
 def print(*values, sep=' ', end='\n', **kwargs):
     callback = _output.get()
+    message = redact((' ' if sep is None else sep).join(str(value) for value in values))
     if callback is None or kwargs.get('file') is not None:
-        return builtins.print(*values, sep=sep, end=end, **kwargs)
-    callback(redact(sep.join(str(value) for value in values) + end))
+        return builtins.print(message, end=end, **kwargs)
+    callback(message + ('\n' if end is None else end))
 
 
 def redact(message):
-    message = re.sub(r'(?i)(bearer\s+)[^\s,;]+', r'\1[redacted]', str(message))
-    message = re.sub(r'(?i)((?:access_?token|refresh_?token|client_?secret)[\s\"\x27:=]+)[^\s\"\x27,}]+',
+    message = re.sub(r'(?i)((?:bearer|basic)\s+)[^\s,;\"\x27]+', r'\1[redacted]', str(message))
+    message = re.sub(r'(https?://)[^\s/@]+:[^\s/@]+@', r'\1[redacted]@', message)
+    message = re.sub(r'(?i)((?:access_?token|refresh_?token|client_?secret)\b[\"\x27]?\s*[:=]\s*[\"\x27]?)[^\s\"\x27,}]+',
                      r'\1[redacted]', message)
     return re.sub(r'(https?://[^\s?]+)\?[^\s]+', r'\1?[redacted]', message)
 

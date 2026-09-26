@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import time
 import tempfile
+from contextlib import ExitStack
 from functools import wraps
 from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,14 +34,14 @@ from .paths import getAlbumPath, getTrackPath, getVideoPath
 from .printf import Printf
 from .settings import SETTINGS
 from .tidal import TIDAL_API
-from .manifests import hls_segments
-from .http import retry_delay
+from .manifests import MAX_MANIFEST_BYTES, hls_segments
+from .http import retry_delay, response_bytes
 from .transfer_state import (
     prepare_transfer, complete_transfer, audio_identity, video_identity,
     record_completion, is_completed, completion_state,
 )
-from .runtime import run_process, redact
-from .network_policy import validate_media_url
+from .runtime import run_process, redact, output_lock
+from .network_policy import UnsafeMediaUrl, validate_media_url
 
 
 DOWNLOAD_TIMEOUT = (5, 60)
@@ -49,6 +50,7 @@ VIDEO_THREAD_COUNT = 8
 MAX_MEDIA_CONNECTIONS = 8
 DOWNLOAD_RETRIES = 4
 DOWNLOAD_CHUNK_SIZE = 256 * 1024
+MAX_ARTWORK_BYTES = 16 * 1024 * 1024
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 FAILED_TRACKS_FILE = "failed-tracks.txt"
 failed_track_log_lock = Lock()
@@ -56,11 +58,27 @@ download_session_state = local()
 media_connection_slots = BoundedSemaphore(MAX_MEDIA_CONNECTIONS)
 
 
+class _PublicMediaAuth(requests.auth.AuthBase):
+    """Do not attach account or automatic .netrc credentials to media URLs."""
+
+    def __call__(self, request):
+        request.headers.pop('Authorization', None)
+        return request
+
+
 def __connectionLimited__(function):
     @wraps(function)
     def wrapped(*args, **kwargs):
-        with media_connection_slots:
+        acquired = False
+        try:
+            while not acquired:
+                check_cancelled()
+                acquired = media_connection_slots.acquire(timeout=0.1)
+            check_cancelled()
             return function(*args, **kwargs)
+        finally:
+            if acquired:
+                media_connection_slots.release()
     return wrapped
 
 
@@ -68,6 +86,7 @@ def __httpSession__():
     session = getattr(download_session_state, "session", None)
     if session is None:
         session = requests.Session()
+        session.auth = _PublicMediaAuth()
         # Request/transfer loops own retries so cancellation and attempt limits
         # apply to every network attempt, including connection failures. Each
         # thread owns its session and makes only one request at a time.
@@ -182,6 +201,8 @@ def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
                     break
                 next_url = urljoin(current_url, location)
                 validate_media_url(next_url)
+                if current_url.lower().startswith('https:') and not next_url.lower().startswith('https:'):
+                    raise UnsafeMediaUrl('Media redirects may not downgrade HTTPS to HTTP.')
                 response.close()
                 response = None
                 current_url = next_url
@@ -400,7 +421,8 @@ def __downloadSingleUrl__(
         progressLock=None,
         expectedSize=-1,
         allowUnknownSizeReuse=False,
-        reuseExisting=True):
+        reuseExisting=True,
+        on_size=None):
     """Download one CDN URL to outputPath with HTTP Range resume.
 
     Partial progress is kept in ``outputPath + '.download'`` until the transfer
@@ -422,6 +444,8 @@ def __downloadSingleUrl__(
     else:
         reusable = False
     if reusable and reuseExisting:
+        if on_size is not None:
+            on_size(__localFileSize__(outputPath))
         __noteProgress__(
             progress, userProgress, __localFileSize__(outputPath), progressLock
         )
@@ -435,7 +459,11 @@ def __downloadSingleUrl__(
     for attempt in range(DOWNLOAD_RETRIES):
         check_cancelled()
         resumeSize = __localFileSize__(tempOutputPath)
-        headers = {"Range": f"bytes={resumeSize}-"} if resumeSize > 0 else {}
+        # Range offsets describe stored bytes, so transparent HTTP content
+        # decoding must not change the byte counts used for resume.
+        headers = {"Accept-Encoding": "identity"}
+        if resumeSize > 0:
+            headers['Range'] = f'bytes={resumeSize}-'
         response = None
         try:
             response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True, headers=headers)
@@ -459,8 +487,14 @@ def __downloadSingleUrl__(
                     response = None
                     __removeFile__(tempOutputPath)
                     resumeSize = 0
-                    response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True)
+                    response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True,
+                                               headers={"Accept-Encoding": "identity"})
                     mode = "wb"
+
+            if response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity'):
+                raise ValueError('The media server returned an encoded response that cannot be resumed safely.')
+            if response.status_code == 206 and __contentRangeStart__(response) != resumeSize:
+                raise ValueError('The media server returned an unexpected byte range.')
 
             responseTotal = __contentTotalSize__(response)
             if responseTotal > 0:
@@ -469,6 +503,8 @@ def __downloadSingleUrl__(
                 contentLength = __parseIntHeader__(response.headers.get("Content-Length"))
                 if contentLength > 0:
                     knownTotal = contentLength
+            if knownTotal > 0 and on_size is not None:
+                on_size(knownTotal)
 
             writtenBytes = resumeSize if mode == 'ab' else 0
             with open(tempOutputPath, mode) as output:
@@ -486,7 +522,10 @@ def __downloadSingleUrl__(
 
             __verifyLocalSize__(tempOutputPath, knownTotal, label="CDN object")
             os.replace(tempOutputPath, outputPath)
-            return __localFileSize__(outputPath)
+            size = __localFileSize__(outputPath)
+            if on_size is not None:
+                on_size(size)
+            return size
         except (requests.RequestException, OSError, IOError) as error:
             failed_response = getattr(error, 'response', None)
             if getattr(failed_response, 'status_code', None) == 416:
@@ -495,6 +534,8 @@ def __downloadSingleUrl__(
                     __verifyLocalSize__(tempOutputPath, remote_total)
                     os.replace(tempOutputPath, outputPath)
                     __noteProgress__(progress, userProgress, max(remote_total - reportedBytes, 0), progressLock)
+                    if on_size is not None:
+                        on_size(remote_total)
                     return remote_total
                 # A stale or overlong sidecar cannot be resumed.
                 __removeFile__(tempOutputPath)
@@ -545,7 +586,8 @@ def __downloadSegment__(
         userProgress=None,
         progressLock=None,
         chunkSize=DOWNLOAD_CHUNK_SIZE,
-        expectedSize=-1):
+        expectedSize=-1,
+        on_size=None):
     return __downloadSingleUrl__(
         url,
         partPath,
@@ -555,6 +597,7 @@ def __downloadSegment__(
         progressLock=progressLock,
         expectedSize=expectedSize,
         allowUnknownSizeReuse=True,
+        on_size=on_size,
     )
 
 
@@ -587,6 +630,17 @@ def __downloadUrls__(
         if showProgress:
             progress = aigpy.progress.ProgressTool(totalSize, 15, unit="B")
 
+    size_lock = Lock()
+    object_sizes = {}
+
+    def report_size(index, size):
+        # Learn sizes from actual GETs. Do not display a misleading 100% for
+        # one segment while the remaining segment sizes are still unknown.
+        with size_lock:
+            object_sizes[index] = size
+            if len(object_sizes) == len(urls):
+                __setUserProgressMax__(userProgress, sum(object_sizes.values()))
+
     # Already-complete assembled file (e.g. decrypt failed after CDN success).
     # Only reuse when the remote size is known and matches — never skip a
     # download solely because a local file happens to exist.
@@ -605,6 +659,7 @@ def __downloadUrls__(
                 chunkSize,
                 expectedSize=totalSize,
                 reuseExisting=source_matches,
+                on_size=lambda size: report_size(0, size),
             )
             complete_transfer(outputPath)
             return True, ''
@@ -622,7 +677,7 @@ def __downloadUrls__(
 
     try:
         if workers == 1:
-            for url, partPath in zip(urls, partPaths):
+            for index, (url, partPath) in enumerate(zip(urls, partPaths)):
                 __downloadSegment__(
                     url,
                     partPath,
@@ -630,6 +685,7 @@ def __downloadUrls__(
                     userProgress,
                     None,
                     chunkSize,
+                    on_size=lambda size, index=index: report_size(index, size),
                 )
         else:
             with ThreadPoolExecutor(max_workers=workers) as thread_pool:
@@ -642,6 +698,7 @@ def __downloadUrls__(
                         userProgress,
                         progressLock,
                         chunkSize,
+                        on_size=lambda size, index=index: report_size(index, size),
                     ): index
                     for index, (url, partPath) in enumerate(zip(urls, partPaths))
                 }
@@ -749,10 +806,12 @@ def __verifyMediaQuality__(path, stream):
     """Probe final audio when ffprobe is available and retain verified facts."""
     facts = __manifestMediaFacts__(stream)
     ffprobe = shutil.which('ffprobe')
-    if not ffprobe or __localFileSize__(path) < 4096:
+    if not ffprobe:
         return facts
     completed = run_process(
-        [ffprobe, '-v', 'error', '-select_streams', 'a:0',
+        [ffprobe, '-v', 'error', '-protocol_whitelist', 'file',
+         '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,flac,aac,ac3,eac3,mp3,ogg,mpegts',
+         '-select_streams', 'a:0',
          '-show_entries', 'stream=codec_name,sample_rate,bits_per_sample,bits_per_raw_sample,channels',
          '-of', 'json', path],
         capture_output=True,
@@ -818,7 +877,9 @@ def __exportFlacFromContainer__(path, stream):
     __removeFile__(tempPath)
     try:
         completed = run_process(
-            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'flac', tempPath],
+            [ffmpeg, '-nostdin', '-y', '-hide_banner', '-loglevel', 'error',
+             '-protocol_whitelist', 'file', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,flac',
+             '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'flac', tempPath],
             capture_output=True,
             timeout=300,
             text=True,
@@ -1134,11 +1195,11 @@ def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
     artwork = None
     try:
         if coverpath:
-            response = __httpRequest__('GET', coverpath, allow_redirects=True)
+            response = __httpRequest__('GET', coverpath, allow_redirects=True, stream=True)
             try:
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as output:
                     artwork = output.name
-                    output.write(response.content)
+                    output.write(response_bytes(response, MAX_ARTWORK_BYTES, 'Cover artwork'))
             finally:
                 response.close()
         error = __metadataSaveError__(obj.save(artwork or ''))
@@ -1220,7 +1281,8 @@ def __finalizeVideoFile__(partPath, path):
     try:
         check_cancelled()
         completed = run_process(
-            [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', partPath,
+            [ffmpeg, '-nostdin', '-y', '-hide_banner', '-loglevel', 'error',
+             '-protocol_whitelist', 'file', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,mpegts', '-i', partPath,
              '-c', 'copy', '-movflags', '+faststart', tempPath],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=300,
         )
@@ -1238,9 +1300,11 @@ def __finalizeVideoFile__(partPath, path):
 def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, userProgress=None):
     title = getattr(video, 'title', None) or str(getattr(video, 'id', 'unknown'))
     partPath = ''
+    destination = ExitStack()
     try:
         check_cancelled()
         path = getVideoPath(video, album, playlist)
+        destination.enter_context(output_lock(os.path.splitext(path)[0]))
         identity = video_identity(video, SETTINGS.videoQuality)
         if SETTINGS.checkExist and is_completed(path, identity):
             Printf.success(title + ' (skip:already exists!)')
@@ -1255,16 +1319,17 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
 
         __ensureParentDir__(path)
 
-        response = __httpRequest__("GET", stream.m3u8Url, allow_redirects=True)
+        response = __httpRequest__("GET", stream.m3u8Url, allow_redirects=True, stream=True)
         try:
-            m3u8content = response.content
+            m3u8content = response_bytes(response, MAX_MANIFEST_BYTES, 'HLS manifest')
+            manifest_url = response.url or stream.m3u8Url
             if not m3u8content:
                 Printf.err(f"DL Video[{title}] getM3u8 failed.")
                 return False, "GetM3u8 failed."
         finally:
             response.close()
 
-        urls = hls_segments(m3u8content, stream.m3u8Url)
+        urls = hls_segments(m3u8content, manifest_url)
         if len(urls) <= 0:
             Printf.err(f"DL Video[{title}] getTsUrls failed.")
             return False, "GetTsUrls failed."
@@ -1292,6 +1357,8 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
     except Exception as e:
         Printf.err(f"DL Video[{title}] failed.{str(e)}")
         return False, str(e)
+    finally:
+        destination.close()
 
 
 def __getTrackStream__(track_id):
@@ -1355,6 +1422,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
     title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
     partPath = ''
     processingPath = ''
+    destination = ExitStack()
     try:
         check_cancelled()
         track, album = __resolveTrackForAtmosDownload__(track, album)
@@ -1363,6 +1431,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         stream = __getTrackStream__(track.id)
         stream.trackid = track.id
         path = getTrackPath(track, stream, album, playlist)
+        destination.enter_context(output_lock(os.path.splitext(path)[0]))
         partPath = path + '.part'
         partsDir = __partsDirectory__(partPath)
 
@@ -1494,6 +1563,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
     finally:
         if processingPath:
             __removeFile__(processingPath)
+        destination.close()
 
 
 def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progress=None):

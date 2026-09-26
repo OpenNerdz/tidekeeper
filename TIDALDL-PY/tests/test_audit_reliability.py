@@ -311,7 +311,7 @@ class ReliabilityTests(unittest.TestCase):
                 self.assertEqual(PATHS.homePathOverride, str(self.root))
 
     def test_hls_relative_segments_and_initialization(self):
-        content = '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n../one.m4s\ntwo.m4s\n'
+        content = '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n../one.m4s\ntwo.m4s\n#EXT-X-ENDLIST\n'
         self.assertEqual(hls_segments(content, 'https://cdn.invalid/video/index.m3u8'),
                          ['https://cdn.invalid/video/init.mp4', 'https://cdn.invalid/one.m4s',
                           'https://cdn.invalid/video/two.m4s'])

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 2026.9.26.0 - 2026-09-26
+
+- Make device login cancellable, ignore stale login replies, honor polling
+  backoff, and prevent overlapping account changes and downloads. Clear manual
+  token fields after sign-in and wait for background workers when closing.
+- Validate terminal options before changing settings, keep help/version free
+  of profile writes, hide manual token input, and handle cancellation cleanly.
+- Show transfer totals learned from media responses, serialize concurrent
+  writes to the same destination, and make connection waits cancellable.
+- Correct video resolution selection and root output paths; reject preview
+  audio/video, incomplete HLS, and unsupported multi-period DASH instead of
+  marking partial content complete. Verify small audio files with ffprobe too.
+- Harden remote manifest/artwork reads, URL validation, redirect handling,
+  credential redaction, disc-folder names, and media-tool input restrictions.
+  Bound batch lists and expanded manifests before they consume excessive memory.
+- Pin workflow actions to reviewed commits, reduce build permissions, audit
+  terminal/desktop dependencies in CI, and add actual FFmpeg integration tests.
+
 ## 2026.9.24.1 - 2026-09-24
 
 - Keep unattempted albums and failed videos in desktop retries after a catalog

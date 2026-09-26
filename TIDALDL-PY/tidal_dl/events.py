@@ -11,6 +11,7 @@
 
 from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
+import math
 import time
 
 import aigpy
@@ -295,7 +296,10 @@ def changeSettings():
     )
     interval = Printf.enter(interval_prompt)
     try:
-        SETTINGS.requestIntervalSeconds = max(0.0, float(interval))
+        seconds = float(interval)
+        if not math.isfinite(seconds) or not 0 <= seconds <= 300:
+            raise ValueError('Delay must be between 0 and 300 seconds.')
+        SETTINGS.requestIntervalSeconds = seconds
     except (TypeError, ValueError):
         Printf.info("Keeping existing request delay seconds.")
     SETTINGS.adaptiveRateLimit = Printf.enterBool(getattr(
@@ -437,7 +441,7 @@ def logout(revoke=None):
 def loginByAccessToken():
     try:
         print("-------------AccessToken---------------")
-        token = Printf.enter("accessToken('0' go back):")
+        token = Printf.enterSecret("accessToken('0' go back):")
         if token == '0':
             return
         TIDAL_API.loginByAccessToken(token, TOKEN.userid)
@@ -448,7 +452,7 @@ def loginByAccessToken():
         return
 
     print("-------------RefreshToken---------------")
-    refreshToken = Printf.enter("refreshToken('0' to skip):")
+    refreshToken = Printf.enterSecret("refreshToken('0' to skip):")
     if refreshToken == '0':
         refreshToken = None
 

@@ -38,42 +38,80 @@ def startGui():
         return 1
     return gui_module.main()
 
-def preMainCommand():
-    preArgs = []
-    previousArg = ""
-    for arg in sys.argv[1:]:
-        if (arg.startswith('--configPathOverride=') or arg.startswith('-c')
-                or arg == "--configPathOverride" or previousArg in ('-c', '--configPathOverride')):
-            preArgs.append(arg)
-        previousArg = arg
+SHORT_OPTIONS = "hvgl:o:q:r:c:"
+LONG_OPTIONS = [
+    "help", "version", "gui", "doctor", "update", "update-gui", "paths", "open-output",
+    "video-only", "videos-only", "link=", "output=", "quality=", "quality-priority=",
+    "resolution=", "configPathOverride=",
+]
 
-    opts, args = getopt.getopt(preArgs, "c:", ["configPathOverride="])
-    for opt, val in opts:
+
+def _command_options():
+    opts, args = getopt.getopt(sys.argv[1:], SHORT_OPTIONS, LONG_OPTIONS)
+    if args:
+        raise ValueError("Unexpected argument: " + args[0] + ". Use --link for a URL or file")
+    return opts
+
+
+def preMainCommand():
+    for opt, val in _command_options():
         if opt in ('-c', '--configPathOverride'):
+            val = os.path.expanduser(val)
             if not os.path.isdir(val):
                 raise ValueError("configPathOverride must be an existing directory")
             PATHS.homePathOverride = val
 
-def mainCommand():
-    """Parse CLI flags.
 
-    Returns:
-        int exit code when the CLI handled the request and should exit
-        None when the interactive menu should start
-    """
+def _command_settings(opts):
+    """Validate all options before changing or saving any profile values."""
+    from .enums import VideoQuality
+    values = {}
+    for opt, val in opts:
+        if opt in ('-o', '--output'):
+            if not val.strip() or '\x00' in val:
+                raise ValueError('Output folder must be a nonempty path')
+            values['downloadPath'] = os.path.expanduser(val)
+        elif opt in ('-q', '--quality'):
+            quality = SETTINGS.getAudioQualityOrNone(val)
+            if quality is None:
+                raise ValueError('Unknown audio quality: ' + val)
+            values.update(audioQuality=quality, audioQualityPriority=[])
+        elif opt == '--quality-priority':
+            entries = val.split(',')
+            if not entries or any(SETTINGS.getAudioQualityOrNone(item) is None for item in entries):
+                raise ValueError('Quality priority must contain valid, comma-separated qualities')
+            priority = SETTINGS.getAudioQualityPriority(entries)
+            values.update(audioQuality=priority[0], audioQualityPriority=priority)
+        elif opt in ('-r', '--resolution'):
+            normalized = val.strip().upper()
+            if not any(normalized in (item.name, str(item.value), str(item.value) + 'P') for item in VideoQuality):
+                raise ValueError('Unknown video resolution: ' + val)
+            values['videoQuality'] = SETTINGS.getVideoQuality(normalized)
+    return values
+
+
+def mainCommand():
+    """Return an exit code for a command, or None to open the menu."""
     try:
-        opts, args = getopt.getopt(sys.argv[1:],
-                                   "hvgl:o:q:r:c:",
-                                   [
-                                       "help", "version", "gui", "doctor",
-                                       "update", "update-gui",
-                                       "paths", "open-output",
-                                       "video-only", "videos-only",
-                                       "link=", "output=", "quality=", "quality-priority=",
-                                       "resolution=", "configPathOverride=",
-                                   ])
-    except getopt.GetoptError as errmsg:
-        Printf.err(vars(errmsg)['msg'] + ". Use 'tidekeeper -h' for usage.")
+        opts = _command_options()
+        if any(opt in ('-h', '--help') for opt, _ in opts):
+            Printf.usage()
+            return 0
+        if any(opt in ('-v', '--version') for opt, _ in opts):
+            Printf.logo()
+            return 0
+        values = _command_settings(opts)
+        if values:
+            previous = dict(SETTINGS.__dict__)
+            try:
+                SETTINGS.__dict__.update(values)
+                SETTINGS.save()
+            except OSError:
+                SETTINGS.__dict__.clear()
+                SETTINGS.__dict__.update(previous)
+                raise
+    except (getopt.GetoptError, ValueError, OSError) as error:
+        Printf.err(str(error) + ". Use 'tidekeeper -h' for usage.")
         return 1
 
     link = None
@@ -86,12 +124,6 @@ def mainCommand():
     videoOnly = False
 
     for opt, val in opts:
-        if opt in ('-h', '--help'):
-            Printf.usage()
-            return 0
-        if opt in ('-v', '--version'):
-            Printf.logo()
-            return 0
         if opt in ('-g', '--gui'):
             showGui = True
             continue
@@ -116,25 +148,6 @@ def mainCommand():
             continue
         if opt in ('-l', '--link'):
             link = val
-            continue
-        if opt in ('-o', '--output'):
-            SETTINGS.downloadPath = val
-            SETTINGS.save()
-            continue
-        if opt in ('-q', '--quality'):
-            SETTINGS.audioQuality = SETTINGS.getAudioQuality(val)
-            SETTINGS.audioQualityPriority = []
-            SETTINGS.save()
-            continue
-        if opt in ('--quality-priority',):
-            SETTINGS.audioQualityPriority = SETTINGS.getAudioQualityPriority(val)
-            if SETTINGS.audioQualityPriority:
-                SETTINGS.audioQuality = SETTINGS.audioQualityPriority[0]
-            SETTINGS.save()
-            continue
-        if opt in ('-r', '--resolution'):
-            SETTINGS.videoQuality = SETTINGS.getVideoQuality(val)
-            SETTINGS.save()
             continue
 
     if showDoctor:
@@ -226,8 +239,25 @@ def updateTidekeeper(include_gui=False):
 
 
 def main():
+    try:
+        return _main()
+    except KeyboardInterrupt:
+        Printf.info('Cancelled. Partial transfers are kept for retry.')
+        return 130
+    except EOFError:
+        return 0
+    except OSError as error:
+        Printf.err(str(error))
+        return 1
+
+
+def _main():
     if len(sys.argv) > 1:
         try:
+            opts = _command_options()
+            if any(opt in ('-h', '--help', '-v', '--version') for opt, _ in opts):
+                return mainCommand()
+            _command_settings(opts)
             preMainCommand()
         except (getopt.GetoptError, ValueError) as exc:
             Printf.err(str(exc) + ". Use 'tidekeeper -h' for usage.")

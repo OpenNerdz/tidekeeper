@@ -500,7 +500,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 events.TIDAL_API.key.countryCode = "GB"
                 events.TIDAL_API.key.accessToken = access_token
 
-            with mock.patch.object(events.Printf, "enter", side_effect=["access-token", "0"]), \
+            with mock.patch.object(events.Printf, "enterSecret", side_effect=["access-token", "0"]), \
                  mock.patch.object(events.TIDAL_API, "loginByAccessToken", fake_login), \
                  mock.patch.object(events.TOKEN, "save"):
                 events.loginByAccessToken()

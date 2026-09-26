@@ -193,12 +193,12 @@ def getPlaylistPath(playlist):
 
 
 def getTrackPath(track, stream, album=None, playlist=None):
-    base = (SETTINGS.downloadPath or '.').rstrip('/') or '.'
+    base = os.path.normpath(os.path.expanduser(SETTINGS.downloadPath or '.'))
     number = str(track.trackNumber).rjust(2, '0')
     if album is not None:
         base = getAlbumPath(album)
         if int(getattr(album, 'numberOfVolumes', 0) or 0) > 1:
-            base += f'/CD{str(track.volumeNumber)}'
+            base += '/CD' + __fixPath__(str(track.volumeNumber or 1))
 
     if playlist is not None and SETTINGS.usePlaylistFolder:
         base = getPlaylistPath(playlist)
@@ -249,7 +249,7 @@ def getTrackPath(track, stream, album=None, playlist=None):
     retpath = retpath.strip()
     if __isAtmosStream__(stream) and SETTINGS.audioQuality == AudioQuality.Atmos and not hasStreamIdentifier:
         retpath += " [Dolby Atmos]"
-    return f"{base}/{__safeMediaPath__(retpath, extension)}"
+    return os.path.join(base, __safeMediaPath__(retpath, extension))
 
 
 def getVideoPath(video, album=None, playlist=None):
@@ -290,7 +290,7 @@ def getVideoPath(video, album=None, playlist=None):
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{VideoYear}", year)
     retpath = retpath.replace(R"{VideoID}", str(video.id))
-    return f"{base}/{__safeMediaPath__(retpath.strip(), extension)}"
+    return os.path.join(base, __safeMediaPath__(retpath.strip(), extension))
 
 def openPath(path):
     target = os.path.abspath(os.path.expanduser(path or SETTINGS.downloadPath))

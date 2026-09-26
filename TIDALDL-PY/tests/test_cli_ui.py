@@ -284,8 +284,7 @@ class CliUiTests(unittest.TestCase):
         with mock.patch("sys.argv", ["tidekeeper", "-c", config_home]), \
              mock.patch("tidal_dl.loginByWeb"), \
              mock.patch("tidal_dl.Printf.choices", side_effect=KeyboardInterrupt) as choices:
-            with self.assertRaises(KeyboardInterrupt):
-                tidal_dl.main()
+            self.assertEqual(tidal_dl.main(), 130)
         choices.assert_called()
         self.assertEqual(PATHS.__getHomePath__(), config_home)
         self.assertTrue(Path(PATHS.getLogPath()).is_file())

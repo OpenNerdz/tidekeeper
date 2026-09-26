@@ -15,6 +15,7 @@ import logging
 import requests
 import prettytable
 import shutil
+import getpass
 
 from . import apiKey as apiKey
 
@@ -27,7 +28,7 @@ from .environment import isTermux
 from .lang.language import LANG
 
 
-VERSION = '2026.9.24.1'
+VERSION = '2026.9.26.0'
 PROJECT_URL = 'https://github.com/OpenNerdz/tidekeeper'
 
 print_mutex = threading.Lock()
@@ -226,6 +227,10 @@ class Printf(object):
         aigpy.cmd.colorPrint(string, aigpy.cmd.TextColor.Yellow, None)
         ret = input("")
         return ret
+
+    @staticmethod
+    def enterSecret(string):
+        return getpass.getpass(string + ' ')
 
     @staticmethod
     def enterBool(string):
