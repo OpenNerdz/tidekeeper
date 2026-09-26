@@ -1,5 +1,6 @@
 """Validate the media tool boundary with generated, freely reusable fixtures."""
 import json
+import copy
 from pathlib import Path
 import shutil
 import subprocess
@@ -7,8 +8,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+import requests
+
 from tidal_dl import download
-from tidal_dl.model import StreamUrl
+from tidal_dl.model import StreamUrl, Video, VideoStreamUrl
 from tidal_dl.settings import SETTINGS
 
 
@@ -70,6 +73,52 @@ class MediaToolIntegrationTests(unittest.TestCase):
                                  'stream=codec_type', '-of', 'json', str(target)],
                                 check=True, capture_output=True, timeout=30, text=True)
         self.assertEqual(json.loads(result.stdout)['streams'][0]['codec_type'], 'video')
+
+    def test_generated_vod_without_end_marker_downloads_to_complete_mp4(self):
+        playlist = self.root / 'index.m3u8'
+        self.generate('-f', 'lavfi', '-i', 'color=c=blue:s=96x64:r=10:d=2',
+                      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+                      '-c:v', 'mpeg2video', '-c:a', 'aac', '-hls_time', '1',
+                      '-hls_playlist_type', 'vod', '-hls_segment_filename',
+                      str(self.root / 'part%03d.ts'), '-f', 'hls', str(playlist))
+        content = playlist.read_bytes().replace(b'#EXT-X-ENDLIST', b'')
+        self.assertIn(b'#EXT-X-PLAYLIST-TYPE:VOD', content)
+        sources = {'index.m3u8': content}
+        sources.update((path.name, path.read_bytes()) for path in self.root.glob('*.ts'))
+        responses = []
+        def media_response(method, url, **kwargs):
+            result = requests.Response()
+            result.status_code = 200
+            result.url = url
+            result._content = sources[url.rsplit('/', 1)[-1]]
+            result._content_consumed = True
+            result.headers['Content-Length'] = str(len(result._content))
+            responses.append(result)
+            return result
+        video = Video()
+        video.id, video.title, video.duration = 1, 'Generated video', 2
+        stream = VideoStreamUrl()
+        stream.m3u8Url = 'https://cdn.example/index.m3u8'
+        target = self.root / 'complete.mp4'
+        saved = copy.deepcopy(SETTINGS.__dict__)
+        try:
+            SETTINGS.checkExist = SETTINGS.showProgress = False
+            with mock.patch.object(download.TIDAL_API, 'getVideoStreamUrl', return_value=stream), \
+                    mock.patch.object(download, 'getVideoPath', return_value=str(target)), \
+                    mock.patch.object(download, '__httpRequest__', side_effect=media_response), \
+                    mock.patch.object(download.Printf, 'video'):
+                ok, message = download.downloadVideo(video)
+            self.assertTrue(ok, message)
+            result = subprocess.run([shutil.which('ffprobe'), '-v', 'error', '-show_entries',
+                                     'format=duration:stream=codec_type', '-of', 'json', str(target)],
+                                    check=True, capture_output=True, timeout=30, text=True)
+            facts = json.loads(result.stdout)
+            self.assertGreaterEqual(float(facts['format']['duration']), 1.9)
+            self.assertEqual({item['codec_type'] for item in facts['streams']}, {'audio', 'video'})
+            self.assertEqual(len(responses), len(sources))
+        finally:
+            SETTINGS.__dict__.clear()
+            SETTINGS.__dict__.update(saved)
 
 
 if __name__ == '__main__':

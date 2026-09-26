@@ -227,8 +227,16 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         root_layout.addWidget(self._build_header())
+        self.shutdown_notice = label('', 'ShutdownNotice')
+        self.shutdown_notice.setTextFormat(Qt.PlainText)
+        self.shutdown_notice.setWordWrap(True)
+        self.shutdown_notice.setAccessibleName('Closing Tidekeeper')
+        self.shutdown_notice.setContentsMargins(12, 8, 12, 8)
+        self.shutdown_notice.hide()
+        root_layout.addWidget(self.shutdown_notice)
 
-        body = QHBoxLayout()
+        self.body = QWidget()
+        body = QHBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
@@ -250,7 +258,7 @@ class MainWindow(QMainWindow):
         body.addWidget(workspace, 1)
 
         body.addWidget(self._build_inspector())
-        root_layout.addLayout(body, 1)
+        root_layout.addWidget(self.body, 1)
         self.setCentralWidget(root)
 
     def _build_header(self) -> QFrame:
@@ -1845,6 +1853,20 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._close_pending = True
+        updating = any(getattr(worker, 'fn', None) == self.backend.update_app
+                       for worker in self.active_workers)
+        if updating:
+            message = 'Closing after the update finishes. Please keep Tidekeeper open while installed files are replaced.'
+        elif self.download_in_progress:
+            message = 'Closing Tidekeeper — cancelling downloads. Waiting for active requests to finish; partial files are kept for retry.'
+        else:
+            message = 'Closing Tidekeeper — waiting for background requests to finish.'
+        self.shutdown_notice.setText(message)
+        self.shutdown_notice.show()
+        self.setWindowTitle('Tidekeeper — closing…')
+        self.body.setEnabled(False)
+        for shortcut in self.findChildren(QShortcut):
+            shortcut.setEnabled(False)
         if self.download_in_progress:
             self.cancel_downloads()
             event.ignore()

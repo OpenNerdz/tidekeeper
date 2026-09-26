@@ -815,6 +815,52 @@ class GuiQueueTests(unittest.TestCase):
         self.window.append_download_log('access_token=sample-secret\n')
         self.assertNotIn('sample-secret', self.window.download_log.toPlainText())
 
+    def test_schemeless_links_resolve_from_desktop_links_and_search(self):
+        from tidal_dl.gui_app.backend import TidekeeperBackend, TIDAL_API
+        from tidal_dl.model import Track
+        item = Track()
+        item.id, item.title = 1, 'Test song'
+        backend = TidekeeperBackend()
+        self.window.direct_text.setPlainText('listen.tidal.com/track/1')
+        queued = self.window.direct_items_from_input()
+        self.assertEqual(len(queued), 1)
+        with mock.patch.object(TIDAL_API, 'getTypeData', return_value=item) as lookup, \
+                mock.patch.object(backend, '_ensure_catalog_session'):
+            kind, resolved = TIDAL_API.getByString(queued[0].source)
+            self.assertEqual(kind, self.Type.Track)
+            self.assertIs(resolved, item)
+            results = backend.search('listen.tidal.com/track/1', self.Type.Null)
+        self.assertEqual(results[0].identifier, '1')
+        self.assertEqual(lookup.call_count, 2)
+
+    def test_close_explains_download_wait_and_disables_new_work(self):
+        from PySide6.QtGui import QShortcut
+        self.window.show()
+        self.window.download_in_progress = True
+        with mock.patch.object(self.window, 'cancel_downloads') as cancel:
+            self.assertFalse(self.window.close())
+        cancel.assert_called_once()
+        self.assertTrue(self.window.shutdown_notice.isVisible())
+        self.assertIn('cancelling downloads', self.window.shutdown_notice.text())
+        self.assertIn('partial files', self.window.shutdown_notice.text())
+        self.assertFalse(self.window.body.isEnabled())
+        self.assertTrue(all(not shortcut.isEnabled() for shortcut in self.window.findChildren(QShortcut)))
+
+    def test_close_explains_update_wait_without_cancelling_pip(self):
+        from tidal_dl.gui_app.workers import TaskWorker
+        worker = TaskWorker(self.backend.update_app)
+        self.window.active_workers.add(worker)
+        self.window.show()
+        try:
+            with mock.patch.object(worker, 'cancel') as cancel:
+                self.assertFalse(self.window.close())
+            cancel.assert_not_called()
+            self.assertTrue(self.window.shutdown_notice.isVisible())
+            self.assertIn('update finishes', self.window.shutdown_notice.text())
+            self.assertFalse(self.window.body.isEnabled())
+        finally:
+            self.window.active_workers.remove(worker)
+
 
 if __name__ == "__main__":
     unittest.main()

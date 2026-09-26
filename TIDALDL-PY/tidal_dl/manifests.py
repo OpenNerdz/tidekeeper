@@ -68,7 +68,9 @@ def hls_segments(content, base_url):
             raise ValueError('HLS manifest has too many segments.')
     if not lines or lines[0] != '#EXTM3U':
         raise ValueError('Invalid HLS playlist header.')
-    if '#EXT-X-ENDLIST' not in lines:
+    # RFC 8216 section 4.3.3.5: VOD playlists cannot change. They are
+    # complete even when a provider omits the end marker.
+    if '#EXT-X-ENDLIST' not in lines and '#EXT-X-PLAYLIST-TYPE:VOD' not in lines:
         raise ValueError('Live or unfinished HLS playlists are not supported.')
     return urls
 

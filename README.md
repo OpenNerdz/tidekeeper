@@ -162,6 +162,11 @@ unfinished/live HLS playlists, and multi-period DASH are reported as unsupported
 instead of being saved as complete downloads. Invalid terminal quality or
 resolution choices leave your saved settings unchanged.
 
+TIDAL links may omit `https://`, for example `tidal.com/browse/album/123` or
+`listen.tidal.com/track/1`. This works in commands, batch lists, and the desktop.
+HLS playlists explicitly marked `VOD` are treated as complete even when the
+provider omits the end marker.
+
 Dolby Atmos is optional because it is often a separate version of an album or
 track. Select **Atmos** in the desktop app or use:
 

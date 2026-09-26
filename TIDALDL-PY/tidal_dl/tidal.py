@@ -173,6 +173,7 @@ class TidalAPI(object):
         self._tokenRefreshLock = Lock()
         self._authStateLock = RLock()
         self._sessionGeneration = 0
+        self._deviceLoginGeneration = 0
         # Serialize stream-manifest resolution so multi-thread downloads do not
         # stampede playback/OpenAPI endpoints.
         self._streamResolveLock = Lock()
@@ -186,6 +187,7 @@ class TidalAPI(object):
         """Invalidate pending logins and all account/client-dependent caches."""
         with self._authStateLock:
             self._sessionGeneration += 1
+            self._deviceLoginGeneration += 1
             self.key = LoginKey()
             self.clearSessionCaches()
 
@@ -747,8 +749,17 @@ class TidalAPI(object):
             data['client_secret'] = self.apiKey['clientSecret']
         return data
 
+    def cancelDeviceLogin(self):
+        """Cancel only the pending device grant, leaving saved-session work valid."""
+        with self._authStateLock:
+            self._deviceLoginGeneration += 1
+            self.key.deviceCode = None
+            self.key.userCode = None
+
     def getDeviceCode(self) -> str:
-        generation = self._sessionGeneration
+        with self._authStateLock:
+            self.cancelDeviceLogin()
+            generation = self._deviceLoginGeneration
         result = self.__post__('/device_authorization', self.__oauthData__())
         if 'status' in result and result['status'] != 200:
             raise Exception("Device authorization failed. Please choose another apikey.")
@@ -762,7 +773,7 @@ class TidalAPI(object):
                 or parsed.port not in (None, 443)):
             raise TidalApiError('Device authorization returned an invalid sign-in address.')
         with self._authStateLock:
-            if generation != self._sessionGeneration:
+            if generation != self._deviceLoginGeneration:
                 raise TidalApiError('Login cancelled.')
             self.key.deviceCode = result['deviceCode']
             self.key.userCode = result['userCode']
@@ -772,15 +783,22 @@ class TidalAPI(object):
             return self.key.verificationUrl + '/' + quote(str(self.key.userCode), safe='')
 
     def checkAuthStatus(self) -> bool:
-        generation = self._sessionGeneration
+        with self._authStateLock:
+            generation = self._deviceLoginGeneration
+            device_code = self.key.deviceCode
         result = self.__post__('/token', self.__oauthData__(
-            device_code=self.key.deviceCode,
+            device_code=device_code,
             grant_type='urn:ietf:params:oauth:grant-type:device_code',
         ))
+        with self._authStateLock:
+            if generation != self._deviceLoginGeneration:
+                return False
         error = result.get('error')
         if error in ('authorization_pending', 'slow_down'):
             if error == 'slow_down':
-                self.key.authCheckInterval = min(300, int(self.key.authCheckInterval or 5) + 5)
+                with self._authStateLock:
+                    if generation == self._deviceLoginGeneration:
+                        self.key.authCheckInterval = min(300, int(self.key.authCheckInterval or 5) + 5)
             return False
         if error in ('expired_token', 'access_denied'):
             raise Exception("Login code expired. Start login again.")
@@ -791,8 +809,9 @@ class TidalAPI(object):
 
         # if auth is successful:
         with self._authStateLock:
-            if generation != self._sessionGeneration:
+            if generation != self._deviceLoginGeneration:
                 return False
+            self._sessionGeneration += 1
             self.clearSessionCaches()
             self.key.userId = result['user']['userId']
             self.key.countryCode = result['user']['countryCode']
@@ -1867,8 +1886,11 @@ class TidalAPI(object):
 
     def parseUrl(self, url):
         url = str(url).strip()
+        candidate = url
+        if re.match(r'(?i)^(?:www\.|listen\.)?tidal\.com(?=[:/]|$)', candidate):
+            candidate = 'https://' + candidate
         try:
-            parsed = urlparse(url)
+            parsed = urlparse(candidate)
             hostname = (parsed.hostname or '').lower()
             valid = (parsed.scheme.lower() in ('https', 'http')
                      and hostname in ('tidal.com', 'www.tidal.com', 'listen.tidal.com')
