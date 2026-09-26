@@ -26,7 +26,7 @@ This verifies one real catalog sample, not every TIDAL video or entitlement.
 
 ## Checks
 
-489 tests pass locally with Qt and FFmpeg enabled. Ruff, compilation, desktop
+490 tests pass locally with Qt and FFmpeg enabled. Ruff, compilation, desktop
 screenshots, and dependency auditing also pass. Native locking regressions are
 part of each Linux, macOS, and Windows release build; CI and artifact results are
 linked from the pull request and release.

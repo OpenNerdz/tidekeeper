@@ -325,8 +325,21 @@ with output_lock(sys.argv[1]):
             child.terminate()
             child.communicate(timeout=10)
         self.assertFalse(runtime._output_locks)
+
         with runtime.output_lock(target), runtime.output_lock(target), runtime.output_lock(str(self.root / 'SHARED')):
             self.assertTrue(runtime._output_locks)
+        self.assertFalse(runtime._output_locks)
+
+    def test_distinct_directories_keep_distinct_os_locks(self):
+        first, second = self.root / 'Folder', self.root / 'folder'
+        first.mkdir()
+        second.mkdir(exist_ok=True)
+        if os.path.samefile(first, second):
+            self.skipTest('Filesystem does not distinguish directory case')
+        with runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
+            self.assertEqual(len(runtime._output_locks), 2)
+            self.assertEqual(len(list(first.rglob('*.lock'))), 1)
+            self.assertEqual(len(list(second.rglob('*.lock'))), 1)
         self.assertFalse(runtime._output_locks)
 
 

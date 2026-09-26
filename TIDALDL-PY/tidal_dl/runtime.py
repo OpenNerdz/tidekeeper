@@ -48,10 +48,11 @@ def output_lock(path):
     """Serialize destination writers across threads and cooperating processes."""
     key = os.path.normcase(os.path.realpath(path))
     directory = os.path.join(os.path.dirname(key), '.tidekeeper-locks')
-    # Case-fold only the lock identity, not the actual output directory. This
-    # also serializes case aliases on case-insensitive macOS filesystems.
-    key = key.casefold()
-    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(key)).hexdigest() + '.lock')
+    # Conservatively serialize filename case aliases, but keep distinct output
+    # directories distinct on case-sensitive filesystems.
+    name = os.path.basename(key).casefold()
+    key = os.path.join(os.path.dirname(key), name)
+    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(name)).hexdigest() + '.lock')
     with _output_locks_guard:
         if key not in _output_locks:
             _output_locks[key] = (RLock(), FileLock(lock_path, mode=0o600,
