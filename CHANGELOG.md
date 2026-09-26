@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 2026.9.26.1 - 2026-09-26
+
+- Restore scheme-less TIDAL links in terminal commands, batch lists, desktop
+  Links, and search while retaining exact-host and media-ID validation.
+- Cancel device login independently of saved-session work, so searches and token
+  refreshes can finish normally. Keep stale device replies from changing login
+  state or polling intervals.
+- Show a persistent closing message while downloads or background work stop,
+  explain when an update must finish, and disable new work while closing.
+- Accept immutable HLS playlists marked `VOD` without an end marker, while
+  continuing to reject unfinished/live playlists. Exercise the full video
+  download/finalization path with generated HLS and real FFmpeg.
+- Extend destination locks across Tidekeeper instances with cancellable OS file
+  locks. Test competing track/video writers through completion receipts, process
+  cancellation, and lock release after a process exits on every build platform.
+- Preserve valid partial downloads when a server unexpectedly compresses its
+  response. Cover encoding, range, and HTTPS redirect checks with regressions.
+
 ## 2026.9.26.0 - 2026-09-26
 
 - Make device login cancellable, ignore stale login replies, honor polling

@@ -73,6 +73,12 @@ QToolTip {
     border-radius: 4px;
 }
 
+QLabel#ShutdownNotice {
+    color: %(warning)s;
+    background: %(warning_soft)s;
+    border-bottom: 1px solid %(warning)s;
+}
+
 /* ----------------------------------------------------------------- header */
 
 QFrame#Header {

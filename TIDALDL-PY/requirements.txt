@@ -4,3 +4,4 @@ requests>=2.34.2
 pycryptodome>=3.23.0
 prettytable>=3.18.0
 defusedxml>=0.7.1
+filelock>=4.0.3

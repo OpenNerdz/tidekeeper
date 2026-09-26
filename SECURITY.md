@@ -45,8 +45,11 @@ protocol only. Keep these separately installed tools updated through your
 operating system. Tidekeeper's dependency audit does not scan external binaries.
 
 Output filenames are sanitized and writers to the same destination are
-serialized within one Tidekeeper process. Use separate output directories for
-independent instances that may download the same content. The application runs
+serialized across cooperating Tidekeeper instances using OS file locks through
+`filelock`. Lock metadata is retained in hidden `.tidekeeper-locks` directories;
+do not delete it while instances are running. Locks are released when a process
+exits, including after a crash. Use a local filesystem with working OS locking;
+other programs and older Tidekeeper versions do not honor these locks. The application runs
 with your user's filesystem permissions; use trusted configuration/output
 directories and do not run it as an administrator.
 

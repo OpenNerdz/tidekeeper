@@ -2,6 +2,7 @@
 import builtins
 import contextlib
 import contextvars
+import hashlib
 import logging
 import logging.handlers
 import os
@@ -9,6 +10,8 @@ import re
 import subprocess
 import time
 from threading import Lock, RLock
+
+from filelock import FileLock, Timeout as FileLockTimeout
 
 _output = contextvars.ContextVar('tidekeeper_output', default=None)
 _cancel = contextvars.ContextVar('tidekeeper_cancel', default=None)
@@ -42,27 +45,48 @@ def check_cancelled():
 
 @contextlib.contextmanager
 def output_lock(path):
-    """Serialize writers to one destination without blocking cancellation."""
+    """Serialize destination writers across threads and cooperating processes."""
     key = os.path.normcase(os.path.realpath(path))
+    directory = os.path.join(os.path.dirname(key), '.tidekeeper-locks')
+    # Case-fold only the lock identity, not the actual output directory. This
+    # also serializes case aliases on case-insensitive macOS filesystems.
+    key = key.casefold()
+    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(key)).hexdigest() + '.lock')
     with _output_locks_guard:
-        lock, users = _output_locks.get(key, (RLock(), 0))
-        _output_locks[key] = lock, users + 1
-    acquired = False
+        if key not in _output_locks:
+            _output_locks[key] = (RLock(), FileLock(lock_path, mode=0o600,
+                                                  preserve_lock_file=True, fallback_to_soft=False), 0)
+        lock, file_lock, users = _output_locks[key]
+        _output_locks[key] = lock, file_lock, users + 1
+    acquired = file_acquired = False
     try:
         while not acquired:
             check_cancelled()
             acquired = lock.acquire(timeout=0.1)
         check_cancelled()
+        os.makedirs(directory, exist_ok=True)
+        while not file_acquired:
+            check_cancelled()
+            try:
+                file_lock.acquire(timeout=0)
+                file_acquired = True
+            except FileLockTimeout:
+                sleep(0.1)
+        check_cancelled()
         yield
     finally:
-        if acquired:
-            lock.release()
-        with _output_locks_guard:
-            remaining = _output_locks[key][1] - 1
-            if remaining:
-                _output_locks[key] = lock, remaining
-            else:
-                del _output_locks[key]
+        try:
+            if file_acquired:
+                file_lock.release()
+        finally:
+            if acquired:
+                lock.release()
+            with _output_locks_guard:
+                remaining = _output_locks[key][2] - 1
+                if remaining:
+                    _output_locks[key] = lock, file_lock, remaining
+                else:
+                    del _output_locks[key]
 
 
 def sleep(seconds):

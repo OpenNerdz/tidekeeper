@@ -412,21 +412,18 @@ class TidekeeperBackend:
         )
 
     def poll_device_login(self) -> AuthStatus:
-        generation = TIDAL_API._sessionGeneration
+        generation = TIDAL_API._deviceLoginGeneration
         if not TIDAL_API.checkAuthStatus():
             return replace(self.auth_status(), fresh_login=False,
                            poll_interval=int(TIDAL_API.key.authCheckInterval or 5))
         with TIDAL_API._authStateLock:
-            if generation != TIDAL_API._sessionGeneration:
+            if generation != TIDAL_API._deviceLoginGeneration:
                 return replace(self.auth_status(), fresh_login=False)
             self._save_api_login_key_to_token(TIDAL_API.keyExpiresAfter())
         return replace(self.auth_status(), fresh_login=True)
 
     def cancel_device_login(self):
-        with TIDAL_API._authStateLock:
-            TIDAL_API._sessionGeneration += 1
-            TIDAL_API.key.deviceCode = None
-            TIDAL_API.key.userCode = None
+        TIDAL_API.cancelDeviceLogin()
 
     def logout(self) -> AuthStatus:
         logout(revoke=self.defer_session_revocation)
@@ -444,8 +441,8 @@ class TidekeeperBackend:
             return [self.direct_item(text)]
 
         self._ensure_catalog_session()
-        if text.lower().startswith(('http://', 'https://')):
-            parsed_kind, item_id = TIDAL_API.parseUrl(text)
+        parsed_kind, item_id = TIDAL_API.parseUrl(text)
+        if parsed_kind != Type.Null or text.lower().startswith(('http://', 'https://')):
             if parsed_kind == Type.Null:
                 raise ValueError('Enter a valid TIDAL catalog URL.')
             item = TIDAL_API.getTypeData(item_id, parsed_kind)

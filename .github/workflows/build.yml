@@ -69,6 +69,12 @@ jobs:
           rm -rf dist build release-assets *.egg-info tidekeeper.spec tidekeeper-gui.spec
         working-directory: TIDALDL-PY
 
+      - name: Check download locking and release regressions on this platform
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -p test_release_followup.py
+        working-directory: TIDALDL-PY
+
       - name: Build tidekeeper
         run: pyinstaller -F tidal_dl/__main__.py -n tidekeeper
         working-directory: TIDALDL-PY

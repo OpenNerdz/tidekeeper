@@ -467,6 +467,8 @@ def __downloadSingleUrl__(
         response = None
         try:
             response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True, headers=headers)
+            if response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity'):
+                raise ValueError('The media server returned an encoded response that cannot be resumed safely.')
             mode = "wb"
             if resumeSize > 0:
                 rangeStart = __contentRangeStart__(response)
