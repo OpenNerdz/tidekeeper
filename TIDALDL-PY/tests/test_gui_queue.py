@@ -716,5 +716,105 @@ class GuiQueueTests(unittest.TestCase):
         self.assertIn('No results', self.window.results_empty._label.text())
 
 
+    def test_manual_login_success_clears_sensitive_fields(self):
+        self.window.access_token.setText('sample-access')
+        self.window.refresh_token.setText('sample-refresh')
+        self.window._manual_login_succeeded(self.backend.auth_status())
+        self.assertEqual(self.window.access_token.text(), '')
+        self.assertEqual(self.window.refresh_token.text(), '')
+
+    def test_device_login_can_be_cancelled_without_signing_out(self):
+        from tidal_dl.gui_app.backend import AuthChallenge
+        self.window._device_login_started(AuthChallenge('https://link.tidal.com/code', 'code', 300, 5))
+        self.assertEqual(self.window.device_login_button.text(), 'Cancel login')
+        with mock.patch.object(self.backend, 'cancel_device_login') as cancel, \
+                mock.patch.object(self.backend, 'logout') as logout:
+            self.window.start_device_login()
+        cancel.assert_called_once()
+        logout.assert_not_called()
+        self.assertFalse(self.window.login_polling)
+        self.assertFalse(self.window.poll_timer.isActive())
+        self.assertEqual(self.window.device_login_button.text(), 'Start device login')
+
+    def test_late_poll_cannot_complete_or_unlock_a_new_login(self):
+        from tidal_dl.gui_app.backend import AuthChallenge, AuthStatus
+        challenge = AuthChallenge('https://link.tidal.com/code', 'code', 300, 5)
+        self.window._device_login_started(challenge)
+        workers = []
+        with mock.patch.object(self.window, 'start_worker', side_effect=workers.append):
+            self.window._poll_device_login()
+        self.window._stop_device_login('')
+        self.window._device_login_started(challenge)
+        self.window.login_poll_inflight = True
+        workers[0].signals.result.emit(AuthStatus('user', 'US', 0, True, fresh_login=True))
+        workers[0].signals.finished.emit()
+        self.assertTrue(self.window.login_polling)
+        self.assertTrue(self.window.login_poll_inflight)
+
+    def test_device_poll_honors_server_slow_down(self):
+        from tidal_dl.gui_app.backend import AuthChallenge, AuthStatus
+        self.window._device_login_started(AuthChallenge('https://link.tidal.com/code', 'code', 300, 5))
+        self.window._device_login_polled(AuthStatus(None, None, 0, False, poll_interval=10))
+        self.assertEqual(self.window.poll_timer.interval(), 10000)
+
+    def test_downloading_waits_for_initial_device_request(self):
+        self.window._device_request_inflight = True
+        with mock.patch.object(self.window, 'start_worker') as start:
+            self.window.start_downloads([self.backend.direct_item('123')])
+        start.assert_not_called()
+        self.assertFalse(self.window.download_in_progress)
+
+    def test_account_action_blocks_download_and_client_changes(self):
+        self.window._account_busy = True
+        self.window.update_action_states()
+        self.assertFalse(self.window.pages['settings'].isEnabled())
+        with mock.patch.object(self.window, 'start_worker') as start:
+            self.window.start_downloads([self.backend.direct_item('123')])
+        start.assert_not_called()
+        self.window._account_action_finished()
+        self.assertTrue(self.window.pages['settings'].isEnabled())
+
+    def test_refresh_saved_login_cancels_pending_device_login(self):
+        from tidal_dl.gui_app.backend import AuthChallenge
+        self.window._device_login_started(AuthChallenge('https://link.tidal.com/code', 'code', 300, 5))
+        workers = []
+        with mock.patch.object(self.backend, 'cancel_device_login') as cancel, \
+                mock.patch.object(self.window, 'start_worker', side_effect=workers.append):
+            self.window.refresh_saved_login()
+        cancel.assert_called_once()
+        self.assertFalse(self.window.login_polling)
+        self.assertFalse(self.window.poll_timer.isActive())
+        self.assertTrue(self.window._account_busy)
+        workers[0].signals.finished.emit()
+        self.assertFalse(self.window._account_busy)
+
+    def test_close_cancels_background_workers_and_waits_for_cleanup(self):
+        import time
+        import threading
+        from tidal_dl.runtime import sleep
+        from tidal_dl.gui_app.workers import TaskWorker
+        running = threading.Event()
+
+        def slow_work():
+            running.set()
+            sleep(10)
+
+        self.window.show()
+        worker = TaskWorker(slow_work)
+        self.window.start_worker(worker)
+        self.assertTrue(running.wait(2))
+        self.assertFalse(self.window.close())
+        deadline = time.monotonic() + 2
+        while (self.window.active_workers or self.window.isVisible()) and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.005)
+        self.assertFalse(self.window.active_workers)
+        self.assertFalse(self.window.isVisible())
+
+    def test_public_download_log_redacts_credentials(self):
+        self.window.append_download_log('access_token=sample-secret\n')
+        self.assertNotIn('sample-secret', self.window.download_log.toPlainText())
+
+
 if __name__ == "__main__":
     unittest.main()

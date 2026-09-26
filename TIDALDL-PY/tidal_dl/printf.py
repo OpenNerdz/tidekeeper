@@ -15,6 +15,7 @@ import logging
 import requests
 import prettytable
 import shutil
+import getpass
 
 from . import apiKey as apiKey
 
@@ -226,6 +227,10 @@ class Printf(object):
         aigpy.cmd.colorPrint(string, aigpy.cmd.TextColor.Yellow, None)
         ret = input("")
         return ret
+
+    @staticmethod
+    def enterSecret(string):
+        return getpass.getpass(string + ' ')
 
     @staticmethod
     def enterBool(string):

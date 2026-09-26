@@ -330,6 +330,7 @@ class EmptyOverlay(QObject):
         super().__init__(table)
         self._table = table
         self._label = QLabel(text, table.viewport())
+        self._label.setTextFormat(Qt.PlainText)
         self._label.setObjectName("EmptyOverlay")
         self._label.setAlignment(Qt.AlignCenter)
         self._label.setWordWrap(True)

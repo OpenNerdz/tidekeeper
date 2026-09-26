@@ -4,6 +4,10 @@ from pathlib import Path
 
 from .runtime import check_cancelled
 
+MAX_LIST_BYTES = 8 * 1024 * 1024
+MAX_LIST_FILES = 4096
+MAX_INPUTS = 50000
+
 
 def parse_direct_inputs(text, _seen_files=None):
     """Expand text lists without recursion; retain input order and deduplicate.
@@ -15,6 +19,9 @@ def parse_direct_inputs(text, _seen_files=None):
     seen = set()
     tokens = []
     pending = [(str(text or '').strip(), Path.cwd())]
+    total_bytes = len(pending[0][0].encode('utf-8'))
+    if total_bytes > MAX_LIST_BYTES:
+        raise ValueError('URL list is too large (maximum 8 MiB).')
     while pending:
         check_cancelled()
         value, directory = pending.pop()
@@ -33,9 +40,16 @@ def parse_direct_inputs(text, _seen_files=None):
             path = candidate.resolve()
             if path in seen_files:
                 continue
+            if len(seen_files) >= MAX_LIST_FILES:
+                raise ValueError('URL list includes too many files.')
             seen_files.add(path)
             try:
-                content = path.read_text(encoding='utf-8-sig')
+                with path.open('rb') as source:
+                    data = source.read(MAX_LIST_BYTES - total_bytes + 1)
+                total_bytes += len(data)
+                if total_bytes > MAX_LIST_BYTES:
+                    raise ValueError('URL lists exceed the total size limit (8 MiB).')
+                content = data.decode('utf-8-sig')
             except (OSError, UnicodeError) as error:
                 raise ValueError(f'Unable to read URL list {path}: {error}') from error
             pending.extend((line.strip(), path.parent) for line in reversed(content.splitlines()))
@@ -51,6 +65,8 @@ def parse_direct_inputs(text, _seen_files=None):
             pending.extend((word, directory) for word in reversed(words))
             continue
         if value not in seen:
+            if len(tokens) >= MAX_INPUTS:
+                raise ValueError('URL list contains too many items.')
             seen.add(value)
             tokens.append(value)
     return tokens

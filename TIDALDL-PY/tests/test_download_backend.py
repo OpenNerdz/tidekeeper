@@ -117,7 +117,7 @@ class DownloadBackendTests(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertEqual(output_file.read_bytes(), b"first-second")
         self.assertFalse(partial_file.exists())
-        self.assertEqual(request.call_args.kwargs["headers"], {"Range": "bytes=6-"})
+        self.assertEqual(request.call_args.kwargs["headers"], {"Accept-Encoding": "identity", "Range": "bytes=6-"})
 
     def test_single_url_download_resumes_after_stream_failure(self):
         output_file = self.root / "retried.out"
@@ -156,7 +156,7 @@ class DownloadBackendTests(unittest.TestCase):
 
         self.assertTrue(ok, msg)
         self.assertEqual(output_file.read_bytes(), payload)
-        self.assertEqual(request.call_args_list[1].kwargs["headers"], {"Range": "bytes=6-"})
+        self.assertEqual(request.call_args_list[1].kwargs["headers"], {"Accept-Encoding": "identity", "Range": "bytes=6-"})
 
     def test_single_url_mismatched_partial_rerequests_full_body(self):
         """If a Range response is not a matching 206, do not write its body as complete."""
@@ -192,8 +192,8 @@ class DownloadBackendTests(unittest.TestCase):
         self.assertEqual(output_file.read_bytes(), b"complete-body")
         self.assertTrue(bad_partial.closed)
         self.assertEqual(len(request.call_args_list), 2)
-        self.assertEqual(request.call_args_list[0].kwargs.get("headers"), {"Range": "bytes=7-"})
-        self.assertEqual(request.call_args_list[1].kwargs.get("headers", {}), {})
+        self.assertEqual(request.call_args_list[0].kwargs.get("headers"), {"Accept-Encoding": "identity", "Range": "bytes=7-"})
+        self.assertEqual(request.call_args_list[1].kwargs.get("headers", {}), {"Accept-Encoding": "identity"})
 
     def test_multi_url_sequential_resumes_individual_segments(self):
         (self.source / "000.bin").write_bytes(b"AAAA")
@@ -540,6 +540,7 @@ class GuiDownloadStatusTests(unittest.TestCase):
                      mock.patch.object(download.TIDAL_API, "getTrackContributors", return_value=None), \
                      mock.patch.object(download, "__saveLyricsForTrack__", return_value=""), \
                      mock.patch.object(download, "__setMetaData__"), \
+                     mock.patch.object(download, "__verifyMediaQuality__", return_value={}), \
                      mock.patch.object(download, "__ensureParentDir__"):
                     ok, err = download.downloadTrack(track)
             finally:

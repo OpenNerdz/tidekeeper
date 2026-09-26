@@ -19,7 +19,7 @@ import logging
 import math
 from collections import OrderedDict
 from threading import Lock, RLock
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import aigpy
 import requests
@@ -40,8 +40,8 @@ from .model import (
     Video,
     VideoStreamUrl,
 )
-from .manifests import ProtectedManifestError, best_dash_representation, dash_segments, hls_variants
-from .http import retry_delay
+from .manifests import MAX_MANIFEST_BYTES, ProtectedManifestError, best_dash_representation, dash_segments, hls_variants
+from .http import retry_delay, response_bytes
 from .settings import SETTINGS, TOKEN, Settings, syncPlaybackRateLimiter
 
 REQUEST_TIMEOUT = (5, 60)
@@ -222,6 +222,7 @@ class TidalAPI(object):
                     'https://api.tidal.com/v1/logout',
                     headers={'authorization': f'Bearer {access_token}'},
                     timeout=LOGOUT_TIMEOUT,
+                    allow_redirects=False,
                 )
                 try:
                     revoked = response.status_code in (200, 204, 401)
@@ -540,7 +541,8 @@ class TidalAPI(object):
                     # Only engages after a 429 raised the adaptive interval.
                     self.__waitForCatalogRequestQuota__()
 
-                respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT)
+                respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT,
+                                           allow_redirects=False)
 
                 if respond.status_code == 429:
                     # Always apply adaptive penalty (catalog and playback) so one
@@ -670,11 +672,14 @@ class TidalAPI(object):
         return ret
 
     def __getResolutionList__(self, url):
-        response = self.session.get(url, timeout=REQUEST_TIMEOUT)
+        # Use the media transport for manifest URLs too: it checks every
+        # redirect and carries no catalog authorization header.
+        from .download import __httpRequest__
+        response = __httpRequest__('GET', url, allow_redirects=True, stream=True)
         try:
-            response.raise_for_status()
             ret = []
-            for width, height, codec, location in hls_variants(response.content, url):
+            content = response_bytes(response, MAX_MANIFEST_BYTES, 'HLS manifest')
+            for width, height, codec, location in hls_variants(content, response.url or url):
                 stream = VideoStreamUrl()
                 stream.codec = codec
                 stream.m3u8Url = location
@@ -694,7 +699,10 @@ class TidalAPI(object):
             check_cancelled()
             response = None
             try:
-                response = self.session.post(url, data=data, auth=auth, timeout=REQUEST_TIMEOUT)
+                response = self.session.post(url, data=data, auth=auth, timeout=REQUEST_TIMEOUT,
+                                             allow_redirects=False)
+                if 300 <= response.status_code < 400:
+                    raise TidalApiError('Auth endpoint returned an unexpected redirect.', response.status_code)
                 try:
                     result = response.json()
                 except ValueError as error:
@@ -740,16 +748,28 @@ class TidalAPI(object):
         return data
 
     def getDeviceCode(self) -> str:
+        generation = self._sessionGeneration
         result = self.__post__('/device_authorization', self.__oauthData__())
         if 'status' in result and result['status'] != 200:
             raise Exception("Device authorization failed. Please choose another apikey.")
 
-        self.key.deviceCode = result['deviceCode']
-        self.key.userCode = result['userCode']
-        self.key.verificationUrl = result['verificationUri']
-        self.key.authCheckTimeout = result['expiresIn']
-        self.key.authCheckInterval = result['interval']
-        return "https://" + self.key.verificationUrl + "/" + self.key.userCode
+        uri = str(result['verificationUri'])
+        if '://' not in uri:
+            uri = 'https://' + uri
+        parsed = urlparse(uri)
+        if (parsed.scheme != 'https' or parsed.hostname not in ('link.tidal.com', 'login.tidal.com')
+                or parsed.username is not None or parsed.password is not None
+                or parsed.port not in (None, 443)):
+            raise TidalApiError('Device authorization returned an invalid sign-in address.')
+        with self._authStateLock:
+            if generation != self._sessionGeneration:
+                raise TidalApiError('Login cancelled.')
+            self.key.deviceCode = result['deviceCode']
+            self.key.userCode = result['userCode']
+            self.key.verificationUrl = uri.rstrip('/')
+            self.key.authCheckTimeout = max(1, min(3600, int(result['expiresIn'])))
+            self.key.authCheckInterval = max(1, min(60, int(result.get('interval') or 5)))
+            return self.key.verificationUrl + '/' + quote(str(self.key.userCode), safe='')
 
     def checkAuthStatus(self) -> bool:
         generation = self._sessionGeneration
@@ -759,6 +779,8 @@ class TidalAPI(object):
         ))
         error = result.get('error')
         if error in ('authorization_pending', 'slow_down'):
+            if error == 'slow_down':
+                self.key.authCheckInterval = min(300, int(self.key.authCheckInterval or 5) + 5)
             return False
         if error in ('expired_token', 'access_denied'):
             raise Exception("Login code expired. Start login again.")
@@ -783,7 +805,8 @@ class TidalAPI(object):
         header = {'authorization': f'Bearer {accessToken}'}
         response = None
         try:
-            response = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT)
+            response = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT,
+                                        allow_redirects=False)
             if response.status_code in (401, 403):
                 return False
             if response.status_code != 200:
@@ -820,7 +843,8 @@ class TidalAPI(object):
     def loginByAccessToken(self, accessToken, userid=None):
         generation = self._sessionGeneration
         header = {'authorization': f'Bearer {accessToken}'}
-        response = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT)
+        response = self.session.get('https://api.tidal.com/v1/sessions', headers=header, timeout=REQUEST_TIMEOUT,
+                                    allow_redirects=False)
         try:
             if response.status_code != 200:
                 raise self.__httpError__('Login', response)
@@ -1115,8 +1139,16 @@ class TidalAPI(object):
         header, payload = uri.split(',', 1)
         if ';base64' not in header.lower():
             raise TidalStreamUnavailable('Stream manifest encoding is unsupported.')
+        return self.__decodeManifest__(payload)
+
+    def __decodeManifest__(self, payload):
+        if not isinstance(payload, str) or len(payload) > 4 * ((MAX_MANIFEST_BYTES + 2) // 3):
+            raise TidalStreamUnavailable('Stream manifest is empty or too large.')
         try:
-            return base64.b64decode(payload, validate=True).decode('utf-8')
+            decoded = base64.b64decode(payload, validate=True)
+            if len(decoded) > MAX_MANIFEST_BYTES:
+                raise ValueError('Manifest is too large.')
+            return decoded.decode('utf-8')
         except (ValueError, UnicodeDecodeError) as error:
             raise TidalStreamUnavailable('Stream manifest is invalid.') from error
 
@@ -1239,6 +1271,7 @@ class TidalAPI(object):
                     },
                     params=params,
                     timeout=REQUEST_TIMEOUT,
+                    allow_redirects=False,
                 )
 
                 if response.status_code == 429:
@@ -1276,7 +1309,8 @@ class TidalAPI(object):
                     "Track manifest request failed: TIDAL returned an invalid JSON payload.",
                     response.status_code,
                 )
-            attributes = data.get('data', {}).get('attributes')
+            resource = data.get('data')
+            attributes = resource.get('attributes') if isinstance(resource, dict) else None
             if not isinstance(attributes, dict):
                 raise TidalApiError(
                     "Track manifest request failed: response attributes are missing.",
@@ -1500,9 +1534,12 @@ class TidalAPI(object):
             self.__markPlaybackParamBlocked__(audio_param, e)
             raise
         resp = aigpy.model.dictToModel(data, StreamRespond())
+        if str(resp.assetPresentation or '').upper() == 'PREVIEW':
+            raise TidalStreamUnavailable('TIDAL returned a preview-only stream instead of the full track.')
+        mime_type = resp.manifestMimeType or ''
 
-        if "vnd.tidal.bt" in resp.manifestMimeType:
-            manifest = json.loads(base64.b64decode(resp.manifest).decode('utf-8'))
+        if "vnd.tidal.bt" in mime_type:
+            manifest = json.loads(self.__decodeManifest__(resp.manifest))
             ret = StreamUrl()
             ret.trackid = resp.trackid
             ret.soundQuality = resp.audioQuality
@@ -1515,8 +1552,8 @@ class TidalAPI(object):
             ret.bitDepth = resp.bitDepth or manifest.get('bitDepth')
             ret.sampleRate = resp.sampleRate or manifest.get('sampleRate')
             return ret
-        elif "dash+xml" in resp.manifestMimeType:
-            xmldata = base64.b64decode(resp.manifest).decode('utf-8')
+        elif "dash+xml" in mime_type:
+            xmldata = self.__decodeManifest__(resp.manifest)
             return self.__dashStreamUrl__(
                 resp.trackid,
                 resp.audioQuality,
@@ -1525,7 +1562,7 @@ class TidalAPI(object):
                 sampleRate=resp.sampleRate,
             )
 
-        raise Exception("Can't get the streamUrl, type is " + resp.manifestMimeType)
+        raise TidalStreamUnavailable("Can't get the streamUrl, type is " + mime_type)
 
     def __streamCacheKey__(self, id, qualities):
         return (self._sessionGeneration, self.key.userId, self.key.countryCode,
@@ -1616,20 +1653,15 @@ class TidalAPI(object):
         paras = {"videoquality": "HIGH", "playbackmode": "STREAM", "assetpresentation": "FULL"}
         data = self.__getPlaybackData__(id, paras, media='videos')
         resp = aigpy.model.dictToModel(data, StreamRespond())
+        if str(resp.assetPresentation or '').upper() == 'PREVIEW':
+            raise TidalStreamUnavailable('TIDAL returned a preview-only stream instead of the full video.')
 
-        if "vnd.tidal.emu" in resp.manifestMimeType:
-            manifest = json.loads(base64.b64decode(resp.manifest).decode('utf-8'))
+        if "vnd.tidal.emu" in (resp.manifestMimeType or ''):
+            manifest = json.loads(self.__decodeManifest__(resp.manifest))
             array = self.__getResolutionList__(manifest['urls'][0])
-            icmp = int(quality.value)
-            index = 0
-            for item in array:
-                if icmp <= int(item.resolutions[1]):
-                    break
-                index += 1
-            if index >= len(array):
-                index = len(array) - 1
-            return array[index]
-        raise Exception("Can't get the streamUrl, type is " + resp.manifestMimeType)
+            eligible = [item for item in array if int(item.resolutions[1]) <= quality.value]
+            return (eligible or array[:1])[-1]
+        raise TidalStreamUnavailable("Can't get the streamUrl, type is " + str(resp.manifestMimeType or 'unknown'))
 
     def getTrackContributors(self, id):
         return self.__get__(f'tracks/{str(id)}/contributors')
@@ -1834,18 +1866,30 @@ class TidalAPI(object):
         return matched
 
     def parseUrl(self, url):
-        # Hostnames are case-insensitive; a pasted "TIDAL.com" link is still a link.
-        if "tidal.com" not in url.lower():
+        url = str(url).strip()
+        try:
+            parsed = urlparse(url)
+            hostname = (parsed.hostname or '').lower()
+            valid = (parsed.scheme.lower() in ('https', 'http')
+                     and hostname in ('tidal.com', 'www.tidal.com', 'listen.tidal.com')
+                     and parsed.username is None and parsed.password is None
+                     and parsed.port in (None, 80, 443))
+        except ValueError:
+            valid = False
+        if not valid:
             return Type.Null, url
 
-        parsed = urlparse(url)
         path_parts = [unquote(part) for part in parsed.path.split('/') if part]
         lowered = [part.lower() for part in path_parts]
         type_by_name = {item.name.lower(): item for item in Type if item != Type.Null}
         for index in range(len(lowered) - 2, -1, -1):
             item = type_by_name.get(lowered[index])
             if item is not None:
-                return item, path_parts[index + 1]
+                identifier = path_parts[index + 1]
+                pattern = r'[0-9]+' if item in (Type.Track, Type.Album, Type.Video, Type.Artist) else r'[A-Za-z0-9_-]+'
+                if len(identifier) <= 128 and re.fullmatch(pattern, identifier):
+                    return item, identifier
+                return Type.Null, url
         return Type.Null, url
 
     def __isProbeableLookupError__(self, error):
@@ -1875,6 +1919,8 @@ class TidalAPI(object):
             raise Exception("Please enter something.")
 
         etype, sid = self.parseUrl(string)
+        if etype == Type.Null and not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', sid):
+            raise ValueError('Enter a valid TIDAL catalog URL or media ID.')
         lastError = None
         for item in Type:
             if etype != Type.Null and etype != item:

@@ -137,7 +137,7 @@ class TokenPersistenceTests(unittest.TestCase):
 
         with mock.patch.object(events, "TIDAL_API", api), \
                 mock.patch.object(api, "loginByAccessToken", side_effect=login), \
-                mock.patch.object(events.Printf, "enter", side_effect=["pasted-access", "pasted-refresh"]), \
+                mock.patch.object(events.Printf, "enterSecret", side_effect=["pasted-access", "pasted-refresh"]), \
                 mock.patch.object(TOKEN, "save"):
             events.loginByAccessToken()
         self.assertEqual(

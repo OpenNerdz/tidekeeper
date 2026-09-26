@@ -94,6 +94,11 @@ In the desktop app:
 2. Click **Start device login**.
 3. Click **Open in browser** and approve the login.
 
+Click **Cancel login** to stop a pending sign-in while keeping your saved
+session. Downloads and settings changes wait until sign-in finishes or is
+cancelled. Manual token entry is hidden in the terminal; desktop token fields
+are cleared after a successful sign-in.
+
 Tidekeeper may ask you to sign in once after an update changes the TIDAL
 client. This is expected and prevents an old session from breaking downloads.
 
@@ -150,6 +155,12 @@ Other single-quality selections remain strict, and lists of fallback qualities
 keep their order (`Master` is treated as `Max`).
 DRM-protected DASH streams are rejected; fallback can use unencrypted streams
 offered by TIDAL for your account.
+
+Video resolution selects the highest available variant at or below your
+choice, or the lowest available variant if none fit. Preview streams,
+unfinished/live HLS playlists, and multi-period DASH are reported as unsupported
+instead of being saved as complete downloads. Invalid terminal quality or
+resolution choices leave your saved settings unchanged.
 
 Dolby Atmos is optional because it is often a separate version of an album or
 track. Select **Atmos** in the desktop app or use:

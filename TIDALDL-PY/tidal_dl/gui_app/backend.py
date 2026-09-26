@@ -41,6 +41,7 @@ class AuthStatus:
     # True only after this poll completed a new device-login grant.
     # Existing saved tokens must not count as "login complete".
     fresh_login: bool = False
+    poll_interval: int = 0
 
     @property
     def label(self) -> str:
@@ -413,12 +414,19 @@ class TidekeeperBackend:
     def poll_device_login(self) -> AuthStatus:
         generation = TIDAL_API._sessionGeneration
         if not TIDAL_API.checkAuthStatus():
-            return replace(self.auth_status(), fresh_login=False)
+            return replace(self.auth_status(), fresh_login=False,
+                           poll_interval=int(TIDAL_API.key.authCheckInterval or 5))
         with TIDAL_API._authStateLock:
             if generation != TIDAL_API._sessionGeneration:
                 return replace(self.auth_status(), fresh_login=False)
             self._save_api_login_key_to_token(TIDAL_API.keyExpiresAfter())
         return replace(self.auth_status(), fresh_login=True)
+
+    def cancel_device_login(self):
+        with TIDAL_API._authStateLock:
+            TIDAL_API._sessionGeneration += 1
+            TIDAL_API.key.deviceCode = None
+            TIDAL_API.key.userCode = None
 
     def logout(self) -> AuthStatus:
         logout(revoke=self.defer_session_revocation)
@@ -436,10 +444,10 @@ class TidekeeperBackend:
             return [self.direct_item(text)]
 
         self._ensure_catalog_session()
-        if text.startswith("http"):
+        if text.lower().startswith(('http://', 'https://')):
             parsed_kind, item_id = TIDAL_API.parseUrl(text)
             if parsed_kind == Type.Null:
-                return [self.direct_item(text)]
+                raise ValueError('Enter a valid TIDAL catalog URL.')
             item = TIDAL_API.getTypeData(item_id, parsed_kind)
             return [to_search_item(parsed_kind, item)] if item else []
 
@@ -761,6 +769,9 @@ class TidekeeperBackend:
 
 
 class DemoBackend(TidekeeperBackend):
+    def cancel_device_login(self):
+        pass
+
     def supporters(self) -> List[str]:
         return bundled_supporters()
 

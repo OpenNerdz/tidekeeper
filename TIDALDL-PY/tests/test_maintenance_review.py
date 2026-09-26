@@ -153,7 +153,7 @@ class MaintenanceReviewTests(unittest.TestCase):
         TOKEN.refreshToken = 'previous-session'
         key = SimpleNamespace(userId=7, countryCode='US', accessToken='new', refreshToken='previous-session')
         with mock.patch.object(TIDAL_API, 'key', key), mock.patch.object(TIDAL_API, 'loginByAccessToken'), \
-             mock.patch.object(events.Printf, 'enter', side_effect=['new', '0']), mock.patch.object(TOKEN, 'save'):
+             mock.patch.object(events.Printf, 'enterSecret', side_effect=['new', '0']), mock.patch.object(TOKEN, 'save'):
             events.loginByAccessToken()
             self.assertIsNone(TOKEN.refreshToken)
             self.assertIsNone(key.refreshToken)

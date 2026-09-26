@@ -342,7 +342,7 @@ class PlaybackClientTests(unittest.TestCase):
                 calls.append(self.path)
                 if self.path.endswith('/device_authorization'):
                     self.send_payload({'deviceCode': 'test-device', 'userCode': 'test-code',
-                                       'verificationUri': 'login.example.invalid', 'expiresIn': 300, 'interval': 1})
+                                       'verificationUri': 'link.tidal.com', 'expiresIn': 300, 'interval': 1})
                 elif self.path.endswith('/token'):
                     self.send_payload({'user': {'userId': 'test-user', 'countryCode': 'US'},
                                        'access_token': 'private-access', 'refresh_token': 'private-refresh',
