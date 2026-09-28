@@ -53,8 +53,7 @@ fork for pull requests when outside review is needed.
    on `main` to verify all platform builds before tagging.
 5. Confirm the GitHub `pypi` environment exists and the `PYPI_API_TOKEN` repository
    secret is set (PyPI API token with upload rights for project `tidekeeper`).
-   Optional: also register a trusted publisher on PyPI for OIDC fallback
-   (workflow `.github/workflows/publish.yml`, environment `pypi`).
+   The reusable publish workflow requires this token.
 6. Tag the release and push the tag:
 
    ```bash
@@ -67,3 +66,5 @@ fork for pull requests when outside review is needed.
    and wheel to [PyPI](https://pypi.org/project/tidekeeper/).
 7. Confirm the release's Publish workflow succeeds and
    `pip install -U tidekeeper` installs the new version.
+   If publishing fails after the GitHub release succeeds, rerun the failed
+   Build workflow jobs so the validated distribution artifact is reused.

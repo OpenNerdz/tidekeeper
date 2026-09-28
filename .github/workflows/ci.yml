@@ -185,9 +185,9 @@ jobs:
           EOF
 
       - name: Save validated distributions for publishing
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: tidekeeper-python-distributions
+          name: python-distributions
           path: TIDALDL-PY/dist/*
           if-no-files-found: error

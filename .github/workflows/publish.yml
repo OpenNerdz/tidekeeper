@@ -2,20 +2,13 @@ name: Publish
 
 on:
   workflow_call:
-  workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  checks:
-    if: github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/ci.yml
-
   pypi:
-    needs: checks
-    if: ${{ !cancelled() && (needs.checks.result == 'success' || (needs.checks.result == 'skipped' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
+    if: startsWith(github.ref, 'refs/tags/')
     name: Publish to PyPI
     runs-on: ubuntu-latest
 
@@ -25,35 +18,25 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write
 
     steps:
       - name: Download validated distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: tidekeeper-python-distributions
+          name: python-distributions
           path: TIDALDL-PY/dist
 
-      - name: Choose PyPI authentication
-        id: pypi-auth
+      - name: Require configured PyPI token
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          if [ -n "${PYPI_TOKEN}" ]; then
-            echo "mode=token" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+          if [ -z "${PYPI_TOKEN}" ]; then
+            echo "::error::PYPI_API_TOKEN is required for this reusable publish workflow"
+            exit 1
           fi
 
       - name: Publish with API token
-        if: steps.pypi-auth.outputs.mode == 'token'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: TIDALDL-PY/dist
           password: ${{ secrets.PYPI_API_TOKEN }}
-
-      - name: Publish with OIDC trusted publishing
-        if: steps.pypi-auth.outputs.mode == 'oidc'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
-        with:
-          packages-dir: TIDALDL-PY/dist

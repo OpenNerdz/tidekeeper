@@ -2,12 +2,16 @@
 
 ## Unreleased
 
+## 2026.9.28.0 - 2026-09-28
+
 - Keep Termux destination lock files on its private filesystem so downloads to
   Android shared storage do not fail with `Errno 38`.
 - Publish the already validated wheel and source distribution from release CI
   instead of building the same packages again; avoid a full-history checkout
   and a redundant cleanup on fresh build runners. Manual platform builds use
   the CI result already checked on `main`; release tags still rerun the full gate.
+- Keep Python distributions out of standalone release assets and require the
+  configured PyPI token in the reusable publishing workflow.
 - Keep only `main` as the repository branch.
 
 ## 2026.9.26.1 - 2026-09-26
