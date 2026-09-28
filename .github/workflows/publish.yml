@@ -27,24 +27,12 @@ jobs:
       contents: read
       id-token: write
 
-    defaults:
-      run:
-        working-directory: TIDALDL-PY
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      - name: Download validated distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          python-version: "3.12"
-
-      - name: Build distributions
-        run: |
-          python -m pip install --upgrade pip build twine
-          python -m build --outdir dist .
-          python -m twine check --strict dist/*
+          name: tidekeeper-python-distributions
+          path: TIDALDL-PY/dist
 
       - name: Choose PyPI authentication
         id: pypi-auth

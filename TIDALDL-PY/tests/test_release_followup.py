@@ -336,10 +336,25 @@ with output_lock(sys.argv[1]):
         second.mkdir(exist_ok=True)
         if os.path.samefile(first, second):
             self.skipTest('Filesystem does not distinguish directory case')
-        with runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
+        with mock.patch.object(runtime, 'isTermux', return_value=False), \
+                runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
             self.assertEqual(len(runtime._output_locks), 2)
             self.assertEqual(len(list(first.rglob('*.lock'))), 1)
             self.assertEqual(len(list(second.rglob('*.lock'))), 1)
+        self.assertFalse(runtime._output_locks)
+
+    def test_termux_locks_live_in_private_home_and_distinguish_destinations(self):
+        private_home = self.root / 'private-home'
+        private_home.mkdir()
+        first, second = self.root / 'shared' / 'album-1', self.root / 'shared' / 'album-2'
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        with mock.patch.dict(os.environ, {'TERMUX_VERSION': 'test', 'HOME': str(private_home)}), \
+                runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
+            locks = list((private_home / '.local' / 'state' / 'tidekeeper' / 'locks').glob('*.lock'))
+            self.assertEqual(len(locks), 2)
+            self.assertEqual(len(runtime._output_locks), 2)
+            self.assertFalse(list((self.root / 'shared').rglob('*.lock')))
         self.assertFalse(runtime._output_locks)
 
 

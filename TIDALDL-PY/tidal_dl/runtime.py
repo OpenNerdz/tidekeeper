@@ -13,6 +13,8 @@ from threading import Lock, RLock
 
 from filelock import FileLock, Timeout as FileLockTimeout
 
+from .environment import isTermux
+
 _output = contextvars.ContextVar('tidekeeper_output', default=None)
 _cancel = contextvars.ContextVar('tidekeeper_cancel', default=None)
 _warning = contextvars.ContextVar('tidekeeper_warning', default=None)
@@ -47,12 +49,21 @@ def check_cancelled():
 def output_lock(path):
     """Serialize destination writers across threads and cooperating processes."""
     key = os.path.normcase(os.path.realpath(path))
-    directory = os.path.join(os.path.dirname(key), '.tidekeeper-locks')
     # Conservatively serialize filename case aliases, but keep distinct output
     # directories distinct on case-sensitive filesystems.
     name = os.path.basename(key).casefold()
     key = os.path.join(os.path.dirname(key), name)
-    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(name)).hexdigest() + '.lock')
+    if isTermux():
+        # Android shared storage does not implement the OS file locks used by
+        # filelock. Keep the lock on Termux's private filesystem, keyed by the
+        # full destination so separate album folders never block each other.
+        home = os.environ.get('HOME') or os.path.expanduser('~')
+        directory = os.path.join(home, '.local', 'state', 'tidekeeper', 'locks')
+        lock_name = key
+    else:
+        directory = os.path.join(os.path.dirname(key), '.tidekeeper-locks')
+        lock_name = name
+    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(lock_name)).hexdigest() + '.lock')
     with _output_locks_guard:
         if key not in _output_locks:
             _output_locks[key] = (RLock(), FileLock(lock_path, mode=0o600,
@@ -65,7 +76,7 @@ def output_lock(path):
             check_cancelled()
             acquired = lock.acquire(timeout=0.1)
         check_cancelled()
-        os.makedirs(directory, exist_ok=True)
+        os.makedirs(directory, mode=0o700, exist_ok=True)
         while not file_acquired:
             check_cancelled()
             try:

@@ -16,10 +16,9 @@ python -m pip install -e .
 
 ## Branches
 
-The repository keeps `main` and `working`. Add features and fixes on `working`
-and open a pull request from `working` into `main` after local checks pass.
-Merge only after CI and all platform builds succeed, and retain `working` for
-subsequent development.
+The repository keeps only `main`. Maintainers run local checks before pushing
+to `main` and confirm CI after the push. Contributors can open pull requests
+from their forks; merge them after CI and relevant platform builds succeed.
 
 ## Checks
 
