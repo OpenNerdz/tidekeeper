@@ -2,21 +2,72 @@ name: Build
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Create a production release from main (otherwise build only)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ (github.event_name == 'push' || inputs.publish || startsWith(github.ref, 'refs/tags/')) && 'production' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
+  PIP_NO_INPUT: '1'
+
 jobs:
+  preflight:
+    name: Prepare release or preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Prepare version, changelog, and immutable source
+        id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          RELEASE_REQUESTED: ${{ github.event_name == 'push' || inputs.publish }}
+        run: |
+          mode=preview
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            mode=tag
+          elif [[ "$RELEASE_REQUESTED" == true ]]; then
+            mode=auto
+          fi
+          python3 scripts/release.py prepare --mode "$mode" --source "$GITHUB_SHA" \
+            --ref "$GITHUB_REF" --repository "$GITHUB_REPOSITORY"
+
   checks:
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: preflight
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.preflight.outputs.ref }}
+      publish-artifacts: ${{ needs.preflight.outputs.publish == 'true' }}
 
   build:
-    needs: checks
-    if: ${{ !cancelled() && (needs.checks.result == 'success' || (needs.checks.result == 'skipped' && github.event_name == 'workflow_dispatch')) }}
+    # CI and platform builds run together; publication requires both to pass.
+    needs: preflight
+    if: needs.preflight.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -38,6 +89,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -48,20 +101,22 @@ jobs:
             TIDALDL-PY/requirements.txt
             TIDALDL-PY/setup.py
             TIDALDL-PY/pyproject.toml
+            .github/workflows/build.yml
+            .github/requirements/build.txt
 
       - name: Install dependencies
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install wheel pyinstaller
-          python -m pip install -e ".[gui]"
+          python -m pip install -r ../.github/requirements/build.txt -e ".[gui]"
         working-directory: TIDALDL-PY
 
       - name: Install Linux GUI runtime libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 xvfb xauth
 
       - name: Check download locking and release regressions on this platform
         env:
@@ -90,14 +145,14 @@ jobs:
             tidal_dl/gui_app/__main__.py -n tidekeeper-gui
         working-directory: TIDALDL-PY
 
-      - name: Smoke test Linux GUI executable
+      - name: Smoke test Linux GUI executable on X11
         if: runner.os == 'Linux'
         env:
-          QT_QPA_PLATFORM: offscreen
+          QT_QPA_PLATFORM: xcb
           TIDEKEEPER_GUI_DEMO: '1'
         working-directory: TIDALDL-PY
         run: |
-          python - <<'PY'
+          xvfb-run -a python - <<'PY'
           import subprocess
 
           with subprocess.Popen(['./dist/tidekeeper-gui'], stdout=subprocess.PIPE,
@@ -114,7 +169,7 @@ jobs:
                   text = output.decode(errors='replace')
                   print(text)
                   assert 'Traceback' not in text, 'GUI emitted a traceback during startup'
-                  print('GUI stayed running in offscreen demo mode for 10 seconds')
+                  print('GUI stayed running on X11 in demo mode for 10 seconds')
               else:
                   raise SystemExit(f'GUI exited during startup ({process.returncode}): {output.decode(errors="replace")}')
           PY
@@ -138,36 +193,72 @@ jobs:
         with:
           name: tidekeeper-${{ matrix.asset-name }}
           path: TIDALDL-PY/release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    name: Stage GitHub release
+    if: needs.preflight.outputs.publish == 'true'
+    needs: [preflight, checks, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: tidekeeper-*
           path: release-assets
           merge-multiple: true
-      - name: Generate checksums
-        working-directory: release-assets
-        run: sha256sum * > SHA256SUMS
+      - name: Validate all ten platform assets and generate checksums
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: python3 scripts/publish-release.py checksums --tag "$RELEASE_TAG" --directory release-assets
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: release-assets/*
-      - name: Create release after all platform builds succeed
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
-        with:
-          files: release-assets/*
+      - name: Prepare concise notes and upload draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          python3 scripts/release.py notes --tag "$RELEASE_TAG" --output release-notes.md
+          python3 scripts/publish-release.py draft --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" --directory release-assets --notes release-notes.md
 
   publish:
-    needs: release
+    needs: [preflight, release]
     permissions:
       contents: read
     uses: ./.github/workflows/publish.yml
-    secrets: inherit
+    with:
+      ref: ${{ needs.preflight.outputs.ref }}
+      tag: ${{ needs.preflight.outputs.tag }}
+    secrets:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+  finalize:
+    name: Publish verified GitHub release
+    needs: [preflight, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+      - name: Publish the complete draft after PyPI verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          python3 scripts/publish-release.py finalize --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY"
+          echo "Released [$RELEASE_TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG)" >> "$GITHUB_STEP_SUMMARY"

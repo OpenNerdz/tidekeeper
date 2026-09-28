@@ -29,10 +29,10 @@ class SupporterListTests(unittest.TestCase):
             supporters.requests,
             "get",
             side_effect=requests.ConnectionError("offline"),
-        ):
+        ), mock.patch.object(supporters, "bundled_supporters", return_value=["offline-user"]) as bundled:
             names = supporters.load_supporters()
-        self.assertIn("Notorious2Beat", names)
-        self.assertGreater(len(names), 50)
+        self.assertEqual(names, ["offline-user"])
+        bundled.assert_called_once_with()
 
     def test_request_is_bounded_and_identifies_the_app(self):
         response = _Response([])

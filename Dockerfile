@@ -15,10 +15,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
+# Keep dependency installation cached when only application code or docs change.
+COPY TIDALDL-PY/requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
 COPY TIDALDL-PY/ ./TIDALDL-PY/
 COPY README.md LICENSE NOTICE ./
 
-RUN python -m pip install --no-cache-dir ./TIDALDL-PY \
+RUN python -m pip install --no-cache-dir --no-deps ./TIDALDL-PY \
     && rm -rf /src
 
 RUN useradd --create-home --uid 1000 tidekeeper \

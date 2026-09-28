@@ -18,6 +18,7 @@ env/
 
 # Build outputs
 build/
+.pyinstaller-work/
 dist/
 *.spec
 release-assets/

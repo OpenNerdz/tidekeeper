@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+<!-- release-title: Automated releases and faster builds -->
+
+- Automatically prepare dated releases from application changes on main, retaining
+  the existing daily version counter, tag format, and concise release-note style.
+  Publish GitHub drafts only after all checks and PyPI hash verification pass;
+  resume matching partial uploads without replacing published files.
+- Include missing X11 libraries in Linux desktop builds and verify GUI startup
+  on a virtual X11 display as part of CI and release checks.
+- Refresh GUI supporters on new GitHub stars and scheduled runs, show the bundled
+  list immediately, and refresh long-running sessions when Account is reopened.
+  Validate generated snapshots and preserve the previous list on API failures.
+- Reuse local PyInstaller build work and Docker dependency layers; keep generated
+  files out of Git and Docker contexts, and update setup and maintenance guides.
+- Run release CI and platform builds in parallel, validate tag/version/changelog
+  agreement before building binaries, run CI for manual builds too, and smoke
+  test the built wheel outside the source tree before publishing it.
+- Cancel superseded branch runs, bound job runtime and artifact retention, cache
+  CI tooling/dependencies, and avoid recompressing release artifacts.
+
 ## 2026.9.28.0 - 2026-09-28
 
 - Keep Termux destination lock files on its private filesystem so downloads to

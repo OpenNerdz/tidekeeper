@@ -2,15 +2,25 @@ name: Publish
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      tag:
+        type: string
+        required: true
+    secrets:
+      PYPI_API_TOKEN:
+        required: true
 
 permissions:
   contents: read
 
 jobs:
   pypi:
-    if: startsWith(github.ref, 'refs/tags/')
     name: Publish to PyPI
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     environment:
       name: pypi
@@ -20,6 +30,9 @@ jobs:
       contents: read
 
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
       - name: Download validated distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -35,8 +48,22 @@ jobs:
             exit 1
           fi
 
+      - name: Stage only distributions not already published with matching hashes
+        id: stage
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 scripts/publish-release.py stage-pypi --tag "$RELEASE_TAG" \
+            --directory TIDALDL-PY/dist --staging pypi-upload
+
       - name: Publish with API token
+        if: steps.stage.outputs.pending == 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
-          packages-dir: TIDALDL-PY/dist
+          packages-dir: pypi-upload
           password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Verify both published distribution hashes
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 scripts/publish-release.py verify-pypi --tag "$RELEASE_TAG" --directory TIDALDL-PY/dist

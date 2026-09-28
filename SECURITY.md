@@ -46,7 +46,9 @@ operating system. Tidekeeper's dependency audit does not scan external binaries.
 
 Output filenames are sanitized and writers to the same destination are
 serialized across cooperating Tidekeeper instances using OS file locks through
-`filelock`. Lock metadata is retained in hidden `.tidekeeper-locks` directories;
+`filelock`. Lock metadata is retained in hidden `.tidekeeper-locks` directories.
+On Termux it lives under `~/.local/state/tidekeeper/locks` on private storage so
+Android shared-storage downloads can use working OS locks;
 do not delete it while instances are running. Locks are released when a process
 exits, including after a crash. Use a local filesystem with working OS locking;
 other programs and older Tidekeeper versions do not honor these locks. The application runs

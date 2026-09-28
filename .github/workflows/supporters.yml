@@ -1,6 +1,8 @@
 name: Refresh supporters
 
 on:
+  watch:
+    types: [started]
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
@@ -10,27 +12,32 @@ permissions:
 
 concurrency:
   group: refresh-supporters
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: Fetch current stargazers
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           target="TIDALDL-PY/tidal_dl/gui_app/supporters.json"
           temporary="$(mktemp)"
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/stargazers?per_page=100" \
-            | jq -s '[.[][] | .login]' > "$temporary"
-          if cmp -s "$temporary" "$target"; then
+          trap 'rm -f "$temporary"' EXIT
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/stargazers?per_page=100" > "$temporary"
+          git pull --ff-only
+          python3 scripts/update-supporters.py "$temporary" "$target"
+          if git diff --quiet -- "$target"; then
             exit 0
           fi
-          mv "$temporary" "$target"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$target"

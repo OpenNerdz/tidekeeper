@@ -51,6 +51,39 @@ class GuiQueueTests(unittest.TestCase):
         self.assertEqual(self.window.queue[1].source, "https://tidal.com/browse/track/2")
         self.assertEqual(self.window.queue_table.rowCount(), 2)
 
+    def test_supporters_show_snapshot_while_refresh_runs_in_background(self):
+        with mock.patch('tidal_dl.gui_app.main_window.bundled_supporters', return_value=['snapshot-user']), \
+                mock.patch.object(self.window, 'start_worker') as start:
+            self.window.load_supporters()
+        self.assertEqual(self.window.supporters_list.item(0).text(), '@snapshot-user')
+        self.assertFalse(self.window.refresh_supporters_button.isEnabled())
+        worker = start.call_args.args[0]
+        worker.signals.result.emit(['current-user'])
+        worker.signals.finished.emit()
+        self.assertEqual(self.window.supporters_list.count(), 1)
+        self.assertEqual(self.window.supporters_list.item(0).text(), '@current-user')
+        self.assertTrue(self.window.refresh_supporters_button.isEnabled())
+
+    def test_recent_supporters_do_not_refetch_unless_forced(self):
+        self.window.set_supporters(['current-user'])
+        with mock.patch.object(self.window, 'start_worker') as start:
+            self.window.load_supporters()
+            start.assert_not_called()
+            self.window.load_supporters(force=True)
+            start.assert_called_once()
+            # Repeated refreshes never queue duplicate requests.
+            self.window.load_supporters(force=True)
+            start.assert_called_once()
+        self.window._supporters_finished()
+
+    def test_reopening_account_refreshes_an_expired_supporter_list(self):
+        self.window.set_supporters(['old-user'])
+        self.window._supporters_loaded_at -= 6 * 60 * 60 + 1
+        with mock.patch.object(self.window, 'start_worker') as start:
+            self.window.show_screen('account')
+            start.assert_called_once()
+        self.window._supporters_finished()
+
     def test_retry_failed_restarts_only_failed_rows(self):
         done = self.SearchItem(self.Type.Track, "Done", "", "", "1", "", SimpleNamespace(id=1), status="Done")
         failed = self.SearchItem(self.Type.Track, "Failed", "", "", "2", "", SimpleNamespace(id=2), status="Failed")

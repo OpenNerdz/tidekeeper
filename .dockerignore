@@ -10,6 +10,7 @@ install.sh
 **/*.egg-info
 **/dist
 **/build
+**/.pyinstaller-work
 **/.tidal-dl.*
 **/.tidekeeper-queue.json
 **/.venv

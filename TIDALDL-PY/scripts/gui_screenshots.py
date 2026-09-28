@@ -154,10 +154,12 @@ def main() -> int:
         app.processEvents()
         if screen == "account":
             for _ in range(100):
-                if window._supporters_loaded:
+                if window._supporters_loaded and not window._supporters_loading:
                     break
                 app.processEvents()
                 time.sleep(0.01)
+            if window._supporters_loading:
+                failures.append("account: supporter refresh did not finish")
             account_scroll = window.pages["account"].widget(0)
             scroll_bar = account_scroll.verticalScrollBar()
             scroll_bar.setValue(scroll_bar.maximum())

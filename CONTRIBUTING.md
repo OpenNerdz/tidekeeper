@@ -6,13 +6,16 @@ tests for user-visible behavior or regressions.
 ## Development Setup
 
 ```bash
-git clone https://github.com/OpenNerdz/tidekeeper.git
+git clone --depth 1 https://github.com/OpenNerdz/tidekeeper.git
 cd tidekeeper/TIDALDL-PY
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
 ```
+
+The shallow clone is enough to build and test. Run `git fetch --unshallow` when
+you need earlier history. On Windows, activate with `.venv\Scripts\activate`.
 
 ## Branches
 
@@ -26,7 +29,7 @@ Run these before opening a pull request:
 
 ```bash
 python -m pip install -e ".[dev]"
-python -m ruff check tidal_dl tests
+python -m ruff check tidal_dl tests ../scripts
 python -m compileall -q tidal_dl
 python -m unittest discover -s tests
 python -m tidal_dl --help
@@ -39,6 +42,7 @@ For installer changes, also run:
 ```bash
 bash -n ../install.sh
 bash -n ../scripts/install-termux.sh
+bash -n ../build.sh
 ```
 
 Ruff checks syntax errors, undefined names, bare `except`, unused imports and
@@ -57,4 +61,8 @@ over large style-only refactors.
 ## Release Notes
 
 Release notes should summarize user-facing changes, fixes, and known migration
-notes. The release tag should match the version reported by `tidekeeper --help`.
+notes. Put concise bullets under `CHANGELOG.md → Unreleased`; an optional
+`<!-- release-title: Short descriptive title -->` sets the release subtitle.
+Otherwise clear commit subjects provide the automatic fallback. Main pushes
+prepare the version and tag automatically; contributors do not need to bump them.
+See [MAINTAINING.md](MAINTAINING.md) for builds, tagging, publishing, and recovery.

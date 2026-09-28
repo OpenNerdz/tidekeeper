@@ -26,6 +26,8 @@ from html import escape
 from typing import List, Tuple
 from urllib.parse import quote
 
+from .supporters import bundled_supporters
+
 from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPalette, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
@@ -193,6 +195,7 @@ class MainWindow(QMainWindow):
         self._saved_settings_values = None
         self._loading_settings = False
         self._supporters_loaded = False
+        self._supporters_loaded_at = 0.0
         self._supporters_loading = False
 
         self._mono_font = QFont()
@@ -766,6 +769,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(maintenance)
 
         supporters = FormSection("Supporters")
+        supporters.add_widget(label("People who have starred Tidekeeper on GitHub.", "Meta"))
         self.supporters_status = label("", "Meta")
         self.refresh_supporters_button = button("Refresh", "ghost", tooltip="Refresh the GitHub supporter list.")
         self.refresh_supporters_button.clicked.connect(lambda: self.load_supporters(force=True))
@@ -876,10 +880,13 @@ class MainWindow(QMainWindow):
         self.thread_pool.start(worker)
 
     def load_supporters(self, force: bool = False):
-        if self._supporters_loading or (self._supporters_loaded and not force):
+        recent = self._supporters_loaded and time.monotonic() - self._supporters_loaded_at < 6 * 60 * 60
+        if self._supporters_loading or (recent and not force):
             return
+        if not self._supporters_loaded:
+            self.set_supporters(bundled_supporters())
         self._supporters_loading = True
-        self.supporters_status.setText("Loading…")
+        self.supporters_status.setText("Refreshing…")
         self.refresh_supporters_button.setEnabled(False)
         worker = TaskWorker(self.backend.supporters)
         worker.signals.result.connect(self.set_supporters)
@@ -896,6 +903,7 @@ class MainWindow(QMainWindow):
             self.supporters_list.addItem(item)
         self.supporters_status.setText(self._plural(len(names), "supporter"))
         self._supporters_loaded = True
+        self._supporters_loaded_at = time.monotonic()
 
     def show_supporters_error(self, _message: str):
         self.supporters_status.setText("Unavailable")
