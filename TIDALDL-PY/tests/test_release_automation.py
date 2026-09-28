@@ -288,6 +288,47 @@ class ReleasePublishTests(unittest.TestCase):
             publish.finalize('example/repo', self.tag)
         run.assert_not_called()
 
+    def test_draft_lookup_paginates_and_fetches_by_id_after_tag_not_found(self):
+        draft = {'id': 123, 'tag_name': self.tag, 'draft': True, 'assets': self.assets()}
+        with mock.patch.object(publish, 'gh_json', side_effect=[
+            None, [{'tag_name': 'v2026.9.27.0'}] * 100, [draft], draft,
+        ]) as api:
+            self.assertEqual(publish.github_release('example/repo', self.tag), draft)
+        self.assertEqual(api.call_args_list, [
+            mock.call(f'repos/example/repo/releases/tags/{self.tag}'),
+            mock.call('repos/example/repo/releases?per_page=100&page=1'),
+            mock.call('repos/example/repo/releases?per_page=100&page=2'),
+            mock.call('repos/example/repo/releases/123'),
+        ])
+
+    def test_missing_release_is_distinct_from_inaccessible_repository(self):
+        with mock.patch.object(publish, 'gh_json', side_effect=[None, []]):
+            self.assertIsNone(publish.github_release('example/repo', self.tag))
+        with mock.patch.object(publish, 'gh_json', side_effect=[None, None]), \
+                self.assertRaisesRegex(ValueError, 'inaccessible'):
+            publish.github_release('example/repo', self.tag)
+
+    def test_existing_draft_is_updated_without_creating_a_duplicate(self):
+        for path in self.directory.iterdir():
+            path.unlink()
+        for asset in self.assets():
+            (self.directory / asset['name']).write_bytes(b'asset')
+        draft = {'id': 123, 'tag_name': self.tag, 'draft': True, 'assets': self.assets()}
+        with mock.patch.object(publish, 'gh_json', side_effect=[None, [draft], draft] * 2), \
+                mock.patch.object(publish, 'release_notes', return_value=('Release title', 'Notes')), \
+                mock.patch.object(publish.subprocess, 'run') as run:
+            publish.github_draft('example/repo', self.tag, self.directory, Path('notes.md'))
+        self.assertEqual([call.args[0][2] for call in run.call_args_list], ['edit', 'upload'])
+
+    def test_draft_found_by_id_is_published_after_asset_validation(self):
+        draft = {'id': 123, 'tag_name': self.tag, 'draft': True, 'assets': self.assets()}
+        with mock.patch.object(publish, 'gh_json', side_effect=[
+            None, [draft], draft, {'tag_name': 'v2026.9.28.0'},
+        ]), mock.patch.object(publish.subprocess, 'run') as run:
+            publish.finalize('example/repo', self.tag)
+        self.assertIn('--draft=false', run.call_args.args[0])
+        self.assertIn('--latest', run.call_args.args[0])
+
     def test_old_release_retry_does_not_replace_newer_latest_release(self):
         with mock.patch.object(publish, 'gh_json', side_effect=[
             {'draft': True, 'assets': self.assets()}, {'tag_name': 'v2026.9.29.0'},

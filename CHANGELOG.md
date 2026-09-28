@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+<!-- release-title: Automated releases and faster builds -->
+
+- Find and resume unpublished GitHub drafts by release ID, including drafts
+  omitted from the public tag endpoint, before verifying and publishing assets.
+
 ## 2026.9.28.1 - 2026-09-28
 
 <!-- release-title: Automated releases and faster builds -->

@@ -88,10 +88,29 @@ def check_github_assets(release):
         raise ValueError('GitHub release has empty or unfinished assets')
 
 
+def github_release(repository, tag):
+    release = gh_json(f'repos/{repository}/releases/tags/{tag}')
+    if release:
+        return release
+    # The by-tag endpoint only returns published releases. Drafts are visible
+    # to our write token in the releases list and can be fetched by numeric ID.
+    page = 1
+    while True:
+        releases = gh_json(f'repos/{repository}/releases?per_page=100&page={page}')
+        if releases is None:
+            raise ValueError('GitHub repository releases are inaccessible')
+        for candidate in releases:
+            if candidate['tag_name'] == tag:
+                return gh_json(f'repos/{repository}/releases/{candidate["id"]}')
+        if len(releases) < 100:
+            return None
+        page += 1
+
+
 def github_draft(repository, tag, directory, notes_file):
     validate_files(directory, expected_assets() | {'SHA256SUMS'})
     title, _ = release_notes(Path.cwd(), tag)
-    existing = gh_json(f'repos/{repository}/releases/tags/{tag}')
+    existing = github_release(repository, tag)
     if existing and not existing['draft']:
         check_github_assets(existing)
         # Never turn a public release back into a draft or replace its binaries.
@@ -105,11 +124,14 @@ def github_draft(repository, tag, directory, notes_file):
                         '--title', title, '--notes-file', str(notes_file)], check=True)
     subprocess.run(['gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
                     *map(str, sorted(directory.iterdir()))], check=True)
-    check_github_assets(gh_json(f'repos/{repository}/releases/tags/{tag}'))
+    uploaded = github_release(repository, tag)
+    if uploaded is None:
+        raise ValueError('The uploaded GitHub draft is missing')
+    check_github_assets(uploaded)
 
 
 def finalize(repository, tag):
-    release = gh_json(f'repos/{repository}/releases/tags/{tag}')
+    release = github_release(repository, tag)
     if not release:
         raise ValueError('The validated GitHub draft is missing')
     check_github_assets(release)
