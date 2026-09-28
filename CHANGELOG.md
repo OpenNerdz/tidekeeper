@@ -2,10 +2,36 @@
 
 ## Unreleased
 
+## 2026.9.28.2 - 2026-09-28
+
 <!-- release-title: Automated releases and faster builds -->
+
+- Automatically prepare dated releases from application changes on main, retaining
+  the existing daily version counter, tag format, and concise release-note style.
+  Publish GitHub drafts only after all checks and PyPI hash verification pass;
+  resume matching partial uploads without replacing published files.
+
+- Include missing X11 libraries in Linux desktop builds and verify GUI startup
+  on a virtual X11 display as part of CI and release checks.
+
+- Refresh GUI supporters on new GitHub stars and scheduled runs, show the bundled
+  list immediately, and refresh long-running sessions when Account is reopened.
+  Validate generated snapshots and preserve the previous list on API failures.
+
+- Reuse local PyInstaller build work and Docker dependency layers; keep generated
+  files out of Git and Docker contexts, and update setup and maintenance guides.
+
+- Run release CI and platform builds in parallel, validate tag/version/changelog
+  agreement before building binaries, run CI for manual builds too, and smoke
+  test the built wheel outside the source tree before publishing it.
+
+- Cancel superseded branch runs, bound job runtime and artifact retention, cache
+  CI tooling/dependencies, and avoid recompressing release artifacts.
 
 - Find and resume unpublished GitHub drafts by release ID, including drafts
   omitted from the public tag endpoint, before verifying and publishing assets.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.9.28.0...v2026.9.28.2)
 
 ## 2026.9.28.1 - 2026-09-28
 
