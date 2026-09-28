@@ -6,7 +6,8 @@
   Android shared storage do not fail with `Errno 38`.
 - Publish the already validated wheel and source distribution from release CI
   instead of building the same packages again; avoid a full-history checkout
-  and a redundant cleanup on fresh build runners.
+  and a redundant cleanup on fresh build runners. Manual platform builds use
+  the CI result already checked on `main`; release tags still rerun the full gate.
 - Keep only `main` as the repository branch.
 
 ## 2026.9.26.1 - 2026-09-26
