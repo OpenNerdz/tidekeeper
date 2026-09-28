@@ -154,6 +154,11 @@ class ReleaseGitTests(unittest.TestCase):
         sha, tag = result.args
         self.assertEqual(self.run_git('ls-remote', 'origin', 'refs/heads/main').split()[0], sha)
         self.assertEqual(self.run_git('rev-parse', tag + '^{}'), sha)
+        identity = 'OpenNerdz <285293891+OpenNerdz@users.noreply.github.com>'
+        self.assertEqual(self.run_git('log', '-1', '--format=%an <%ae>|%cn <%ce>', sha),
+                         f'{identity}|{identity}')
+        self.assertEqual(self.run_git('for-each-ref', '--format=%(taggername) %(taggeremail)',
+                                      f'refs/tags/{tag}'), identity)
         self.assertIn(tag[1:], self.run_git('show', f'{tag}:{release.VERSION_PATH}'))
         title, body = release.release_notes(self.repo, tag)
         self.assertEqual(title, f'{tag} — Reliable builds')

@@ -79,10 +79,15 @@ a version is never recycled. A retry of the same preparation reuses its tag.
 
 The workflow commits the version and changelog to `main` and creates the tag in
 one atomic Git push. A competing push cannot be overwritten or leave half of
-that update behind. The bot uses `GITHUB_TOKEN`, so its commit/tag do not trigger
+that update behind. Automated commits and annotated tags use the maintainer's
+`OpenNerdz` Git identity and GitHub noreply email. Authentication still uses
+`GITHUB_TOKEN`, so its commit/tag do not trigger
 another workflow. All checks and builds check out the exact prepared commit.
-Pull the bot's changes before making your next push, as with any other change to
+Pull the automated changes before making your next push, as with any other change to
 `main`.
+
+GitHub still records the Actions app as the workflow/release publisher; Git
+authorship does not change that service identity or rewrite published history.
 
 CI and the five native platform builds run in parallel. Only after they all pass
 does the workflow upload a complete **draft** GitHub release. It publishes the
@@ -167,7 +172,8 @@ The GUI's Supporters list represents stargazers, not code contributors.
 when someone stars the repository, every six hours, or on manual dispatch.
 Scheduled runs also remove accounts that have unstarred; GitHub may delay runs.
 The updater validates the whole response, sorts and deduplicates usernames, and
-commits only changes to `supporters.json`. API failures preserve the old snapshot.
+commits only changes to `supporters.json` using the same `OpenNerdz` Git identity.
+API failures preserve the old snapshot.
 
 The app shows its bundled snapshot immediately, fetches the current file from
 `main` in a background worker, and checks again when Account is reopened after
