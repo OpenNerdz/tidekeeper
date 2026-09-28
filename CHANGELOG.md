@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.28.1 - 2026-09-28
+
 <!-- release-title: Automated releases and faster builds -->
 
 - Automatically prepare dated releases from application changes on main, retaining
@@ -20,6 +22,8 @@
   test the built wheel outside the source tree before publishing it.
 - Cancel superseded branch runs, bound job runtime and artifact retention, cache
   CI tooling/dependencies, and avoid recompressing release artifacts.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.9.28.0...v2026.9.28.1)
 
 ## 2026.9.28.0 - 2026-09-28
 
