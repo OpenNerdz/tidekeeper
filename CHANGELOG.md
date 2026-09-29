@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.29.4 - 2026-09-29
+
 <!-- release-title: Reliable containers and fully gated releases -->
 
 - Fall back from an unavailable home/app-state lock folder to private temporary
@@ -24,6 +26,8 @@
   the resulting tag does not launch a duplicate build.
 - Stop scheduled supporter commits to `main`; the desktop still refreshes the
   current stargazer list directly and retains its bundled offline snapshot.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.9.29.3...v2026.9.29.4)
 
 ## 2026.9.29.3 - 2026-09-29
 
