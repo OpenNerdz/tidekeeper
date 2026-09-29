@@ -13,6 +13,10 @@ from pathlib import Path
 
 from release import release_notes, version_key
 
+# About six minutes: PyPI's JSON API is cached and can trail a successful upload.
+PYPI_POLL_SECONDS = 15
+PYPI_VISIBILITY_ATTEMPTS = 24
+
 
 def digest(path):
     result = hashlib.sha256()
@@ -53,6 +57,18 @@ def pypi_files(tag):
             return {}
         raise
     return {item['filename']: item['digests']['sha256'] for item in payload['urls']}
+
+
+def wait_for_pypi(directory, tag, attempts=PYPI_VISIBILITY_ATTEMPTS, interval=PYPI_POLL_SECONDS):
+    """Wait until PyPI serves both validated files; its CDN can lag an upload by minutes."""
+    for attempt in range(attempts):
+        if not missing_distributions(directory, tag, pypi_files(tag)):
+            print('Both PyPI distribution hashes match the validated build')
+            return
+        if attempt < attempts - 1:
+            print(f'Waiting for PyPI to list {tag} ({attempt + 1}/{attempts})')
+            time.sleep(interval)
+    raise RuntimeError('PyPI has not exposed both validated distributions; rerun the failed publish job')
 
 
 def missing_distributions(directory, tag, remote):
@@ -169,13 +185,7 @@ def main():
                 handle.write(f'pending={str(bool(pending)).lower()}\n')
         print(f'{len(pending)} distributions need uploading')
     elif args.command == 'verify-pypi':
-        for attempt in range(6):
-            if not missing_distributions(args.directory, args.tag, pypi_files(args.tag)):
-                print('Both PyPI distribution hashes match the validated build')
-                return
-            if attempt < 5:
-                time.sleep(10)
-        raise RuntimeError('PyPI has not exposed both validated distributions; rerun the failed publish job')
+        wait_for_pypi(args.directory, args.tag)
     elif args.command == 'draft':
         github_draft(args.repository, args.tag, args.directory, args.notes)
     else:

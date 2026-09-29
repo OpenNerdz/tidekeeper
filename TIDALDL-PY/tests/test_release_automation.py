@@ -286,6 +286,24 @@ class ReleasePublishTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing='):
             publish.missing_distributions(self.directory, self.tag, {})
 
+    def test_verification_waits_for_pypi_cache_to_list_the_upload(self):
+        complete = {p.name: publish.digest(p) for p in self.directory.iterdir()}
+        listings = [{}, {}, complete]
+        with mock.patch.object(publish, 'pypi_files', side_effect=listings), \
+                mock.patch.object(publish.time, 'sleep') as sleep, \
+                contextlib.redirect_stdout(io.StringIO()):
+            publish.wait_for_pypi(self.directory, self.tag)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_verification_gives_up_after_the_visibility_window(self):
+        with mock.patch.object(publish, 'pypi_files', return_value={}) as listing, \
+                mock.patch.object(publish.time, 'sleep') as sleep, \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'rerun the failed publish job'):
+                publish.wait_for_pypi(self.directory, self.tag, attempts=3)
+        self.assertEqual((listing.call_count, sleep.call_count), (3, 2))
+        self.assertGreaterEqual(publish.PYPI_VISIBILITY_ATTEMPTS * publish.PYPI_POLL_SECONDS, 300)
+
     def test_incomplete_github_draft_is_never_published(self):
         with mock.patch.object(publish, 'gh_json', return_value={'draft': True, 'assets': []}), \
                 mock.patch.object(publish.subprocess, 'run') as run, \

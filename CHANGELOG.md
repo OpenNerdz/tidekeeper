@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+<!-- release-title: More reliable publishing -->
+
+- Wait up to six minutes for PyPI to list a new release before publishing it on
+  GitHub, instead of failing after 50 seconds while PyPI's cache catches up.
+
 ## 2026.9.29.1 - 2026-09-29
 
 <!-- release-title: Rewritten README and guides -->
