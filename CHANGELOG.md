@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+## 2026.9.29.2 - 2026-09-29
+
 <!-- release-title: More reliable publishing -->
 
 - Wait up to six minutes for PyPI to list a new release before publishing it on
   GitHub, instead of failing after 50 seconds while PyPI's cache catches up.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.9.29.1...v2026.9.29.2)
 
 ## 2026.9.29.1 - 2026-09-29
 
