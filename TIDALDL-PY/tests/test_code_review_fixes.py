@@ -54,7 +54,7 @@ class AlbumInfoTests(unittest.TestCase):
                 self.assertIn("Two", info)
 
     def test_write_failure_is_reported_without_aborting_the_album(self):
-        with mock.patch.object(download, "__writeTextFile__", side_effect=PermissionError("denied")), \
+        with mock.patch.object(download, "_writeTextFile", side_effect=PermissionError("denied")), \
                 mock.patch.object(download.Printf, "err") as err:
             self.assertFalse(download.downloadAlbumInfo(self._album(1), [_track("One", 1, 1)]))
         self.assertIn("AlbumInfo.txt", err.call_args[0][0])
@@ -149,12 +149,12 @@ class TokenPersistenceTests(unittest.TestCase):
     def test_oauth_data_includes_secret_only_when_configured(self):
         api = TidalAPI()
         api.apiKey = {"clientId": "id", "clientSecret": "secret"}
-        self.assertEqual(api.__oauthData__(grant_type="refresh_token"), {
+        self.assertEqual(api._oauthData(grant_type="refresh_token"), {
             "client_id": "id", "grant_type": "refresh_token", "scope": "r_usr w_usr w_sub",
             "client_secret": "secret",
         })
         api.apiKey = {"clientId": "id", "clientSecret": ""}
-        self.assertNotIn("client_secret", api.__oauthData__())
+        self.assertNotIn("client_secret", api._oauthData())
 
 
 @unittest.skipIf(QApplication is None, "PySide6 is not installed")

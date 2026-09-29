@@ -14,13 +14,13 @@ from .settings import SETTINGS, TOKEN
 from .tidal import TIDAL_API
 
 
-def __statusLine__(status, name, detail):
+def _statusLine(status, name, detail):
     suffix = f" - {detail}" if detail else ""
     return f"[{status}] {name}{suffix}"
 
 
-def __printStatus__(status, name, detail=""):
-    line = __statusLine__(status, name, detail)
+def _printStatus(status, name, detail=""):
+    line = _statusLine(status, name, detail)
     if status == "OK":
         Printf.success(line)
     elif status == "WARN":
@@ -29,7 +29,7 @@ def __printStatus__(status, name, detail=""):
         Printf.err(line)
 
 
-def __checkDownloadPath__():
+def _checkDownloadPath():
     path = SETTINGS.downloadPath or "."
     try:
         os.makedirs(path, exist_ok=True)
@@ -41,14 +41,14 @@ def __checkDownloadPath__():
         return "ERR", "Download path", str(e)
 
 
-def __checkApiKey__():
+def _checkApiKey():
     if apiKey.isItemValid(SETTINGS.apiKeyIndex):
         item = apiKey.getItem(SETTINGS.apiKeyIndex)
         return "OK", "TIDAL client", item.get("platform", str(SETTINGS.apiKeyIndex))
     return "ERR", "TIDAL client", f"invalid client index {SETTINGS.apiKeyIndex}"
 
 
-def __checkFfmpeg__():
+def _checkFfmpeg():
     path = shutil.which("ffmpeg")
     if path:
         return "OK", "ffmpeg", path
@@ -59,7 +59,7 @@ def __checkFfmpeg__():
     )
 
 
-def __checkToken__():
+def _checkToken():
     if aigpy.string.isNull(TOKEN.accessToken):
         return "WARN", "Token", "not logged in"
 
@@ -81,15 +81,15 @@ def runDoctor():
             "and protected directories if downloads fail."
         )
     checks = [
-        __checkDownloadPath__(),
-        __checkApiKey__(),
-        __checkFfmpeg__(),
-        __checkToken__(),
+        _checkDownloadPath(),
+        _checkApiKey(),
+        _checkFfmpeg(),
+        _checkToken(),
     ]
 
     hasError = False
     for status, name, detail in checks:
-        __printStatus__(status, name, detail)
+        _printStatus(status, name, detail)
         if status == "ERR":
             hasError = True
 

@@ -38,11 +38,11 @@ class ManifestAttemptBudgetTests(unittest.TestCase):
         api = TidalAPI()
         not_ready = _response(401, {"subStatus": 4005, "userMessage": "Asset is not ready for playback"})
         with mock.patch.object(api.session, "get", return_value=not_ready) as get, \
-             mock.patch.object(api, "__waitForStreamRequestQuota__"), \
+             mock.patch.object(api, "_waitForStreamRequestQuota"), \
              mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
              mock.patch("builtins.print"):
             with self.assertRaises(TidalApiError) as raised:
-                api.__getOpenApiTrackManifestOnce__(1, ["FLAC"], "DOWNLOAD")
+                api._getOpenApiTrackManifestOnce(1, ["FLAC"], "DOWNLOAD")
         self.assertEqual(raised.exception.statusCode, 401)
         self.assertEqual(get.call_count, PLAYBACK_ASSET_NOT_READY_ATTEMPTS)
         self.assertEqual(sleep.call_count, PLAYBACK_ASSET_NOT_READY_ATTEMPTS)
@@ -55,11 +55,11 @@ class ManifestAttemptBudgetTests(unittest.TestCase):
         # More 429s than the asset budget, then one asset wait, then success.
         responses = [limited] * (PLAYBACK_ASSET_NOT_READY_ATTEMPTS + 2) + [not_ready, success]
         with mock.patch.object(api.session, "get", side_effect=responses) as get, \
-             mock.patch.object(api, "__applyRateLimitPenalty__", return_value=1.0), \
-             mock.patch.object(api, "__waitForStreamRequestQuota__"), \
+             mock.patch.object(api, "_applyRateLimitPenalty", return_value=1.0), \
+             mock.patch.object(api, "_waitForStreamRequestQuota"), \
              mock.patch("tidal_dl.tidal.time.sleep"), \
              mock.patch("builtins.print"):
-            result = api.__getOpenApiTrackManifestOnce__(1, ["FLAC"], "DOWNLOAD")
+            result = api._getOpenApiTrackManifestOnce(1, ["FLAC"], "DOWNLOAD")
         self.assertEqual(result, {"manifest": "ok"})
         self.assertEqual(get.call_count, len(responses))
 
@@ -82,10 +82,10 @@ class RateLimitWaitCapTests(unittest.TestCase):
             json=mock.Mock(return_value={"id": 1}),
         )
         with mock.patch.object(api.session, "get", side_effect=[limited, limited, limited, limited, success]) as get, \
-             mock.patch.object(api, "__applyRateLimitPenalty__", return_value=1.0), \
+             mock.patch.object(api, "_applyRateLimitPenalty", return_value=1.0), \
              mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
              mock.patch("builtins.print"):
-            result = api.__getOnce__("albums/1", urlpre=API_BASE_PRIMARY)
+            result = api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
         self.assertEqual(result, {"id": 1})
         self.assertEqual(get.call_count, 5)
         self.assertEqual(sleep.call_count, 4)
@@ -100,11 +100,11 @@ class RateLimitWaitCapTests(unittest.TestCase):
             json=mock.Mock(return_value={}),
         )
         with mock.patch.object(api.session, "get", return_value=limited), \
-             mock.patch.object(api, "__applyRateLimitPenalty__", return_value=60.0), \
+             mock.patch.object(api, "_applyRateLimitPenalty", return_value=60.0), \
              mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
              mock.patch("builtins.print"):
             with self.assertRaises(TidalApiError) as raised:
-                api.__getOnce__("albums/1", urlpre=API_BASE_PRIMARY)
+                api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
         self.assertEqual(raised.exception.statusCode, 429)
         # First 429 waits 60s (under 90s cap); second 60s would exceed the cap.
         self.assertEqual(sleep.call_count, 1)
@@ -126,11 +126,11 @@ class RateLimitWaitCapTests(unittest.TestCase):
             json=mock.Mock(return_value={"data": {"attributes": {"manifest": "ok"}}}),
         )
         with mock.patch.object(api.session, "get", side_effect=[limited, limited, limited, limited, success]) as get, \
-             mock.patch.object(api, "__applyRateLimitPenalty__", return_value=1.0), \
-             mock.patch.object(api, "__waitForStreamRequestQuota__"), \
+             mock.patch.object(api, "_applyRateLimitPenalty", return_value=1.0), \
+             mock.patch.object(api, "_waitForStreamRequestQuota"), \
              mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
              mock.patch("builtins.print"):
-            result = api.__getOpenApiTrackManifestOnce__(1, ["FLAC"], "DOWNLOAD")
+            result = api._getOpenApiTrackManifestOnce(1, ["FLAC"], "DOWNLOAD")
         self.assertEqual(result, {"manifest": "ok"})
         self.assertEqual(get.call_count, 5)
         self.assertEqual(sleep.call_count, 4)

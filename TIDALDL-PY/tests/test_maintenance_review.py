@@ -35,7 +35,7 @@ class MaintenanceReviewTests(unittest.TestCase):
         sentinel = self.root / '.tidekeeper-write-test'
         sentinel.write_text('keep this file')
         SETTINGS.downloadPath = str(self.root)
-        self.assertEqual(diagnostics.__checkDownloadPath__()[0], 'OK')
+        self.assertEqual(diagnostics._checkDownloadPath()[0], 'OK')
         self.assertEqual(sentinel.read_text(), 'keep this file')
         self.assertEqual(list(self.root.iterdir()), [sentinel])
 
@@ -205,8 +205,8 @@ class MaintenanceReviewTests(unittest.TestCase):
         api = TidalAPI()
         self.addCleanup(api.session.close)
         rows = list(range(50))
-        with mock.patch.object(api, '__get__', return_value={'totalNumberOfItems': 50, 'items': rows}) as get:
-            self.assertEqual(api.__getItems__('albums'), rows)
+        with mock.patch.object(api, '_get', return_value={'totalNumberOfItems': 50, 'items': rows}) as get:
+            self.assertEqual(api._getItems('albums'), rows)
             get.assert_called_once()
 
     def test_reload_restores_saved_settings_without_persisting_runtime_changes(self):
@@ -234,7 +234,7 @@ class MaintenanceReviewTests(unittest.TestCase):
         output.write_bytes(b'previous data')
         with mock.patch.object(download, 'check_cancelled', side_effect=DownloadCancelled):
             with self.assertRaises(DownloadCancelled):
-                download.__concatenateFiles__([str(source)], str(output))
+                download._concatenateFiles([str(source)], str(output))
         self.assertEqual(output.read_bytes(), b'previous data')
         self.assertFalse(Path(f'{output}.tmp.{os.getpid()}').exists())
         self.assertEqual(source.read_bytes(), b'new data')
@@ -252,6 +252,6 @@ class MaintenanceReviewTests(unittest.TestCase):
         stream = SimpleNamespace(codec='flac', container='mp4', manifestMimeType='')
         with mock.patch.object(download.shutil, 'which', return_value='ffmpeg'), \
              mock.patch.object(download, 'run_process', side_effect=cancel), self.assertRaises(DownloadCancelled):
-            download.__exportFlacFromContainer__(str(source), stream)
+            download._exportFlacFromContainer(str(source), stream)
         self.assertFalse(temporary.exists())
         self.assertEqual(source.read_bytes(), b'media')

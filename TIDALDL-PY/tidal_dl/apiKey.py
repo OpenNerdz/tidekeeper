@@ -10,7 +10,7 @@
 """
 # IDs are persisted in profiles. Never renumber surviving clients when removing
 # retired entries: doing so silently switches clients and invalidates logins.
-__API_KEYS__ = {
+_API_KEYS = {
     1: {
         "platform": "Fire TV (legacy)",
         "formats": "Legacy alternative; playback availability varies",
@@ -34,7 +34,7 @@ __API_KEYS__ = {
     },
 }
 DEFAULT_API_KEY_INDEX = 5
-__ERROR_KEY__ = {
+_ERROR_KEY = {
     'platform': 'None',
     'formats': '',
     'clientId': '',
@@ -43,20 +43,20 @@ __ERROR_KEY__ = {
 
 
 def getItem(index: int):
-    return __API_KEYS__.get(index, __ERROR_KEY__).copy()
+    return _API_KEYS.get(index, _ERROR_KEY).copy()
 
 
 def isItemValid(index: int):
-    return index in __API_KEYS__
+    return index in _API_KEYS
 
 
 def getItems():
     """Return selectable clients with stable IDs, not their list positions."""
-    return [dict(item, index=index) for index, item in __API_KEYS__.items()]
+    return [dict(item, index=index) for index, item in _API_KEYS.items()]
 
 
 def getLimitIndexs():
-    return [str(index) for index in __API_KEYS__]
+    return [str(index) for index in _API_KEYS]
 
 
 def getDefaultIndex():

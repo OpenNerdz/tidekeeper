@@ -47,17 +47,17 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
     def test_client_not_entitled_is_not_retryable_manifest_error(self):
         api = TidalAPI()
         error = TidalApiError("blocked", 403, ["CLIENT_NOT_ENTITLED"])
-        self.assertFalse(api.__isRetryableManifestError__(error))
-        self.assertTrue(api.__isRetryableManifestError__(
+        self.assertFalse(api._isRetryableManifestError(error))
+        self.assertTrue(api._isRetryableManifestError(
             TidalApiError("missing", 403, ["PREREQUISITE_MISSING"])
         ))
 
     def test_openapi_client_not_entitled_does_not_retry_playback_usage(self):
         api = TidalAPI()
         error = TidalApiError("blocked", 403, ["CLIENT_NOT_ENTITLED"])
-        with mock.patch.object(api, "__getOpenApiTrackManifestOnce__", side_effect=error) as once:
+        with mock.patch.object(api, "_getOpenApiTrackManifestOnce", side_effect=error) as once:
             with self.assertRaises(TidalApiError):
-                api.__getOpenApiTrackManifest__(123, ["EAC3_JOC"])
+                api._getOpenApiTrackManifest(123, ["EAC3_JOC"])
         once.assert_called_once()
         self.assertEqual(once.call_args.args[2], "DOWNLOAD")
 
@@ -65,13 +65,13 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         api = TidalAPI()
         with mock.patch.object(
             api,
-            "__getOpenApiTrackManifest__",
+            "_getOpenApiTrackManifest",
             side_effect=TidalApiError("blocked", 403, ["CLIENT_NOT_ENTITLED"]),
         ) as openapi:
             with self.assertRaises(TidalApiError):
-                api.__getAtmosStreamUrl__(999)
+                api._getAtmosStreamUrl(999)
             with self.assertRaises(TidalStreamUnavailable):
-                api.__getAtmosStreamUrl__(999)
+                api._getAtmosStreamUrl(999)
         openapi.assert_called_once()
         self.assertIn("999", api._atmosUnavailableTrackIds)
 
@@ -79,13 +79,13 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         api = TidalAPI()
         with mock.patch.object(
             api,
-            "__getOpenApiTrackManifest__",
+            "_getOpenApiTrackManifest",
             side_effect=TidalApiError("cdn blip", 403, []),
         ) as openapi:
             with self.assertRaises(TidalApiError):
-                api.__getAtmosStreamUrl__(888)
+                api._getAtmosStreamUrl(888)
             with self.assertRaises(TidalApiError):
-                api.__getAtmosStreamUrl__(888)
+                api._getAtmosStreamUrl(888)
         self.assertEqual(openapi.call_count, 2)
         self.assertNotIn("888", api._atmosUnavailableTrackIds)
 
@@ -93,11 +93,11 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         api = TidalAPI()
         with mock.patch.object(
             api,
-            "__getAtmosStreamUrl__",
+            "_getAtmosStreamUrl",
             side_effect=TidalStreamUnavailable("no atmos"),
-        ), mock.patch.object(api, "__getStandardStreamUrl__") as standard:
+        ), mock.patch.object(api, "_getStandardStreamUrl") as standard:
             with self.assertRaises(TidalStreamUnavailable):
-                api.__getAudioStreamUrlForQuality__(456, AudioQuality.Atmos)
+                api._getAudioStreamUrlForQuality(456, AudioQuality.Atmos)
         standard.assert_not_called()
 
     def test_catalog_429_applies_adaptive_penalty(self):
@@ -117,10 +117,10 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
             json=mock.Mock(return_value={"id": 1}),
         )
         with mock.patch.object(api.session, "get", side_effect=[response, success]), \
-             mock.patch.object(api, "__applyRateLimitPenalty__", return_value=11.0) as penalize, \
+             mock.patch.object(api, "_applyRateLimitPenalty", return_value=11.0) as penalize, \
              mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
              mock.patch("builtins.print"):
-            result = api.__getOnce__("albums/1", urlpre=API_BASE_PRIMARY)
+            result = api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
         self.assertEqual(result, {"id": 1})
         penalize.assert_called_once()
         sleep.assert_called_once_with(11.0)
@@ -135,7 +135,7 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
             json=mock.Mock(return_value={"access_token": "ok"}),
         )
         with mock.patch.object(api.session, "post", return_value=response):
-            result = api.__post__("/token", {})
+            result = api._post("/token", {})
         self.assertEqual(result, {"access_token": "ok"})
         response.close.assert_called_once_with()
 
@@ -157,7 +157,7 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         )
         with mock.patch.object(api.session, "get", side_effect=[failed, success]), \
              mock.patch("tidal_dl.tidal.time.sleep") as sleep:
-            result = api.__getOnce__("albums/1", urlpre=API_BASE_PRIMARY)
+            result = api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
         self.assertEqual(result, {"id": 1})
         sleep.assert_called_once_with(4.0)
 
@@ -172,7 +172,7 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         )
         with mock.patch.object(api.session, "get", return_value=response):
             with self.assertRaises(TidalApiError) as context:
-                api.__getOnce__("albums/1", urlpre=API_BASE_PRIMARY)
+                api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
         self.assertIn("invalid JSON payload", str(context.exception))
 
     def test_manifest_rejects_missing_attributes(self):
@@ -185,9 +185,9 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
             json=mock.Mock(return_value={"data": {}}),
         )
         with mock.patch.object(api.session, "get", return_value=response), \
-             mock.patch.object(api, "__waitForStreamRequestQuota__"):
+             mock.patch.object(api, "_waitForStreamRequestQuota"):
             with self.assertRaises(TidalApiError) as context:
-                api.__getOpenApiTrackManifestOnce__(1, ["FLAC"], "DOWNLOAD")
+                api._getOpenApiTrackManifestOnce(1, ["FLAC"], "DOWNLOAD")
         self.assertIn("attributes are missing", str(context.exception))
 
     def test_atmos_album_twin_cache_avoids_repeat_lookup(self):

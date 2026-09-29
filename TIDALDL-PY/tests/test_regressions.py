@@ -115,7 +115,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         api = TidalAPI()
         api.key.deviceCode = "device-code"
 
-        with mock.patch.object(api, "__post__", return_value={"error": "authorization_pending"}):
+        with mock.patch.object(api, "_post", return_value={"error": "authorization_pending"}):
             self.assertFalse(api.checkAuthStatus())
 
     def test_link_command_aborts_when_login_fails(self):
@@ -288,7 +288,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             ],
         }
 
-        with mock.patch.object(api, "__get__", return_value=payload):
+        with mock.patch.object(api, "_get", return_value=payload):
             album = api.getAlbum(123)
 
         self.assertEqual([artist.id for artist in album.artists], [123, 456])
@@ -307,7 +307,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             "album": {"id": 1, "title": "Album"},
         }
 
-        with mock.patch.object(api, "__get__", return_value=payload):
+        with mock.patch.object(api, "_get", return_value=payload):
             track = api.getTrack(456)
 
         self.assertEqual([artist.id for artist in track.artists], [123, 456])
@@ -381,7 +381,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
     def test_album_items_include_tracks_when_stream_ready_missing(self):
         api = TidalAPI()
-        api.__getItems__ = lambda path: [
+        api._getItems = lambda path: [
             {"type": "track", "item": {"id": 1, "title": "Legacy Ready"}},
             {"type": "track", "item": {"id": 2, "streamReady": False, "title": "Unavailable"}},
         ]
@@ -421,7 +421,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
     def test_album_items_skip_unstreamable_tracks_instead_of_treating_them_as_videos(self):
         api = TidalAPI()
-        api.__getItems__ = lambda path: [
+        api._getItems = lambda path: [
             {"type": "track", "item": {"id": 1, "streamReady": True, "title": "Ready"}},
             {"type": "track", "item": {"id": 2, "streamReady": False, "title": "Unavailable"}},
             {"type": "video", "item": {"id": 3, "title": "Video"}},
@@ -443,7 +443,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 {"type": "video", "item": {"id": 20, "title": "Video Two"}},
             ]
 
-        api.__getItems__ = fake_items
+        api._getItems = fake_items
 
         videos = api.getArtistVideos(99)
 
@@ -520,7 +520,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             "expires_in": 3600,
         }
 
-        with mock.patch.object(api, "__post__", return_value=result):
+        with mock.patch.object(api, "_post", return_value=result):
             self.assertTrue(api.refreshAccessToken("old-refresh"))
 
         self.assertEqual(api.key.refreshToken, "new-refresh")
@@ -604,7 +604,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                      fake_response(401, {"status": 401}),
                      fake_response(200, {"id": 123, "title": "Album"}),
                  ]) as get:
-                data = api.__get__("albums/123")
+                data = api._get("albums/123")
 
             self.assertEqual(data["title"], "Album")
             self.assertEqual(events.TOKEN.accessToken, "fresh-access")
@@ -636,7 +636,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         old_delay = events.SETTINGS.downloadDelay
         try:
             events.SETTINGS.downloadDelay = False
-            with mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
+            with mock.patch.object(api, "_refreshSavedAccessToken", return_value=False), \
                  mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
                  mock.patch.object(api.session, "get", side_effect=[
                      fake_response(401, {"status": 401, "subStatus": 4005, "userMessage": "Asset is not ready for playback"}),
@@ -647,7 +647,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                          "manifest": manifest,
                      }),
                  ]):
-                data = api.__getOnce__(
+                data = api._getOnce(
                     "tracks/123/playbackinfopostpaywall/v4",
                     _playback_params("LOSSLESS"),
                     API_BASE_PRIMARY,
@@ -673,7 +673,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             events.SETTINGS.downloadDelay = True
             api.playbackRateLimiter = limiter
             with mock.patch.object(api.session, "get", return_value=response):
-                self.assertEqual(api.__get__("tracks/123/playbackinfopostpaywall/v4"), {"ok": True})
+                self.assertEqual(api._get("tracks/123/playbackinfopostpaywall/v4"), {"ok": True})
 
             limiter.wait.assert_called_once_with()
         finally:
@@ -708,7 +708,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             api.playbackRateLimiter = limiter
             with mock.patch.object(api.session, "get", side_effect=[rate_limited, success]), \
                  mock.patch("tidal_dl.tidal.time.sleep") as sleep:
-                attrs = api.__getOpenApiTrackManifest__(456, ["FLAC"])
+                attrs = api._getOpenApiTrackManifest(456, ["FLAC"])
 
             self.assertEqual(attrs["formats"], ["FLAC"])
             limiter.penalize.assert_called_once_with(17.0)
@@ -738,7 +738,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             events.SETTINGS.downloadDelay = True
             api.playbackRateLimiter = limiter
             with mock.patch.object(api.session, "get", return_value=response):
-                attrs = api.__getOpenApiTrackManifest__(456, ["FLAC"])
+                attrs = api._getOpenApiTrackManifest(456, ["FLAC"])
 
             self.assertEqual(attrs["formats"], ["FLAC"])
             limiter.wait.assert_called_once_with()
@@ -750,11 +750,11 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         with mock.patch.object(
             api,
-            "__getOpenApiTrackManifest__",
+            "_getOpenApiTrackManifest",
             side_effect=TidalApiError("Get operation failed: HTTP 429", statusCode=429),
         ) as openapi_get, mock.patch.object(
             api,
-            "__getPlaybackData__",
+            "_getPlaybackData",
         ) as playback_get:
             with self.assertRaises(TidalApiError) as ctx:
                 api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
@@ -777,7 +777,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             events.SETTINGS.downloadDelay = False
             with mock.patch.object(api.session, "get", return_value=response) as get_mock:
                 with self.assertRaises(TidalApiError) as ctx:
-                    api.__getOnce__(
+                    api._getOnce(
                         "tracks/456/playbackinfopostpaywall/v4",
                         _playback_params("LOSSLESS"),
                         API_BASE_PRIMARY,
@@ -795,9 +795,9 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             self._dash_manifest("flac").encode("utf-8")
         ).decode("utf-8")
 
-        with mock.patch.object(api, "__getPlaybackData__") as playback_get, mock.patch.object(
+        with mock.patch.object(api, "_getPlaybackData") as playback_get, mock.patch.object(
             api,
-            "__getOpenApiTrackManifest__",
+            "_getOpenApiTrackManifest",
             return_value={"formats": ["FLAC"], "uri": uri},
         ):
             stream = api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
@@ -818,11 +818,11 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 json=mock.Mock(return_value={"errors": [{"status": "429"}]}),
             )
             with mock.patch.object(api.session, "get", return_value=response) as get_mock, \
-                 mock.patch.object(api, "__applyRateLimitPenalty__", return_value=60.0), \
+                 mock.patch.object(api, "_applyRateLimitPenalty", return_value=60.0), \
                  mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
                  mock.patch("builtins.print"):
                 with self.assertRaises(TidalApiError) as ctx:
-                    api.__getOpenApiTrackManifest__(456, ["FLAC"])
+                    api._getOpenApiTrackManifest(456, ["FLAC"])
 
             self.assertEqual(ctx.exception.statusCode, 429)
             # First 429 waits 60s (under 90s cap); second would exceed the cap.
@@ -1325,10 +1325,10 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             download.SETTINGS.showTrackInfo = False
             with mock.patch.object(download.TIDAL_API, "findAtmosTrackVariant", return_value=atmos) as resolve, \
                  mock.patch.object(download.TIDAL_API, "getAlbum", return_value=atmos_album), \
-                 mock.patch.object(download, "__getTrackStream__", return_value=stream) as get_stream, \
+                 mock.patch.object(download, "_getTrackStream", return_value=stream) as get_stream, \
                  mock.patch.object(download, "getTrackPath", return_value="/tmp/track.m4a"), \
-                 mock.patch.object(download, "__existingMediaState__", return_value=("/tmp/track.m4a", True)), \
-                 mock.patch.object(download, "__saveLyricsForTrack__", return_value=None), \
+                 mock.patch.object(download, "_existingMediaState", return_value=("/tmp/track.m4a", True)), \
+                 mock.patch.object(download, "_saveLyricsForTrack", return_value=None), \
                  mock.patch.object(download.Printf, "success"), \
                  mock.patch.object(download.Printf, "info"):
                 ok, err = download.downloadTrack(stereo, album=None, playlist=SimpleNamespace(uuid="p", title="Playlist"))
@@ -1376,7 +1376,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         try:
             events.SETTINGS.audioQuality = AudioQuality.Atmos
             events.SETTINGS.audioQualityPriority = []
-            preferred = events.__preferAtmosAlbums__([stereo, atmos, other])
+            preferred = events._preferAtmosAlbums([stereo, atmos, other])
             self.assertEqual([item.id for item in preferred], [200, 300])
         finally:
             events.SETTINGS.audioQuality = old_quality
@@ -1460,7 +1460,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         with mock.patch.object(download.aigpy.tag, "TagTool", return_value=fake_tag), \
              mock.patch.object(download.TIDAL_API, "getCoverUrl", return_value=""):
-            download.__setMetaData__(track, album, "/tmp/track.m4a", None, "")
+            download._setMetaData(track, album, "/tmp/track.m4a", None, "")
 
         self.assertEqual(fake_tag.artist, ["Artist"])
         self.assertEqual(fake_tag.albumartist, ["Artist"])
@@ -1477,7 +1477,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         with mock.patch.object(download.aigpy.tag, "TagTool", return_value=fake_tag), \
              mock.patch.object(download.TIDAL_API, "getCoverUrl", return_value=""):
-            download.__setMetaData__(track, album, "/tmp/track.m4a", None, "")
+            download._setMetaData(track, album, "/tmp/track.m4a", None, "")
 
         self.assertEqual(fake_tag.artist, ["Artist One", "Artist Two"])
         self.assertEqual(fake_tag.albumartist, ["Artist One", "Artist Three"])
@@ -1514,7 +1514,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         with mock.patch.object(download.aigpy.tag, "TagTool", return_value=fake_tag), \
              mock.patch.object(download.TIDAL_API, "getCoverUrl", return_value=""):
             with self.assertRaisesRegex(Exception, "tag write failed"):
-                download.__setMetaData__(track, album, "/tmp/track.m4a", None, "")
+                download._setMetaData(track, album, "/tmp/track.m4a", None, "")
 
     def test_metadata_tags_are_created_before_save_when_missing(self):
         track = self._track()
@@ -1527,7 +1527,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         with mock.patch.object(download.aigpy.tag, "TagTool", return_value=fake_tag), \
              mock.patch.object(download.TIDAL_API, "getCoverUrl", return_value=""):
-            download.__setMetaData__(track, album, "/tmp/track.m4a", None, "")
+            download._setMetaData(track, album, "/tmp/track.m4a", None, "")
 
         fake_handle.add_tags.assert_called_once_with()
         fake_tag.save.assert_called_once_with("")
@@ -1563,11 +1563,11 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         with mock.patch.object(
             api,
-            "__getOpenApiTrackManifest__",
+            "_getOpenApiTrackManifest",
             side_effect=Exception(
                 'Track manifest request failed: HTTP 403 {"errors":[{"code":"CLIENT_NOT_ENTITLED"}]}'
             ),
-        ), mock.patch.object(api, "__getPlaybackData__", return_value={
+        ), mock.patch.object(api, "_getPlaybackData", return_value={
             "trackid": 456,
             "audioQuality": "HI_RES_LOSSLESS",
             "manifestMimeType": "application/vnd.tidal.bt",
@@ -1593,8 +1593,8 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             ["CLIENT_NOT_ENTITLED"],
         )
 
-        with mock.patch.object(api, "__getOpenApiTrackManifest__", side_effect=blocked), \
-             mock.patch.object(api, "__getPlaybackData__", side_effect=[
+        with mock.patch.object(api, "_getOpenApiTrackManifest", side_effect=blocked), \
+             mock.patch.object(api, "_getPlaybackData", side_effect=[
                 blocked,
                 {
                     "trackid": 456,
@@ -1637,12 +1637,12 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             flac_xml.encode("utf-8")
         ).decode("utf-8")
 
-        with mock.patch.object(api, "__getPlaybackData__", return_value={
+        with mock.patch.object(api, "_getPlaybackData", return_value={
             "trackid": 456,
             "audioQuality": "HIGH",
             "manifestMimeType": "application/vnd.tidal.bt",
             "manifest": high_manifest,
-        }), mock.patch.object(api, "__getOpenApiTrackManifest__", return_value={
+        }), mock.patch.object(api, "_getOpenApiTrackManifest", return_value={
             "formats": ["FLAC"],
             "uri": flac_uri,
         }) as openapi_get:
@@ -1743,11 +1743,11 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         with mock.patch.object(
             api,
-            "__getOpenApiTrackManifest__",
+            "_getOpenApiTrackManifest",
             side_effect=Exception(
                 'Track manifest request failed: HTTP 403 {"errors":[{"code":"CLIENT_NOT_ENTITLED"}]}'
             ),
-        ), mock.patch.object(api, "__getPlaybackData__", return_value={
+        ), mock.patch.object(api, "_getPlaybackData", return_value={
             "trackid": 456,
             "audioQuality": "HIGH",
             "manifestMimeType": "application/vnd.tidal.bt",
@@ -1777,7 +1777,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
 
         with mock.patch.object(
             api,
-            "__getOpenApiTrackManifest__",
+            "_getOpenApiTrackManifest",
             side_effect=[
                 Exception(
                     'Track manifest request failed: HTTP 403 {"errors":[{"code":"CLIENT_NOT_ENTITLED"}]}'
@@ -1787,7 +1787,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                     "uri": lossless_uri,
                 },
             ],
-        ), mock.patch.object(api, "__getPlaybackData__", side_effect=[
+        ), mock.patch.object(api, "_getPlaybackData", side_effect=[
             {
                 "trackid": 456,
                 "audioQuality": "LOW",
@@ -1820,12 +1820,12 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             self._dash_manifest("flac").encode("utf-8")
         ).decode("utf-8")
 
-        with mock.patch.object(api, "__getOpenApiTrackManifest__", return_value={
+        with mock.patch.object(api, "_getOpenApiTrackManifest", return_value={
             "formats": ["FLAC"],
             "uri": uri,
         }) as openapi_get, mock.patch.object(
             api,
-            "__getPlaybackData__",
+            "_getPlaybackData",
             side_effect=Exception("Get operation err!Asset is not ready for playback"),
         ) as playback_get:
             stream = api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
@@ -1848,12 +1848,12 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             self._dash_manifest("flac").encode("utf-8")
         ).decode("utf-8")
 
-        with mock.patch.object(api, "__getOpenApiTrackManifest__", return_value={
+        with mock.patch.object(api, "_getOpenApiTrackManifest", return_value={
             "formats": ["FLAC_HIRES", "FLAC"],
             "uri": uri,
         }) as openapi_get, mock.patch.object(
             api,
-            "__getPlaybackData__",
+            "_getPlaybackData",
             side_effect=Exception("Get operation err!Asset is not ready for playback"),
         ):
             stream = api.getStreamUrlByPriority(456, [AudioQuality.Max])
@@ -1870,8 +1870,8 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 raise TidalApiError("Track manifest request failed: HTTP 403", statusCode=403)
             return payload["data"]["attributes"]
 
-        with mock.patch.object(api, "__getOpenApiTrackManifestOnce__", side_effect=fake_once) as once_get:
-            attrs = api.__getOpenApiTrackManifest__(456, ["FLAC"])
+        with mock.patch.object(api, "_getOpenApiTrackManifestOnce", side_effect=fake_once) as once_get:
+            attrs = api._getOpenApiTrackManifest(456, ["FLAC"])
 
         self.assertEqual(attrs["formats"], ["FLAC"])
         self.assertEqual(once_get.call_count, 2)
@@ -1891,7 +1891,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 "getStreamUrlByPriority",
                 return_value=expected_stream,
             ) as priority_get:
-                stream = download.__getTrackStream__(track.id)
+                stream = download._getTrackStream(track.id)
 
             self.assertIs(stream, expected_stream)
             priority_get.assert_called_once_with(track.id, [AudioQuality.Atmos, AudioQuality.High])
@@ -1912,7 +1912,7 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 "getStreamUrlByPriority",
                 return_value=expected_stream,
             ) as priority_get, mock.patch.object(download.TIDAL_API, "getStreamUrl") as ladder_get:
-                stream = download.__getTrackStream__(track.id)
+                stream = download._getTrackStream(track.id)
 
             self.assertIs(stream, expected_stream)
             priority_get.assert_called_once_with(track.id, [AudioQuality.HiFi])
@@ -1982,8 +1982,8 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 raise Exception("v4 unavailable")
             return manifest
 
-        with mock.patch.object(api, "__getOnce__", side_effect=fake_get_once):
-            data = api.__getPlaybackData__(123, _playback_params("HIGH", prefetch=True))
+        with mock.patch.object(api, "_getOnce", side_effect=fake_get_once):
+            data = api._getPlaybackData(123, _playback_params("HIGH", prefetch=True))
 
         self.assertEqual(data["trackid"], 123)
         self.assertEqual(calls[0][1], "tracks/123/playbackinfopostpaywall/v4")
@@ -1992,14 +1992,14 @@ class CliAuthPathRegressionTests(unittest.TestCase):
     def test_download_rejects_track_not_stream_ready(self):
         track = self._track()
         track.streamReady = False
-        with mock.patch.object(download, "__getTrackStream__") as get_stream:
+        with mock.patch.object(download, "_getTrackStream") as get_stream:
             ok, err = download.downloadTrack(track)
         get_stream.assert_not_called()
         self.assertFalse(ok)
         self.assertIn("not ready for streaming", err)
 
     def test_download_error_hint_for_asset_not_ready(self):
-        hint = download.__downloadErrorHint__(Exception("Asset is not ready for playback"))
+        hint = download._downloadErrorHint(Exception("Asset is not ready for playback"))
         self.assertIn("retry later", hint)
 
     def test_tidal_url_parser_ignores_query_strings_and_fragments(self):
@@ -2055,12 +2055,12 @@ class CliAuthPathRegressionTests(unittest.TestCase):
             api.key.accessToken = "fresh-access"
             return True
 
-        with mock.patch.object(api, "__refreshSavedAccessToken__", side_effect=fake_refresh), \
+        with mock.patch.object(api, "_refreshSavedAccessToken", side_effect=fake_refresh), \
              mock.patch.object(api.session, "get", side_effect=[
                  fake_response(404, stale_body),
                  fake_response(200, {"id": 123, "title": "Album"}),
              ]) as get:
-            data = api.__get__("albums/123")
+            data = api._get("albums/123")
 
         self.assertEqual(data["title"], "Album")
         self.assertEqual(get.call_args_list[0].kwargs["headers"]["authorization"], "Bearer stale-access")
@@ -2091,10 +2091,10 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                                      accessToken="stale-access", refreshToken="stale-refresh",
                                      expiresAfter=123), \
                  mock.patch.object(events.TOKEN, "save") as save_token, \
-                 mock.patch.object(api, "__refreshSavedAccessToken__", return_value=False), \
+                 mock.patch.object(api, "_refreshSavedAccessToken", return_value=False), \
                  mock.patch.object(api.session, "get", return_value=response) as get_mock:
                 with self.assertRaises(TidalApiError) as ctx:
-                    api.__getOnce__(
+                    api._getOnce(
                         "tracks/456",
                         {},
                         API_BASE_PRIMARY,
@@ -2124,8 +2124,8 @@ class CliAuthPathRegressionTests(unittest.TestCase):
                 )
             return payload
 
-        with mock.patch.object(api, "__getOpenApiTrackManifestOnce__", side_effect=fake_once) as once_get:
-            attrs = api.__getOpenApiTrackManifest__(456, ["FLAC_HIRES", "FLAC"])
+        with mock.patch.object(api, "_getOpenApiTrackManifestOnce", side_effect=fake_once) as once_get:
+            attrs = api._getOpenApiTrackManifest(456, ["FLAC_HIRES", "FLAC"])
 
         self.assertEqual(attrs["formats"], ["FLAC"])
         once_get.assert_any_call(456, ["FLAC_HIRES", "FLAC"], "DOWNLOAD")
@@ -2137,28 +2137,28 @@ class CliAuthPathRegressionTests(unittest.TestCase):
         prerequisite_error = TidalApiError(
             "Get operation failed: HTTP 403", 403, ["PREREQUISITE_MISSING"]
         )
-        api.__markPlaybackParamBlocked__("HI_RES_LOSSLESS", prerequisite_error)
+        api._markPlaybackParamBlocked("HI_RES_LOSSLESS", prerequisite_error)
         self.assertNotIn("HI_RES_LOSSLESS", api._playbackBlockedParams)
 
         stale_error = TidalApiError("Get operation failed: HTTP 404", 404, ["4022"])
-        api.__markPlaybackParamBlocked__("LOW", stale_error)
+        api._markPlaybackParamBlocked("LOW", stale_error)
         self.assertNotIn("LOW", api._playbackBlockedParams)
 
         entitlement_error = TidalApiError(
             "Get operation failed: HTTP 403", 403, ["CLIENT_NOT_ENTITLED"]
         )
-        api.__markPlaybackParamBlocked__("HI_RES_LOSSLESS", entitlement_error)
+        api._markPlaybackParamBlocked("HI_RES_LOSSLESS", entitlement_error)
         self.assertIn("HI_RES_LOSSLESS", api._playbackBlockedParams)
 
     def test_download_error_hint_for_stale_session(self):
-        hint = download.__downloadErrorHint__(Exception(
+        hint = download._downloadErrorHint(Exception(
             'Get operation failed: HTTP 404 {"status":404,"subStatus":4022,'
             '"userMessage":"Client referenced in the request does not seem to exist."}'
         ))
         self.assertIn("log in again", hint)
 
     def test_download_error_hint_for_prerequisite_missing(self):
-        hint = download.__downloadErrorHint__(Exception(
+        hint = download._downloadErrorHint(Exception(
             'Track manifest request failed: HTTP 403 '
             '{"errors":[{"status":"403","code":"PREREQUISITE_MISSING"}]}'
         ))
@@ -2194,7 +2194,7 @@ class ReliabilityRegressionTests(unittest.TestCase):
         success.json.return_value = {"access_token": "ok"}
         with mock.patch.object(api.session, "post", side_effect=[failed, success]), \
              mock.patch("tidal_dl.tidal.time.sleep") as sleep:
-            result = api.__post__("/token", {})
+            result = api._post("/token", {})
         self.assertEqual(result, {"access_token": "ok"})
         sleep.assert_called_once_with(max(2.0, SETTINGS.requestIntervalSeconds))
 
@@ -2204,7 +2204,7 @@ class ReliabilityRegressionTests(unittest.TestCase):
         response.json.return_value = []
         with mock.patch.object(api.session, "post", return_value=response):
             with self.assertRaises(TidalApiError):
-                api.__post__("/token", {})
+                api._post("/token", {})
 
     def test_saved_token_refresh_reuses_refresh_from_other_worker(self):
         api = TidalAPI()
@@ -2216,7 +2216,7 @@ class ReliabilityRegressionTests(unittest.TestCase):
             TOKEN.userid = "user"
             TOKEN.countryCode = "US"
             with mock.patch.object(api, "refreshAccessToken") as refresh:
-                self.assertTrue(api.__refreshSavedAccessToken__())
+                self.assertTrue(api._refreshSavedAccessToken())
             refresh.assert_not_called()
             self.assertEqual(api.key.accessToken, "fresh")
         finally:

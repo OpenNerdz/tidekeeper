@@ -25,7 +25,7 @@ from .printf import Printf
 from .settings import SETTINGS, TOKEN, syncPlaybackRateLimiter
 from .tidal import TIDAL_API
 from .download import (
-    __wantsAtmosDownload__, downloadAlbumInfo, downloadCover, downloadTrack,
+    _wantsAtmosDownload, downloadAlbumInfo, downloadCover, downloadTrack,
     downloadTracks, downloadVideo, downloadVideos,
 )
 
@@ -36,11 +36,11 @@ START DOWNLOAD
 '''
 
 
-def __resolveAlbumForDownload__(obj: Album) -> Album:
+def _resolveAlbumForDownload(obj: Album) -> Album:
     """Prefer the Atmos catalog twin when Atmos quality is requested."""
-    if obj is None or not __wantsAtmosDownload__():
+    if obj is None or not _wantsAtmosDownload():
         return obj
-    if TIDAL_API.__hasAtmosMode__(obj):
+    if TIDAL_API._hasAtmosMode(obj):
         return obj
     atmos = TIDAL_API.findAtmosAlbumVariant(obj)
     if atmos is None or str(getattr(atmos, "id", "")) == str(getattr(obj, "id", "")):
@@ -52,23 +52,23 @@ def __resolveAlbumForDownload__(obj: Album) -> Album:
     return atmos
 
 
-def __preferAtmosAlbums__(albums):
+def _preferAtmosAlbums(albums):
     """When Atmos is requested, skip stereo albums that already have an Atmos twin in the list."""
-    if not albums or not __wantsAtmosDownload__():
+    if not albums or not _wantsAtmosDownload():
         return albums
 
     atmos_titles = {
-        TIDAL_API.__normalizeCatalogTitle__(getattr(album, "title", None))
+        TIDAL_API._normalizeCatalogTitle(getattr(album, "title", None))
         for album in albums
-        if TIDAL_API.__hasAtmosMode__(album)
+        if TIDAL_API._hasAtmosMode(album)
     }
     preferred = []
     for album in albums:
-        title = TIDAL_API.__normalizeCatalogTitle__(getattr(album, "title", None))
+        title = TIDAL_API._normalizeCatalogTitle(getattr(album, "title", None))
         if (
             title
             and title in atmos_titles
-            and not TIDAL_API.__hasAtmosMode__(album)
+            and not TIDAL_API._hasAtmosMode(album)
         ):
             continue
         preferred.append(album)
@@ -80,7 +80,7 @@ def _progress_kwargs(progress):
 
 
 def start_album(obj: Album, videoOnly=False, progress=None):
-    obj = __resolveAlbumForDownload__(obj)
+    obj = _resolveAlbumForDownload(obj)
     Printf.album(obj)
     tracks, videos = TIDAL_API.getItems(obj.id, Type.Album)
     if hasattr(progress, 'plan_collection'):
@@ -126,7 +126,7 @@ def start_artist(obj: Artist, videoOnly=False, progress=None):
             return False
         return downloadVideos(videos, None, **_progress_kwargs(progress))
 
-    albums = __preferAtmosAlbums__(TIDAL_API.getArtistAlbums(obj.id, SETTINGS.includeEP))
+    albums = _preferAtmosAlbums(TIDAL_API.getArtistAlbums(obj.id, SETTINGS.includeEP))
     Printf.artist(obj, len(albums))
     success = True
     for item in albums:
@@ -347,7 +347,7 @@ LOGIN
 '''
 
 
-def __displayTime__(seconds, granularity=2):
+def _displayTime(seconds, granularity=2):
     if seconds <= 0:
         return "unknown"
 
@@ -378,7 +378,7 @@ def loginByWeb():
 
         print(LANG.select.AUTH_NEXT_STEP.format(
             aigpy.cmd.green(url),
-            aigpy.cmd.yellow(__displayTime__(TIDAL_API.key.authCheckTimeout))))
+            aigpy.cmd.yellow(_displayTime(TIDAL_API.key.authCheckTimeout))))
         print(LANG.select.AUTH_WAITING)
 
         start = time.time()
@@ -390,7 +390,7 @@ def loginByWeb():
                 continue
 
             Printf.success(LANG.select.MSG_VALID_ACCESSTOKEN.format(
-                __displayTime__(int(TIDAL_API.key.expiresIn))))
+                _displayTime(int(TIDAL_API.key.expiresIn))))
             TIDAL_API.saveKeyToToken(TIDAL_API.keyExpiresAfter())
             return True
 
@@ -409,7 +409,7 @@ def loginByConfig():
 
         if TIDAL_API.verifyAccessToken(TOKEN.accessToken):
             Printf.info(LANG.select.MSG_VALID_ACCESSTOKEN.format(
-                __displayTime__(int(TOKEN.expiresAfter - time.time()))))
+                _displayTime(int(TOKEN.expiresAfter - time.time()))))
 
             TIDAL_API.key.countryCode = TOKEN.countryCode
             TIDAL_API.key.userId = TOKEN.userid
@@ -419,7 +419,7 @@ def loginByConfig():
         Printf.info(LANG.select.MSG_INVALID_ACCESSTOKEN)
         if not aigpy.string.isNull(TOKEN.refreshToken) and TIDAL_API.refreshAccessToken(TOKEN.refreshToken):
             Printf.success(LANG.select.MSG_VALID_ACCESSTOKEN.format(
-                __displayTime__(int(TIDAL_API.key.expiresIn))))
+                _displayTime(int(TIDAL_API.key.expiresIn))))
             TIDAL_API.saveKeyToToken(TIDAL_API.keyExpiresAfter())
             return True
         else:

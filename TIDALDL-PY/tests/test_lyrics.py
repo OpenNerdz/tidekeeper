@@ -13,7 +13,7 @@ class LyricsTests(unittest.TestCase):
     def test_timed_subtitles_write_lrc_and_plain_lyrics_tag_metadata(self):
         data = SimpleNamespace(subtitles="[00:01.00]Timed lyric", lyrics="Plain lyric")
 
-        metadata, file_text, extension = download.__lyricsPayload__(data)
+        metadata, file_text, extension = download._lyricsPayload(data)
 
         self.assertEqual(metadata, "Plain lyric")
         self.assertEqual(file_text, "[00:01.00]Timed lyric")
@@ -29,7 +29,7 @@ class LyricsTests(unittest.TestCase):
 
             try:
                 download.SETTINGS.lyricFile = True
-                metadata = download.__writeLyricsFile__(str(media_path), data)
+                metadata = download._writeLyricsFile(str(media_path), data)
             finally:
                 download.SETTINGS.lyricFile = old_setting
 
@@ -47,7 +47,7 @@ class LyricsTests(unittest.TestCase):
 
             try:
                 download.SETTINGS.lyricFile = True
-                metadata = download.__writeLyricsFile__(str(media_path), data)
+                metadata = download._writeLyricsFile(str(media_path), data)
             finally:
                 download.SETTINGS.lyricFile = old_setting
 
@@ -68,7 +68,7 @@ class LyricsTests(unittest.TestCase):
                 download.SETTINGS.lyricFile = True
                 with mock.patch.object(download.os, "replace", side_effect=OSError("replace failed")):
                     with self.assertRaises(OSError):
-                        download.__writeLyricsFile__(str(media_path), data)
+                        download._writeLyricsFile(str(media_path), data)
             finally:
                 download.SETTINGS.lyricFile = old_setting
 
@@ -93,7 +93,7 @@ class LyricsTests(unittest.TestCase):
             with mock.patch.object(download.TIDAL_API, "getLyrics", side_effect=[primary, fallback]) as get_lyrics, \
                  mock.patch.object(download.TIDAL_API, "search", return_value=object()) as search, \
                  mock.patch.object(download.TIDAL_API, "getSearchResultItems", return_value=[candidate]):
-                lyrics = download.__getLyricsForTrack__(track)
+                lyrics = download._getLyricsForTrack(track)
         finally:
             download.SETTINGS.lyricFile = old_setting
 
@@ -144,7 +144,7 @@ class LyricsTests(unittest.TestCase):
             with mock.patch.object(download.TIDAL_API, "getLyrics", side_effect=[primary, timed]) as get_lyrics, \
                  mock.patch.object(download.TIDAL_API, "search", return_value=object()), \
                  mock.patch.object(download.TIDAL_API, "getSearchResultItems", return_value=[weak_candidate, best_candidate]):
-                lyrics = download.__getLyricsForTrack__(track)
+                lyrics = download._getLyricsForTrack(track)
         finally:
             download.SETTINGS.lyricFile = old_setting
 
@@ -161,7 +161,7 @@ class LyricsTests(unittest.TestCase):
 
             try:
                 download.SETTINGS.lyricFile = True
-                metadata = download.__writeLyricsFile__(str(media_path), data)
+                metadata = download._writeLyricsFile(str(media_path), data)
             finally:
                 download.SETTINGS.lyricFile = old_setting
 
@@ -172,7 +172,7 @@ class LyricsTests(unittest.TestCase):
     def test_get_lyrics_uses_current_api_host(self):
         api = TidalAPI()
 
-        with mock.patch.object(api, "__get__", return_value={"trackId": 42298, "lyrics": "Plain lyric"}) as get:
+        with mock.patch.object(api, "_get", return_value={"trackId": 42298, "lyrics": "Plain lyric"}) as get:
             lyrics = api.getLyrics(42298)
 
         self.assertIsInstance(lyrics, Lyrics)

@@ -98,9 +98,9 @@ class PlaybackClientTests(unittest.TestCase):
             'client_secret': self.api.apiKey['clientSecret'],
         })
         with mock.patch.object(self.api.session, 'get', return_value=denied) as get, \
-                mock.patch.object(self.api, '__refreshSavedAccessToken__') as refresh:
+                mock.patch.object(self.api, '_refreshSavedAccessToken') as refresh:
             with self.assertRaises(TidalApiError) as error:
-                self.api.__getPlaybackData__(465909959, {'audioquality': 'LOSSLESS'})
+                self.api._getPlaybackData(465909959, {'audioquality': 'LOSSLESS'})
         self.assertSessionKept()
         refresh.assert_not_called()
         get.assert_called_once()
@@ -111,15 +111,15 @@ class PlaybackClientTests(unittest.TestCase):
             self.assertIn(detail, message)
         for secret in ('private-access', 'private-refresh', self.api.apiKey['clientSecret']):
             self.assertNotIn(secret, message)
-        self.assertNotIn('log out', download.__downloadErrorHint__(error.exception))
-        self.assertNotIn('log out', download.__downloadErrorHint__(message))
+        self.assertNotIn('log out', download._downloadErrorHint(error.exception))
+        self.assertNotIn('log out', download._downloadErrorHint(message))
 
     def test_track_id_containing_429_is_not_misdiagnosed_as_a_rate_limit(self):
         with mock.patch.object(self.api.session, 'get', return_value=openapi()):
             stream = self.api.getStreamUrlByPriority(1429123, [AudioQuality.HiFi])
         self.assertEqual(stream.soundQuality, 'LOSSLESS')
-        error = self.api.__playbackClientError__('tracks/1429123/playbackinfopostpaywall', 'LOSSLESS')
-        self.assertIn('login kept', download.__downloadErrorHint__(error))
+        error = self.api._playbackClientError('tracks/1429123/playbackinfopostpaywall', 'LOSSLESS')
+        self.assertIn('login kept', download._downloadErrorHint(error))
         self.assertSessionKept()
 
     def test_playback_4022_can_recover_via_openapi(self):
@@ -150,13 +150,13 @@ class PlaybackClientTests(unittest.TestCase):
         self.assertSessionKept()
         self.assertIn('playbackinfopostpaywall', str(error.exception))
         self.assertIn('kept', str(error.exception))
-        self.assertNotIn('stale', download.__downloadErrorHint__(error.exception))
+        self.assertNotIn('stale', download._downloadErrorHint(error.exception))
 
     def test_openapi_jsonapi_4022_is_a_playback_rejection(self):
         denied = response(404, {'errors': [{'status': '404', 'code': '4022'}]})
         with mock.patch.object(self.api.session, 'get', return_value=denied) as get:
             with self.assertRaises(TidalApiError) as error:
-                self.api.__getOpenApiTrackManifest__(465909959, ['FLAC_HIRES', 'FLAC'])
+                self.api._getOpenApiTrackManifest(465909959, ['FLAC_HIRES', 'FLAC'])
         get.assert_called_once()
         self.assertIn('kept', str(error.exception))
         self.assertSessionKept()
@@ -165,9 +165,9 @@ class PlaybackClientTests(unittest.TestCase):
         preview = {'trackPresentation': 'PREVIEW', 'formats': ['FLAC_HIRES']}
         full = {'trackPresentation': 'FULL', 'formats': ['FLAC_HIRES']}
         with mock.patch.object(
-            self.api, '__getOpenApiTrackManifestOnce__', side_effect=[preview, full],
+            self.api, '_getOpenApiTrackManifestOnce', side_effect=[preview, full],
         ) as manifest:
-            result = self.api.__getOpenApiTrackManifest__(465909959, ['FLAC_HIRES'])
+            result = self.api._getOpenApiTrackManifest(465909959, ['FLAC_HIRES'])
 
         self.assertEqual(result, full)
         self.assertEqual(manifest.call_args_list, [
@@ -178,16 +178,16 @@ class PlaybackClientTests(unittest.TestCase):
     def test_preview_only_manifest_is_rejected(self):
         preview = {'trackPresentation': 'PREVIEW', 'formats': ['FLAC_HIRES']}
         with mock.patch.object(
-            self.api, '__getOpenApiTrackManifestOnce__', return_value=preview,
+            self.api, '_getOpenApiTrackManifestOnce', return_value=preview,
         ) as manifest:
             with self.assertRaisesRegex(TidalStreamUnavailable, 'preview-only'):
-                self.api.__getOpenApiTrackManifest__(465909959, ['FLAC_HIRES'])
+                self.api._getOpenApiTrackManifest(465909959, ['FLAC_HIRES'])
 
         self.assertEqual(manifest.call_count, 2)
 
     def test_catalog_4022_still_clears_unusable_session_without_legacy_retry(self):
         with mock.patch.object(self.api.session, 'get', return_value=rejected()) as get, \
-                mock.patch.object(self.api, '__refreshSavedAccessToken__', return_value=False):
+                mock.patch.object(self.api, '_refreshSavedAccessToken', return_value=False):
             with self.assertRaises(TidalApiError):
                 self.api.getTrack(465909959)
         self.assertIsNone(self.api.key.accessToken)
@@ -199,7 +199,7 @@ class PlaybackClientTests(unittest.TestCase):
     def test_video_playback_rejection_keeps_session(self):
         with mock.patch.object(self.api.session, 'get', return_value=rejected()):
             with self.assertRaises(TidalApiError):
-                self.api.__getPlaybackData__(123, {'videoquality': 'HIGH'}, media='videos')
+                self.api._getPlaybackData(123, {'videoquality': 'HIGH'}, media='videos')
         self.assertSessionKept()
 
     def test_rate_limit_after_4022_is_not_hidden_by_quality_fallback(self):
@@ -217,7 +217,7 @@ class PlaybackClientTests(unittest.TestCase):
                 mock.patch.object(SETTINGS, 'audioQuality', AudioQuality.Master), \
                 mock.patch.object(SETTINGS, 'audioQualityPriority', []), \
                 mock.patch.object(self.api.session, 'get', side_effect=[rejected(), playback('HI_RES_LOSSLESS')]) as get:
-            stream = download.__getTrackStream__(465909959)
+            stream = download._getTrackStream(465909959)
             self.assertEqual(SETTINGS.audioQuality, AudioQuality.Master)
         self.assertEqual(stream.soundQuality, 'HI_RES_LOSSLESS')
         self.assertEqual(stream.requestedQuality, 'Master')
@@ -293,8 +293,8 @@ class PlaybackClientTests(unittest.TestCase):
 
     def test_protected_only_response_is_not_returned_or_cached_as_playable(self):
         protected = TidalStreamUnavailable('DRM-protected DASH streams are not supported.')
-        with mock.patch.object(self.api, '__getOpenApiFlacStreamUrl__', side_effect=protected), \
-                mock.patch.object(self.api, '__getStandardStreamUrl__', side_effect=protected):
+        with mock.patch.object(self.api, '_getOpenApiFlacStreamUrl', side_effect=protected), \
+                mock.patch.object(self.api, '_getStandardStreamUrl', side_effect=protected):
             with self.assertRaisesRegex(TidalStreamUnavailable, 'DRM-protected'):
                 self.api.getStreamUrlByPriority(465909959, [AudioQuality.Max])
         self.assertFalse(self.api._streamCache)

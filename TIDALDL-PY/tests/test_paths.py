@@ -6,19 +6,19 @@ from unittest import mock
 
 from tidal_dl.enums import AudioQuality
 from tidal_dl.model import Album, Artist, StreamUrl, Track, Video
-from tidal_dl.paths import __getExtension__, PATHS, getAlbumPath, getTrackPath, getVideoPath, openPath
+from tidal_dl.paths import _getExtension, PATHS, getAlbumPath, getTrackPath, getVideoPath, openPath
 from tidal_dl.settings import SETTINGS
 from tidal_dl.transfer_state import prepare_transfer, record_completion
 
 
 class PathTests(unittest.TestCase):
     def test_portable_component_sanitizer_blocks_controls_devices_and_traversal(self):
-        from tidal_dl.paths import __fixPath__, __safeTemplatePath__
+        from tidal_dl.paths import _fixPath, _safeTemplatePath
 
-        self.assertNotIn('\0', __fixPath__('bad\0name'))
-        self.assertEqual(__fixPath__('CON'), '_CON')
-        self.assertEqual(__fixPath__('name. '), 'name')
-        self.assertEqual(__safeTemplatePath__('../outside/track'), 'outside/track')
+        self.assertNotIn('\0', _fixPath('bad\0name'))
+        self.assertEqual(_fixPath('CON'), '_CON')
+        self.assertEqual(_fixPath('name. '), 'name')
+        self.assertEqual(_safeTemplatePath('../outside/track'), 'outside/track')
 
     def test_long_media_names_leave_room_for_all_pipeline_files(self):
         stream = StreamUrl()
@@ -69,7 +69,7 @@ class PathTests(unittest.TestCase):
 
         with mock.patch("tidal_dl.paths.SETTINGS") as settings:
             settings.saveAsFlac = False
-            self.assertEqual(__getExtension__(stream), ".m4a")
+            self.assertEqual(_getExtension(stream), ".m4a")
 
     def test_save_as_flac_setting_uses_flac_extension_for_dash_flac(self):
         stream = StreamUrl()
@@ -80,14 +80,14 @@ class PathTests(unittest.TestCase):
 
         with mock.patch("tidal_dl.paths.SETTINGS") as settings:
             settings.saveAsFlac = True
-            self.assertEqual(__getExtension__(stream), ".flac")
+            self.assertEqual(_getExtension(stream), ".flac")
 
     def test_native_flac_url_uses_flac_extension(self):
         stream = StreamUrl()
         stream.url = "https://example.invalid/audio.flac"
         stream.codec = "flac"
 
-        self.assertEqual(__getExtension__(stream), ".flac")
+        self.assertEqual(_getExtension(stream), ".flac")
 
     def test_atmos_eac3_dash_uses_m4a_extension(self):
         stream = StreamUrl()
@@ -96,7 +96,7 @@ class PathTests(unittest.TestCase):
         stream.manifestMimeType = "application/dash+xml"
         stream.container = "mp4"
 
-        self.assertEqual(__getExtension__(stream), ".m4a")
+        self.assertEqual(_getExtension(stream), ".m4a")
 
     def test_path_summary_contains_user_visible_locations(self):
         labels = [label for label, value in PATHS.getPathSummary()]
@@ -163,11 +163,11 @@ class PathTests(unittest.TestCase):
 
     def test_duration_and_release_date_tokens_are_windows_safe(self):
         from types import SimpleNamespace
-        from tidal_dl.paths import getAlbumPath, __fixPath__, __getDurationStr__
+        from tidal_dl.paths import getAlbumPath, _fixPath, _getDurationStr
 
-        raw = __getDurationStr__(3723)
+        raw = _getDurationStr(3723)
         self.assertIn(":", raw)
-        self.assertNotIn(":", __fixPath__(raw))
+        self.assertNotIn(":", _fixPath(raw))
 
         album = SimpleNamespace(
             artists=[],

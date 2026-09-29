@@ -402,7 +402,7 @@ class CollectionRetryFlowTests(unittest.TestCase):
         self.track_attempts.append(track.id)
         ok = self.track_results.get(track.id, True)
         if not ok:
-            self.download.__logFailedTrack__(track, album, reason='Transfer failed')
+            self.download._logFailedTrack(track, album, reason='Transfer failed')
         return ok, ''
 
     def download_video(self, video, album=None, *args, **kwargs):

@@ -47,27 +47,27 @@ class Printf(object):
         print("\033[2J\033[H", end="")
 
     @staticmethod
-    def __enumName__(value):
+    def _enumName(value):
         text = str(value)
         return text.rsplit(".", 1)[-1]
 
     @staticmethod
-    def __shorten__(value, width=68):
+    def _shorten(value, width=68):
         value = str(value)
         if len(value) <= width:
             return value
         return value[:width - 3] + "..."
 
     @staticmethod
-    def __terminalWidth__():
+    def _terminalWidth():
         return shutil.get_terminal_size((80, 20)).columns
 
     @staticmethod
-    def __isCompact__():
-        return isTermux() or Printf.__terminalWidth__() < 72
+    def _isCompact():
+        return isTermux() or Printf._terminalWidth() < 72
 
     @staticmethod
-    def __gettable__(columns, rows):
+    def _gettable(columns, rows):
         tb = prettytable.PrettyTable()
         tb.field_names = list(aigpy.cmd.green(item) for item in columns)
         tb.align = 'l'
@@ -98,19 +98,19 @@ class Printf(object):
             ("-r, --resolution NAME", resolutions),
             ("-c, --configPathOverride PATH", "Use non-default base path for config/tokens/logs"),
         ]
-        if Printf.__isCompact__():
+        if Printf._isCompact():
             for option, description in rows:
                 print(option)
                 print(f"  {description}")
             return
 
-        tb = Printf.__gettable__(["OPTION", "DESCRIPTION"], rows)
+        tb = Printf._gettable(["OPTION", "DESCRIPTION"], rows)
         tb.set_style(prettytable.TableStyle.PLAIN_COLUMNS)
         print(tb)
 
     @staticmethod
     def paths():
-        tb = Printf.__gettable__(["PATH", "VALUE"], PATHS.getPathSummary())
+        tb = Printf._gettable(["PATH", "VALUE"], PATHS.getPathSummary())
         tb.set_style(prettytable.TableStyle.PLAIN_COLUMNS)
         print(tb)
 
@@ -137,7 +137,7 @@ class Printf(object):
             # Newer settings may not be translated in every language pack yet.
             return getattr(LANG.select, key, fallback)
 
-        tb = Printf.__gettable__([LANG.select.SETTING, LANG.select.VALUE], [
+        tb = Printf._gettable([LANG.select.SETTING, LANG.select.VALUE], [
             #settings - path and format
             [LANG.select.SETTING_PATH, PATHS.getProfilePath()],
             [LANG.select.SETTING_DOWNLOAD_PATH, data.downloadPath],
@@ -182,13 +182,13 @@ class Printf(object):
         signed_in = not aigpy.string.isNull(TOKEN.accessToken)
         account = aigpy.cmd.green("signed in") if signed_in else aigpy.cmd.yellow("not signed in")
         region = TOKEN.countryCode or "unknown"
-        compact = Printf.__isCompact__()
-        path = Printf.__shorten__(data.downloadPath, 42 if compact else 68)
-        audio = Printf.__enumName__(data.audioQuality)
+        compact = Printf._isCompact()
+        path = Printf._shorten(data.downloadPath, 42 if compact else 68)
+        audio = Printf._enumName(data.audioQuality)
         priority = data.getDownloadAudioQualityPriority()
         if priority:
             audio = ">".join(item.name for item in priority)
-        video = Printf.__enumName__(data.videoQuality)
+        video = Printf._enumName(data.videoQuality)
 
         print("")
         print(aigpy.cmd.green(f"Tidekeeper {VERSION}"))
@@ -294,7 +294,7 @@ class Printf(object):
         modes = getattr(data, "audioModes", None) or []
         modes_label = ", ".join(str(mode) for mode in modes) if modes else ""
         flag = TIDAL_API.getFlag(data, Type.Album, short=False)
-        tb = Printf.__gettable__([LANG.select.MODEL_ALBUM_PROPERTY, LANG.select.VALUE], [
+        tb = Printf._gettable([LANG.select.MODEL_ALBUM_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_TITLE, data.title],
             ["ID", data.id],
             [LANG.select.MODEL_TRACK_NUMBER, data.numberOfTracks],
@@ -315,7 +315,7 @@ class Printf(object):
 
     @staticmethod
     def track(data: Track, stream: StreamUrl = None):
-        tb = Printf.__gettable__([LANG.select.MODEL_TRACK_PROPERTY, LANG.select.VALUE], [
+        tb = Printf._gettable([LANG.select.MODEL_TRACK_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_TITLE, data.title],
             ["ID", data.id],
             [LANG.select.MODEL_ALBUM, data.album.title],
@@ -345,7 +345,7 @@ class Printf(object):
 
     @staticmethod
     def video(data: Video, stream: VideoStreamUrl = None):
-        tb = Printf.__gettable__([LANG.select.MODEL_VIDEO_PROPERTY, LANG.select.VALUE], [
+        tb = Printf._gettable([LANG.select.MODEL_VIDEO_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_TITLE, data.title],
             [LANG.select.MODEL_ALBUM, data.album.title if data.album is not None else None],
             [LANG.select.MODEL_VERSION, data.version],
@@ -363,7 +363,7 @@ class Printf(object):
 
     @staticmethod
     def artist(data: Artist, num, countLabel="Number of albums"):
-        tb = Printf.__gettable__([LANG.select.MODEL_ARTIST_PROPERTY, LANG.select.VALUE], [
+        tb = Printf._gettable([LANG.select.MODEL_ARTIST_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_ID, data.id],
             [LANG.select.MODEL_NAME, data.name],
             [countLabel, num],
@@ -377,7 +377,7 @@ class Printf(object):
 
     @staticmethod
     def playlist(data):
-        tb = Printf.__gettable__([LANG.select.MODEL_PLAYLIST_PROPERTY, LANG.select.VALUE], [
+        tb = Printf._gettable([LANG.select.MODEL_PLAYLIST_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_TITLE, data.title],
             [LANG.select.MODEL_TRACK_NUMBER, data.numberOfTracks],
             [LANG.select.MODEL_VIDEO_NUMBER, data.numberOfVideos],
@@ -391,7 +391,7 @@ class Printf(object):
 
     @staticmethod
     def mix(data):
-        tb = Printf.__gettable__([LANG.select.MODEL_PLAYLIST_PROPERTY, LANG.select.VALUE], [
+        tb = Printf._gettable([LANG.select.MODEL_PLAYLIST_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_ID, data.id],
             [LANG.select.MODEL_TRACK_NUMBER, len(data.tracks)],
             [LANG.select.MODEL_VIDEO_NUMBER, len(data.videos)],
@@ -405,13 +405,13 @@ class Printf(object):
     @staticmethod
     def apikeys(items):
         print("Tidal clients")
-        if Printf.__isCompact__():
+        if Printf._isCompact():
             for item in items:
                 print(f"{item['index']} - {item['platform']}")
                 print(f"  {item['formats']}")
             return
 
-        tb = Printf.__gettable__(["Index", "Platform", "Formats"], [
+        tb = Printf._gettable(["Index", "Platform", "Formats"], [
             [item["index"], item["platform"], item["formats"]] for item in items
         ])
         print(tb)

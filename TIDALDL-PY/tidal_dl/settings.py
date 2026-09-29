@@ -258,12 +258,12 @@ class TokenSettings(aigpy.model.ModelBase):
     refreshToken = None
     expiresAfter = 0
 
-    def __encode__(self, string):
+    def _encode(self, string):
         sw = bytes(string, 'utf-8')
         st = base64.b64encode(sw)
         return st
 
-    def __decode__(self, string):
+    def _decode(self, string):
         try:
             sr = base64.b64decode(string)
             st = sr.decode()
@@ -277,7 +277,7 @@ class TokenSettings(aigpy.model.ModelBase):
         txt = _readText(self._path_)
         if len(txt) > 0:
             try:
-                data = json.loads(self.__decode__(txt))
+                data = json.loads(self._decode(txt))
                 if not isinstance(data, dict):
                     raise ValueError("token root must be a JSON object")
                 for name in ('userid', 'countryCode', 'clientId', 'accessToken', 'refreshToken'):
@@ -292,7 +292,7 @@ class TokenSettings(aigpy.model.ModelBase):
             except (json.JSONDecodeError, TypeError, ValueError) as error:
                 logging.warning("Ignoring invalid token file %s: %s", self._path_, error)
 
-    def __ensurePath__(self):
+    def _ensurePath(self):
         if getattr(self, '_path_', None):
             return self._path_
         # Allow save() after programmatic login without a prior read().
@@ -301,10 +301,10 @@ class TokenSettings(aigpy.model.ModelBase):
         return self._path_
 
     def save(self):
-        path = self.__ensurePath__()
+        path = self._ensurePath()
         data = aigpy.model.modelToDict(self)
         txt = json.dumps(data)
-        encoded = self.__encode__(txt)
+        encoded = self._encode(txt)
         _atomicWrite(path, encoded, binary=True, mode=0o600)
 
 

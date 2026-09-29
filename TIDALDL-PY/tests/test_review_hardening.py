@@ -136,8 +136,8 @@ class ReviewHardeningTests(unittest.TestCase):
     def test_video_master_uses_checked_transport_and_final_redirect_base(self):
         content = b'#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=640x360\nvideo/index.m3u8\n'
         result = response(content, url='https://cdn.example/redirected/master.m3u8')
-        with mock.patch.object(download, '__httpRequest__', return_value=result) as request:
-            variants = self.api.__getResolutionList__('https://cdn.example/master.m3u8')
+        with mock.patch.object(download, '_httpRequest', return_value=result) as request:
+            variants = self.api._getResolutionList('https://cdn.example/master.m3u8')
         self.assertEqual(variants[0].m3u8Url, 'https://cdn.example/redirected/video/index.m3u8')
         self.assertTrue(request.call_args.kwargs['stream'])
         self.assertTrue(request.call_args.kwargs['allow_redirects'])
@@ -145,15 +145,15 @@ class ReviewHardeningTests(unittest.TestCase):
 
     def test_video_master_closes_response_when_parsing_fails(self):
         result = response(b'Not a playlist')
-        with mock.patch.object(download, '__httpRequest__', return_value=result), self.assertRaises(ValueError):
-            self.api.__getResolutionList__('https://cdn.example/master.m3u8')
+        with mock.patch.object(download, '_httpRequest', return_value=result), self.assertRaises(ValueError):
+            self.api._getResolutionList('https://cdn.example/master.m3u8')
         result.close.assert_called_once()
 
     def test_oauth_requests_do_not_follow_redirects(self):
         result = response(status=302)
         with mock.patch.object(self.api.session, 'post', return_value=result) as post, \
                 self.assertRaises(TidalApiError):
-            self.api.__post__('/token', {'grant_type': 'device'})
+            self.api._post('/token', {'grant_type': 'device'})
         self.assertFalse(post.call_args.kwargs['allow_redirects'])
         result.close.assert_called_once()
 
@@ -161,13 +161,13 @@ class ReviewHardeningTests(unittest.TestCase):
         for uri in ('link.tidal.com', 'https://link.tidal.com'):
             grant = {'deviceCode': 'device', 'userCode': 'AB-CD', 'verificationUri': uri,
                      'expiresIn': 300, 'interval': 5}
-            with self.subTest(uri=uri), mock.patch.object(self.api, '__post__', return_value=grant):
+            with self.subTest(uri=uri), mock.patch.object(self.api, '_post', return_value=grant):
                 self.assertEqual(self.api.getDeviceCode(), 'https://link.tidal.com/AB-CD')
 
     def test_sign_in_address_requires_expected_provider(self):
         grant = {'deviceCode': 'device', 'userCode': 'AB-CD', 'verificationUri': 'https://example.com',
                  'expiresIn': 300, 'interval': 5}
-        with mock.patch.object(self.api, '__post__', return_value=grant), self.assertRaises(TidalApiError):
+        with mock.patch.object(self.api, '_post', return_value=grant), self.assertRaises(TidalApiError):
             self.api.getDeviceCode()
 
     def test_cancelled_device_request_cannot_install_a_late_challenge(self):
@@ -175,13 +175,13 @@ class ReviewHardeningTests(unittest.TestCase):
             self.api.clearSession()
             return {'deviceCode': 'device', 'userCode': 'AB-CD', 'verificationUri': 'link.tidal.com',
                     'expiresIn': 300, 'interval': 5}
-        with mock.patch.object(self.api, '__post__', side_effect=grant), self.assertRaises(TidalApiError):
+        with mock.patch.object(self.api, '_post', side_effect=grant), self.assertRaises(TidalApiError):
             self.api.getDeviceCode()
         self.assertIsNone(self.api.key.deviceCode)
 
     def test_device_slow_down_increases_poll_interval(self):
         self.api.key.authCheckInterval = 5
-        with mock.patch.object(self.api, '__post__', return_value={'error': 'slow_down'}):
+        with mock.patch.object(self.api, '_post', return_value={'error': 'slow_down'}):
             self.assertFalse(self.api.checkAuthStatus())
             self.assertEqual(self.api.key.authCheckInterval, 10)
 
@@ -195,9 +195,9 @@ class ReviewHardeningTests(unittest.TestCase):
 
     def test_preview_playback_is_not_downloaded_as_full_audio_or_video(self):
         payload = {'assetPresentation': 'PREVIEW'}
-        with mock.patch.object(self.api, '__getPlaybackData__', return_value=payload):
+        with mock.patch.object(self.api, '_getPlaybackData', return_value=payload):
             with self.assertRaises(TidalStreamUnavailable):
-                self.api.__getStandardStreamUrl__(123, AudioQuality.High)
+                self.api._getStandardStreamUrl(123, AudioQuality.High)
             with self.assertRaises(TidalStreamUnavailable):
                 self.api.getVideoStreamUrl(123, VideoQuality.P720)
 
@@ -209,16 +209,16 @@ class ReviewHardeningTests(unittest.TestCase):
             variants.append(item)
         payload = {'manifestMimeType': 'application/vnd.tidal.emu',
                    'manifest': base64.b64encode(json.dumps({'urls': ['https://cdn.example/master']}).encode()).decode()}
-        with mock.patch.object(self.api, '__getPlaybackData__', return_value=payload), \
-                mock.patch.object(self.api, '__getResolutionList__', return_value=variants):
+        with mock.patch.object(self.api, '_getPlaybackData', return_value=payload), \
+                mock.patch.object(self.api, '_getResolutionList', return_value=variants):
             self.assertIs(self.api.getVideoStreamUrl(1, VideoQuality.P720), variants[0])
             self.assertIs(self.api.getVideoStreamUrl(1, VideoQuality.P1080), variants[1])
 
     def test_manifest_decode_limits_decoded_content(self):
         with mock.patch('tidal_dl.tidal.MAX_MANIFEST_BYTES', 4):
-            self.assertEqual(self.api.__decodeManifest__(base64.b64encode(b'test').decode()), 'test')
+            self.assertEqual(self.api._decodeManifest(base64.b64encode(b'test').decode()), 'test')
             with self.assertRaises(TidalStreamUnavailable):
-                self.api.__decodeManifest__(base64.b64encode(b'tests').decode())
+                self.api._decodeManifest(base64.b64encode(b'tests').decode())
 
     def test_hls_requires_a_complete_media_playlist(self):
         for content in ('ordinary text', '#EXTM3U\nsegment.ts\n',
@@ -260,8 +260,8 @@ class ReviewHardeningTests(unittest.TestCase):
             yield b'def'
 
         result.iter_content = chunks
-        with mock.patch.object(download, '__httpRequest__', return_value=result) as request:
-            ok, error = download.__downloadUrls__(['https://cdn.example/audio'], str(self.root / 'audio'),
+        with mock.patch.object(download, '_httpRequest', return_value=result) as request:
+            ok, error = download._downloadUrls(['https://cdn.example/audio'], str(self.root / 'audio'),
                                                   userProgress=progress, probeSize=False)
         self.assertTrue(ok, error)
         self.assertEqual(request.call_count, 1)
@@ -270,8 +270,8 @@ class ReviewHardeningTests(unittest.TestCase):
     def test_segment_progress_uses_sum_of_get_sizes(self):
         progress = mock.Mock()
         responses = [response(b'abc', {'Content-Length': '3'}), response(b'defg', {'Content-Length': '4'})]
-        with mock.patch.object(download, '__httpRequest__', side_effect=responses):
-            ok, error = download.__downloadUrls__(['https://cdn.example/one', 'https://cdn.example/two'],
+        with mock.patch.object(download, '_httpRequest', side_effect=responses):
+            ok, error = download._downloadUrls(['https://cdn.example/one', 'https://cdn.example/two'],
                                                   str(self.root / 'audio'), userProgress=progress, probeSize=False)
         self.assertTrue(ok, error)
         self.assertEqual((self.root / 'audio').read_bytes(), b'abcdefg')
@@ -281,9 +281,9 @@ class ReviewHardeningTests(unittest.TestCase):
         cancel = threading.Event()
         cancel.set()
         with mock.patch.object(download, 'media_connection_slots', threading.BoundedSemaphore(0)), \
-                mock.patch.object(download, '__httpRequest__') as request, \
+                mock.patch.object(download, '_httpRequest') as request, \
                 runtime.job_context(cancel=cancel), self.assertRaises(runtime.DownloadCancelled):
-            download.__downloadSingleUrl__('https://cdn.example/audio', str(self.root / 'audio'))
+            download._downloadSingleUrl('https://cdn.example/audio', str(self.root / 'audio'))
         request.assert_not_called()
 
     def test_output_lock_wait_is_cancellable_and_cleans_up(self):
@@ -339,7 +339,7 @@ class ReviewHardeningTests(unittest.TestCase):
         stream.codec = 'flac'
         with mock.patch.object(download.shutil, 'which', return_value='ffprobe'), \
                 mock.patch.object(download, 'run_process', return_value=completed) as process:
-            download.__verifyMediaQuality__(str(source), stream)
+            download._verifyMediaQuality(str(source), stream)
         command = process.call_args.args[0]
         self.assertEqual(command[command.index('-protocol_whitelist') + 1], 'file')
         self.assertIn('-format_whitelist', command)
@@ -351,12 +351,12 @@ class ReviewHardeningTests(unittest.TestCase):
                 mock.patch.object(download, 'run_process', return_value=SimpleNamespace(
                     returncode=1, stderr='Invalid media', stdout='')) as process, \
                 self.assertRaises(RuntimeError):
-            download.__verifyMediaQuality__(str(source), StreamUrl())
+            download._verifyMediaQuality(str(source), StreamUrl())
         process.assert_called_once()
 
     def test_public_media_does_not_use_automatic_netrc_credentials(self):
         with mock.patch.object(download, 'download_session_state', threading.local()):
-            session = download.__httpSession__()
+            session = download._httpSession()
             try:
                 with mock.patch('requests.sessions.get_netrc_auth', return_value=('user', 'sample-password')) as netrc:
                     request = session.prepare_request(requests.Request('GET', 'https://cdn.example/media'))

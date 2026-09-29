@@ -46,7 +46,7 @@ class HttpReliabilityTests(unittest.TestCase):
         with mock.patch.object(self.api.session, 'get', return_value=limited) as get, \
                 mock.patch('tidal_dl.tidal.cancellable_sleep') as sleep:
             with self.assertRaises(TidalApiError) as error:
-                self.api.__getOnce__('albums/1')
+                self.api._getOnce('albums/1')
         self.assertEqual(error.exception.statusCode, 429)
         self.assertEqual(get.call_count, 2)
         sleep.assert_called_once_with(60)
@@ -57,27 +57,27 @@ class HttpReliabilityTests(unittest.TestCase):
         with mock.patch.object(self.api.session, 'get', side_effect=[limited] * 100 + [success]), \
                 mock.patch('tidal_dl.tidal.cancellable_sleep'):
             with self.assertRaises(TidalApiError) as error:
-                self.api.__getOnce__('albums/1')
+                self.api._getOnce('albums/1')
         self.assertEqual(error.exception.statusCode, 429)
 
     def test_playback_rate_limit_does_not_start_another_endpoint_budget(self):
         limited = TidalApiError('Too many requests', 429)
-        with mock.patch.object(self.api, '__getOnce__', side_effect=limited) as get:
+        with mock.patch.object(self.api, '_getOnce', side_effect=limited) as get:
             with self.assertRaises(TidalApiError):
-                self.api.__getPlaybackData__(1, {})
+                self.api._getPlaybackData(1, {})
         get.assert_called_once()
 
     def test_generic_v4_not_found_falls_through_to_unversioned_endpoint(self):
         missing = TidalApiError('not found', 404)
         payload = {'trackid': 1}
-        with mock.patch.object(self.api, '__getOnce__', side_effect=[missing, payload]) as get:
-            self.assertEqual(self.api.__getPlaybackData__(1, {}), payload)
+        with mock.patch.object(self.api, '_getOnce', side_effect=[missing, payload]) as get:
+            self.assertEqual(self.api._getPlaybackData(1, {}), payload)
         self.assertEqual(get.call_count, 2)
         self.assertTrue(get.call_args_list[0].args[0].endswith('/v4'))
         self.assertFalse(get.call_args_list[1].args[0].endswith('/v4'))
 
     def test_track_specific_not_found_does_not_poison_quality_for_session(self):
-        self.api.__markPlaybackParamBlocked__('LOSSLESS', TidalApiError('not found', 404))
+        self.api._markPlaybackParamBlocked('LOSSLESS', TidalApiError('not found', 404))
         self.assertFalse(self.api._playbackBlockedParams)
 
     def test_catalog_closes_success_and_failure_responses(self):
@@ -86,10 +86,10 @@ class HttpReliabilityTests(unittest.TestCase):
                 result = response(status, {'id': 1})
                 with mock.patch.object(self.api.session, 'get', return_value=result):
                     if status == 200:
-                        self.assertEqual(self.api.__getOnce__('albums/1'), {'id': 1})
+                        self.assertEqual(self.api._getOnce('albums/1'), {'id': 1})
                     else:
                         with self.assertRaises(TidalApiError):
-                            self.api.__getOnce__('albums/1')
+                            self.api._getOnce('albums/1')
                 result.close.assert_called()
 
     def test_manifest_closes_success_and_failure_responses(self):
@@ -98,18 +98,18 @@ class HttpReliabilityTests(unittest.TestCase):
                 result = response(status, {'data': {'attributes': {'manifest': 'ok'}}})
                 with mock.patch.object(self.api.session, 'get', return_value=result):
                     if status == 200:
-                        self.assertEqual(self.api.__getOpenApiTrackManifestOnce__(1, ['FLAC'], 'DOWNLOAD'),
+                        self.assertEqual(self.api._getOpenApiTrackManifestOnce(1, ['FLAC'], 'DOWNLOAD'),
                                          {'manifest': 'ok'})
                     else:
                         with self.assertRaises(TidalApiError):
-                            self.api.__getOpenApiTrackManifestOnce__(1, ['FLAC'], 'DOWNLOAD')
+                            self.api._getOpenApiTrackManifestOnce(1, ['FLAC'], 'DOWNLOAD')
                 result.close.assert_called()
 
     def test_size_probe_does_not_treat_partial_length_as_object_size(self):
         head = response(headers={})
         partial = response(206, headers={'Content-Range': 'bytes 0-0/*', 'Content-Length': '1'})
-        with mock.patch.object(download, '__httpRequest__', side_effect=[head, partial]):
-            self.assertEqual(download.__contentLength__('https://example.invalid/media'), -1)
+        with mock.patch.object(download, '_httpRequest', side_effect=[head, partial]):
+            self.assertEqual(download._contentLength('https://example.invalid/media'), -1)
         head.close.assert_called_once()
         partial.close.assert_called_once()
 
@@ -117,11 +117,11 @@ class HttpReliabilityTests(unittest.TestCase):
         session = mock.Mock()
         session.request.side_effect = lambda *args, **kwargs: response(503)
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.object(download, '__httpSession__', return_value=session), \
+                mock.patch.object(download, '_httpSession', return_value=session), \
                 mock.patch.object(download, 'cancellable_sleep'):
             path = Path(directory) / 'track.part'
             with self.assertRaises(requests.HTTPError):
-                download.__downloadSingleUrl__('https://example.invalid/media', str(path))
+                download._downloadSingleUrl('https://example.invalid/media', str(path))
             self.assertFalse(path.exists())
         self.assertEqual(session.request.call_count, download.DOWNLOAD_RETRIES)
 
@@ -133,7 +133,7 @@ class HttpReliabilityTests(unittest.TestCase):
         for header, expected in cases:
             with self.subTest(header=header), mock.patch('tidal_dl.http.time.time', return_value=now):
                 result = response(503, headers={'Retry-After': header})
-                self.assertEqual(self.api.__retryAfter__(result, 0), max(1, expected))
+                self.assertEqual(self.api._retryAfter(result, 0), max(1, expected))
                 # CDN requests use the same parser with a smaller cap/default.
                 from tidal_dl.http import retry_delay
                 self.assertEqual(retry_delay(result, default=5, cap=60), min(expected, 60))
@@ -143,21 +143,21 @@ class HttpReliabilityTests(unittest.TestCase):
         cancel.set()
         with job_context(cancel=cancel), mock.patch.object(self.api.session, 'post') as post:
             with self.assertRaises(DownloadCancelled):
-                self.api.__post__('/token', {})
+                self.api._post('/token', {})
         post.assert_not_called()
 
     def test_non_object_error_body_is_handled_as_http_error(self):
         result = response(401, content=b'[]')
         with mock.patch.object(self.api.session, 'get', return_value=result), \
-                mock.patch.object(self.api, '__refreshSavedAccessToken__', return_value=False):
+                mock.patch.object(self.api, '_refreshSavedAccessToken', return_value=False):
             with self.assertRaises(TidalApiError) as error:
-                self.api.__getOnce__('tracks/1/playbackinfopostpaywall/v4')
+                self.api._getOnce('tracks/1/playbackinfopostpaywall/v4')
         self.assertEqual(error.exception.statusCode, 401)
         result.close.assert_called()
 
     def test_cdn_transport_does_not_hide_extra_retries(self):
         with mock.patch.object(download, 'download_session_state', threading.local()):
-            session = download.__httpSession__()
+            session = download._httpSession()
             try:
                 self.assertEqual(session.get_adapter('https://').max_retries.total, 0)
                 self.assertEqual(session.get_adapter('https://')._pool_maxsize, 1)
@@ -176,10 +176,10 @@ class HttpReliabilityTests(unittest.TestCase):
         second.iter_content = mock.Mock(return_value=iter([b'abc', b'def']))
         progress = mock.Mock()
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.object(download, '__httpRequest__', side_effect=[first, second]), \
+                mock.patch.object(download, '_httpRequest', side_effect=[first, second]), \
                 mock.patch.object(download, 'cancellable_sleep'):
             path = Path(directory) / 'track.part'
-            self.assertEqual(download.__downloadSingleUrl__('https://example.invalid/media', str(path),
+            self.assertEqual(download._downloadSingleUrl('https://example.invalid/media', str(path),
                                                            userProgress=progress), 6)
             self.assertEqual(path.read_bytes(), b'abcdef')
         self.assertEqual(sum(call.args[0] for call in progress.addCurNum.call_args_list), 6)
@@ -188,11 +188,11 @@ class HttpReliabilityTests(unittest.TestCase):
         empty = response(content=b'')
         empty.iter_content = mock.Mock(side_effect=lambda **kwargs: iter(()))
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.object(download, '__httpRequest__', return_value=empty), \
+                mock.patch.object(download, '_httpRequest', return_value=empty), \
                 mock.patch.object(download, 'cancellable_sleep'):
             path = Path(directory) / 'track.part'
             with self.assertRaises(OSError):
-                download.__downloadSingleUrl__('https://example.invalid/media', str(path))
+                download._downloadSingleUrl('https://example.invalid/media', str(path))
             self.assertFalse(path.exists())
 
     def test_metadata_artwork_follows_validated_redirects(self):
@@ -210,10 +210,10 @@ class HttpReliabilityTests(unittest.TestCase):
         track, album = Track(), Album()
         album.cover = 'cover-id'
         track.album, track.title = album, 'Fixture'
-        with mock.patch.object(download, '__httpSession__', return_value=session), \
+        with mock.patch.object(download, '_httpSession', return_value=session), \
                 mock.patch.object(download.aigpy.tag, 'TagTool', return_value=tag), \
                 mock.patch.object(download, 'validate_media_url') as validate:
-            download.__setMetaData__(track, album, 'fixture.flac', None, '')
+            download._setMetaData(track, album, 'fixture.flac', None, '')
         self.assertEqual(session.request.call_count, 2)
         self.assertEqual(session.request.call_args.args[1], 'https://cdn.example/cover.jpg')
         validate.assert_any_call('https://cdn.example/cover.jpg')
@@ -227,10 +227,10 @@ class HttpReliabilityTests(unittest.TestCase):
         redirect = response(302, headers={'Location': 'https://cdn.example/cover.jpg'})
         session = mock.Mock()
         session.request.return_value = redirect
-        with mock.patch.object(download, '__httpSession__', return_value=session), \
+        with mock.patch.object(download, '_httpSession', return_value=session), \
                 mock.patch.object(download, 'validate_media_url', side_effect=[True, ValueError('rejected')]):
             with self.assertRaisesRegex(ValueError, 'rejected'):
-                download.__httpRequest__('GET', 'https://resources.example/cover.jpg', allow_redirects=True)
+                download._httpRequest('GET', 'https://resources.example/cover.jpg', allow_redirects=True)
         session.request.assert_called_once()
         redirect.close.assert_called_once()
 

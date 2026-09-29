@@ -66,7 +66,7 @@ class _PublicMediaAuth(requests.auth.AuthBase):
         return request
 
 
-def __connectionLimited__(function):
+def _connectionLimited(function):
     @wraps(function)
     def wrapped(*args, **kwargs):
         acquired = False
@@ -82,7 +82,7 @@ def __connectionLimited__(function):
     return wrapped
 
 
-def __httpSession__():
+def _httpSession():
     session = getattr(download_session_state, "session", None)
     if session is None:
         session = requests.Session()
@@ -99,7 +99,7 @@ def __httpSession__():
     return session
 
 
-def __removeFile__(path):
+def _removeFile(path):
     try:
         if os.path.exists(path):
             os.remove(path)
@@ -107,7 +107,7 @@ def __removeFile__(path):
         logging.warning("Unable to remove temporary file %s: %s", path, e)
 
 
-def __removeDir__(path):
+def _removeDir(path):
     try:
         if os.path.isdir(path):
             shutil.rmtree(path)
@@ -115,44 +115,44 @@ def __removeDir__(path):
         logging.warning("Unable to remove temporary directory %s: %s", path, e)
 
 
-def __failedTrackLogPath__():
+def _failedTrackLogPath():
     return os.path.join(SETTINGS.downloadPath or ".", FAILED_TRACKS_FILE)
 
 
-def __tidalTrackUrl__(track):
+def _tidalTrackUrl(track):
     return f"https://tidal.com/browse/track/{getattr(track, 'id', '')}"
 
 
-def __oneLine__(value):
+def _oneLine(value):
     return " ".join(str(value).split())
 
 
-def __logFailedTrack__(track, album=None, playlist=None, reason=""):
+def _logFailedTrack(track, album=None, playlist=None, reason=""):
     track_id = getattr(track, 'id', None)
     if track_id is None:
         return
 
     try:
-        path = __failedTrackLogPath__()
-        __ensureParentDir__(path)
+        path = _failedTrackLogPath()
+        _ensureParentDir(path)
         context = []
         album_title = getattr(album, 'title', None)
         playlist_title = getattr(playlist, 'title', None)
         if album_title:
-            context.append(f"album={__oneLine__(album_title)}")
+            context.append(f"album={_oneLine(album_title)}")
         if playlist_title:
-            context.append(f"playlist={__oneLine__(playlist_title)}")
+            context.append(f"playlist={_oneLine(playlist_title)}")
 
         title = getattr(track, 'title', None) or str(track_id)
         parts = [
             time.strftime("%Y-%m-%d %H:%M:%S"),
-            f"track={__oneLine__(title)}",
+            f"track={_oneLine(title)}",
             f"id={track_id}",
         ]
         parts.extend(context)
         if reason:
-            parts.append(f"reason={__oneLine__(reason)}")
-        entry = "# " + " | ".join(parts) + "\n" + __tidalTrackUrl__(track) + "\n"
+            parts.append(f"reason={_oneLine(reason)}")
+        entry = "# " + " | ".join(parts) + "\n" + _tidalTrackUrl(track) + "\n"
 
         with failed_track_log_lock:
             with open(path, "a", encoding="utf-8") as output:
@@ -163,17 +163,17 @@ def __logFailedTrack__(track, album=None, playlist=None, reason=""):
         logging.warning("Unable to log failed track %s: %s", track_id, e)
 
 
-def __ensureParentDir__(path):
+def _ensureParentDir(path):
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
 
 
-def __retryDelay__(response, attempt):
+def _retryDelay(response, attempt):
     return retry_delay(response, default=min(2 ** attempt, 20), cap=60)
 
 
-def __shouldRetryDownload__(error=None):
+def _shouldRetryDownload(error=None):
     """Retry connection failures and transient HTTP statuses, not 404/403/etc."""
     status = getattr(getattr(error, "response", None), "status_code", None)
     if status is None:
@@ -181,7 +181,7 @@ def __shouldRetryDownload__(error=None):
     return status in RETRYABLE_STATUS_CODES
 
 
-def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
+def _httpRequest(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
     follow_redirects = bool(kwargs.pop('allow_redirects', False))
     last_error = None
     for attempt in range(attempts):
@@ -191,7 +191,7 @@ def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
             current_url = url
             for redirect_count in range(6):
                 validate_media_url(current_url)
-                response = __httpSession__().request(
+                response = _httpSession().request(
                     method, current_url, timeout=DOWNLOAD_TIMEOUT, allow_redirects=False, **kwargs
                 )
                 if not follow_redirects or response.status_code not in (301, 302, 303, 307, 308):
@@ -210,17 +210,17 @@ def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
                 raise requests.TooManyRedirects('Media URL exceeded five redirects.')
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < attempts - 1:
                 response.close()
-                cancellable_sleep(__retryDelay__(response, attempt))
+                cancellable_sleep(_retryDelay(response, attempt))
                 continue
             response.raise_for_status()
             return response
         except requests.RequestException as e:
             last_error = e
-            retry = attempt < attempts - 1 and __shouldRetryDownload__(e)
+            retry = attempt < attempts - 1 and _shouldRetryDownload(e)
             if response is not None:
                 response.close()
             if retry:
-                cancellable_sleep(__retryDelay__(getattr(e, "response", None), attempt))
+                cancellable_sleep(_retryDelay(getattr(e, "response", None), attempt))
                 continue
             raise
         except Exception:
@@ -230,14 +230,14 @@ def __httpRequest__(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
     raise last_error
 
 
-def __parseIntHeader__(value):
+def _parseIntHeader(value):
     try:
         return int(value)
     except (TypeError, ValueError):
         return -1
 
 
-def __contentRangeStart__(response):
+def _contentRangeStart(response):
     contentRange = response.headers.get("Content-Range", "")
     if not contentRange.lower().startswith("bytes "):
         return None
@@ -247,7 +247,7 @@ def __contentRangeStart__(response):
         return None
 
 
-def __contentTotalSize__(response):
+def _contentTotalSize(response):
     """Best-effort total object size from Content-Range or Content-Length."""
     if response is None:
         return -1
@@ -255,23 +255,23 @@ def __contentTotalSize__(response):
     if contentRange.lower().startswith("bytes ") and "/" in contentRange:
         total = contentRange.rsplit("/", 1)[-1].strip()
         if total != "*":
-            size = __parseIntHeader__(total)
+            size = _parseIntHeader(total)
             if size > 0:
                 return size
     if response.status_code == 200:
-        size = __parseIntHeader__(response.headers.get("Content-Length"))
+        size = _parseIntHeader(response.headers.get("Content-Length"))
         if size > 0:
             return size
     return -1
 
 
-@__connectionLimited__
-def __contentLength__(url):
+@_connectionLimited
+def _contentLength(url):
     """Probe remote size via HEAD, falling back to a 1-byte Range GET."""
     try:
-        response = __httpRequest__("HEAD", url, allow_redirects=True)
+        response = _httpRequest("HEAD", url, allow_redirects=True)
         try:
-            size = __contentTotalSize__(response)
+            size = _contentTotalSize(response)
             if size > 0:
                 return size
         finally:
@@ -283,7 +283,7 @@ def __contentLength__(url):
 
     # Some CDNs reject HEAD; a tiny ranged GET still exposes total size.
     try:
-        response = __httpRequest__(
+        response = _httpRequest(
             "GET",
             url,
             allow_redirects=True,
@@ -291,7 +291,7 @@ def __contentLength__(url):
             headers={"Range": "bytes=0-0"},
         )
         try:
-            size = __contentTotalSize__(response)
+            size = _contentTotalSize(response)
             if size > 0:
                 return size
             # A 206 Content-Length describes only the range body (often one
@@ -306,21 +306,21 @@ def __contentLength__(url):
         return -1
 
 
-def __remoteSize__(urls):
+def _remoteSize(urls):
     if isinstance(urls, str):
         urls = [urls]
     urls = list(urls or [])
     if not urls:
         return 0
     if len(urls) == 1:
-        size = __contentLength__(urls[0])
+        size = _contentLength(urls[0])
         return size if size > 0 else -1
 
     # Probe segment sizes in parallel; serial HEAD requests dominated
     # startup time for DASH tracks with many segments.
     total = 0
     with ThreadPoolExecutor(max_workers=min(8, len(urls))) as probe_pool:
-        futures = [probe_pool.submit(copy_context().run, __contentLength__, url) for url in urls]
+        futures = [probe_pool.submit(copy_context().run, _contentLength, url) for url in urls]
         try:
             for future in as_completed(futures):
                 check_cancelled()
@@ -334,35 +334,35 @@ def __remoteSize__(urls):
     return total
 
 
-def __localFileSize__(path):
+def _localFileSize(path):
     return aigpy.file.getSize(path) if path else 0
 
 
-def __isCompleteLocalFile__(path, expectedSize=-1):
+def _isCompleteLocalFile(path, expectedSize=-1):
     """True when ``path`` is a finished object.
 
     If ``expectedSize`` is known, require an exact match. If unknown, only treat
     the file as finished when there is no ``.download`` resume sidecar (used for
     multi-segment parts that already completed in a prior attempt).
     """
-    size = __localFileSize__(path)
+    size = _localFileSize(path)
     if size <= 0:
         return False
     # A leftover .download sidecar means the last transfer did not finish cleanly.
-    if __localFileSize__(path + ".download") > 0:
+    if _localFileSize(path + ".download") > 0:
         return False
     if expectedSize > 0:
         return size == expectedSize
     return True
 
 
-def __isReusableAssembledFile__(path, expectedSize=-1):
+def _isReusableAssembledFile(path, expectedSize=-1):
     """Validate an output whose completed transfer marker matched its source."""
-    return __isCompleteLocalFile__(path, expectedSize)
+    return _isCompleteLocalFile(path, expectedSize)
 
 
-def __verifyLocalSize__(path, expectedSize, label="download"):
-    actual = __localFileSize__(path)
+def _verifyLocalSize(path, expectedSize, label="download"):
+    actual = _localFileSize(path)
     if actual <= 0:
         raise IOError(f"Incomplete {label}: received an empty file")
     if expectedSize is None or expectedSize <= 0:
@@ -374,7 +374,7 @@ def __verifyLocalSize__(path, expectedSize, label="download"):
     return actual
 
 
-def __callProgressSink__(sink, methodName, value):
+def _callProgressSink(sink, methodName, value):
     """Invoke a progress callback without letting UI errors abort a download.
 
     Progress sinks are caller-supplied (CLI bar, GUI reporter, test doubles);
@@ -393,26 +393,26 @@ def __callProgressSink__(sink, methodName, value):
         logging.debug("Progress sink %s.%s failed: %s", type(sink).__name__, methodName, error)
 
 
-def __setUserProgressMax__(userProgress, size):
+def _setUserProgressMax(userProgress, size):
     if size <= 0:
         return
-    __callProgressSink__(userProgress, "setMaxNum", size)
+    _callProgressSink(userProgress, "setMaxNum", size)
 
 
-def __noteProgress__(progress, userProgress, size, progressLock=None):
+def _noteProgress(progress, userProgress, size, progressLock=None):
     if size <= 0:
         return
     if progressLock is not None:
         with progressLock:
-            __callProgressSink__(progress, "addCurCount", size)
-            __callProgressSink__(userProgress, "addCurNum", size)
+            _callProgressSink(progress, "addCurCount", size)
+            _callProgressSink(userProgress, "addCurNum", size)
         return
-    __callProgressSink__(progress, "addCurCount", size)
-    __callProgressSink__(userProgress, "addCurNum", size)
+    _callProgressSink(progress, "addCurCount", size)
+    _callProgressSink(userProgress, "addCurNum", size)
 
 
-@__connectionLimited__
-def __downloadSingleUrl__(
+@_connectionLimited
+def _downloadSingleUrl(
         url,
         outputPath,
         progress=None,
@@ -435,21 +435,21 @@ def __downloadSingleUrl__(
     # write). Top-level single-URL downloads must not skip just because a local
     # file exists — that path might be an unrelated leftover.
     if expectedSize > 0:
-        reusable = __isCompleteLocalFile__(outputPath, expectedSize)
+        reusable = _isCompleteLocalFile(outputPath, expectedSize)
     elif allowUnknownSizeReuse:
         reusable = (
-            __localFileSize__(outputPath) > 0
-            and __localFileSize__(outputPath + ".download") <= 0
+            _localFileSize(outputPath) > 0
+            and _localFileSize(outputPath + ".download") <= 0
         )
     else:
         reusable = False
     if reusable and reuseExisting:
         if on_size is not None:
-            on_size(__localFileSize__(outputPath))
-        __noteProgress__(
-            progress, userProgress, __localFileSize__(outputPath), progressLock
+            on_size(_localFileSize(outputPath))
+        _noteProgress(
+            progress, userProgress, _localFileSize(outputPath), progressLock
         )
-        return __localFileSize__(outputPath)
+        return _localFileSize(outputPath)
 
     tempOutputPath = outputPath + ".download"
     reportedBytes = 0
@@ -458,7 +458,7 @@ def __downloadSingleUrl__(
 
     for attempt in range(DOWNLOAD_RETRIES):
         check_cancelled()
-        resumeSize = __localFileSize__(tempOutputPath)
+        resumeSize = _localFileSize(tempOutputPath)
         # Range offsets describe stored bytes, so transparent HTTP content
         # decoding must not change the byte counts used for resume.
         headers = {"Accept-Encoding": "identity"}
@@ -466,43 +466,43 @@ def __downloadSingleUrl__(
             headers['Range'] = f'bytes={resumeSize}-'
         response = None
         try:
-            response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True, headers=headers)
+            response = _httpRequest("GET", url, attempts=1, stream=True, allow_redirects=True, headers=headers)
             if response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity'):
                 raise ValueError('The media server returned an encoded response that cannot be resumed safely.')
             mode = "wb"
             if resumeSize > 0:
-                rangeStart = __contentRangeStart__(response)
+                rangeStart = _contentRangeStart(response)
                 if response.status_code == 206 and rangeStart == resumeSize:
                     mode = "ab"
                     credit = max(resumeSize - reportedBytes, 0)
                     if credit:
-                        __noteProgress__(progress, userProgress, credit, progressLock)
+                        _noteProgress(progress, userProgress, credit, progressLock)
                         reportedBytes = resumeSize
                 elif response.status_code == 200:
                     # Server ignored Range and returned the full object; restart.
-                    __removeFile__(tempOutputPath)
+                    _removeFile(tempOutputPath)
                     resumeSize = 0
                     mode = "wb"
                 else:
                     # Mismatched partial response: drop partial and re-GET fully.
                     response.close()
                     response = None
-                    __removeFile__(tempOutputPath)
+                    _removeFile(tempOutputPath)
                     resumeSize = 0
-                    response = __httpRequest__("GET", url, attempts=1, stream=True, allow_redirects=True,
+                    response = _httpRequest("GET", url, attempts=1, stream=True, allow_redirects=True,
                                                headers={"Accept-Encoding": "identity"})
                     mode = "wb"
 
             if response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity'):
                 raise ValueError('The media server returned an encoded response that cannot be resumed safely.')
-            if response.status_code == 206 and __contentRangeStart__(response) != resumeSize:
+            if response.status_code == 206 and _contentRangeStart(response) != resumeSize:
                 raise ValueError('The media server returned an unexpected byte range.')
 
-            responseTotal = __contentTotalSize__(response)
+            responseTotal = _contentTotalSize(response)
             if responseTotal > 0:
                 knownTotal = responseTotal
             elif response.status_code == 200:
-                contentLength = __parseIntHeader__(response.headers.get("Content-Length"))
+                contentLength = _parseIntHeader(response.headers.get("Content-Length"))
                 if contentLength > 0:
                     knownTotal = contentLength
             if knownTotal > 0 and on_size is not None:
@@ -519,35 +519,35 @@ def __downloadSingleUrl__(
                     # If Range was ignored, re-downloaded bytes must not be
                     # credited twice. Keep the reported high-water mark.
                     credit = max(writtenBytes - reportedBytes, 0)
-                    __noteProgress__(progress, userProgress, credit, progressLock)
+                    _noteProgress(progress, userProgress, credit, progressLock)
                     reportedBytes += credit
 
-            __verifyLocalSize__(tempOutputPath, knownTotal, label="CDN object")
+            _verifyLocalSize(tempOutputPath, knownTotal, label="CDN object")
             os.replace(tempOutputPath, outputPath)
-            size = __localFileSize__(outputPath)
+            size = _localFileSize(outputPath)
             if on_size is not None:
                 on_size(size)
             return size
         except (requests.RequestException, OSError, IOError) as error:
             failed_response = getattr(error, 'response', None)
             if getattr(failed_response, 'status_code', None) == 416:
-                remote_total = __contentTotalSize__(failed_response)
+                remote_total = _contentTotalSize(failed_response)
                 if remote_total > 0 and resumeSize == remote_total and knownTotal in (-1, remote_total):
-                    __verifyLocalSize__(tempOutputPath, remote_total)
+                    _verifyLocalSize(tempOutputPath, remote_total)
                     os.replace(tempOutputPath, outputPath)
-                    __noteProgress__(progress, userProgress, max(remote_total - reportedBytes, 0), progressLock)
+                    _noteProgress(progress, userProgress, max(remote_total - reportedBytes, 0), progressLock)
                     if on_size is not None:
                         on_size(remote_total)
                     return remote_total
                 # A stale or overlong sidecar cannot be resumed.
-                __removeFile__(tempOutputPath)
+                _removeFile(tempOutputPath)
                 if attempt < DOWNLOAD_RETRIES - 1:
                     continue
             lastError = error
-            if attempt >= DOWNLOAD_RETRIES - 1 or not __shouldRetryDownload__(error):
+            if attempt >= DOWNLOAD_RETRIES - 1 or not _shouldRetryDownload(error):
                 raise
             retry_response = failed_response if failed_response is not None else response
-            delay = __retryDelay__(retry_response, attempt)
+            delay = _retryDelay(retry_response, attempt)
             if response is not None:
                 response.close()
                 response = None
@@ -559,9 +559,9 @@ def __downloadSingleUrl__(
     raise lastError
 
 
-def __concatenateFiles__(partPaths, outputPath, expectedSize=-1):
+def _concatenateFiles(partPaths, outputPath, expectedSize=-1):
     tempOutputPath = f"{outputPath}.tmp.{os.getpid()}"
-    __removeFile__(tempOutputPath)
+    _removeFile(tempOutputPath)
     try:
         with open(tempOutputPath, "wb") as output:
             for partPath in partPaths:
@@ -570,18 +570,18 @@ def __concatenateFiles__(partPaths, outputPath, expectedSize=-1):
                         check_cancelled()
                         output.write(chunk)
         check_cancelled()
-        __verifyLocalSize__(tempOutputPath, expectedSize, label="assembled media")
+        _verifyLocalSize(tempOutputPath, expectedSize, label="assembled media")
         os.replace(tempOutputPath, outputPath)
     finally:
-        __removeFile__(tempOutputPath)
+        _removeFile(tempOutputPath)
 
 
-def __partsDirectory__(outputPath):
+def _partsDirectory(outputPath):
     # Stable across retries so multi-segment DASH can resume after a failure.
     return f"{outputPath}.parts"
 
 
-def __downloadSegment__(
+def _downloadSegment(
         url,
         partPath,
         progress=None,
@@ -590,7 +590,7 @@ def __downloadSegment__(
         chunkSize=DOWNLOAD_CHUNK_SIZE,
         expectedSize=-1,
         on_size=None):
-    return __downloadSingleUrl__(
+    return _downloadSingleUrl(
         url,
         partPath,
         progress=progress,
@@ -603,7 +603,7 @@ def __downloadSegment__(
     )
 
 
-def __downloadUrls__(
+def _downloadUrls(
         urls,
         outputPath,
         showProgress=False,
@@ -617,18 +617,18 @@ def __downloadUrls__(
     if len(urls) <= 0:
         return False, "URL list is empty."
 
-    __ensureParentDir__(outputPath)
+    _ensureParentDir(outputPath)
     source_matches = prepare_transfer(outputPath, urls, source_identity=sourceIdentity)
 
     if expectedSize is not None:
         totalSize = expectedSize
     elif probeSize:
-        totalSize = __remoteSize__(urls)
+        totalSize = _remoteSize(urls)
     else:
         totalSize = -1
     progress = None
     if totalSize > 0:
-        __setUserProgressMax__(userProgress, totalSize)
+        _setUserProgressMax(userProgress, totalSize)
         if showProgress:
             progress = aigpy.progress.ProgressTool(totalSize, 15, unit="B")
 
@@ -641,19 +641,19 @@ def __downloadUrls__(
         with size_lock:
             object_sizes[index] = size
             if len(object_sizes) == len(urls):
-                __setUserProgressMax__(userProgress, sum(object_sizes.values()))
+                _setUserProgressMax(userProgress, sum(object_sizes.values()))
 
     # Already-complete assembled file (e.g. decrypt failed after CDN success).
     # Only reuse when the remote size is known and matches — never skip a
     # download solely because a local file happens to exist.
-    if source_matches and __isReusableAssembledFile__(outputPath, totalSize):
-        __noteProgress__(progress, userProgress, __localFileSize__(outputPath))
-        __removeDir__(__partsDirectory__(outputPath))
+    if source_matches and _isReusableAssembledFile(outputPath, totalSize):
+        _noteProgress(progress, userProgress, _localFileSize(outputPath))
+        _removeDir(_partsDirectory(outputPath))
         return True, ''
 
     if len(urls) == 1:
         try:
-            __downloadSingleUrl__(
+            _downloadSingleUrl(
                 urls[0],
                 outputPath,
                 progress,
@@ -671,7 +671,7 @@ def __downloadUrls__(
             return False, str(e)
 
     # Multi-segment (DASH / HLS): resumeable per-segment downloads, ordered concat.
-    partsDir = __partsDirectory__(outputPath)
+    partsDir = _partsDirectory(outputPath)
     os.makedirs(partsDir, exist_ok=True)
     progressLock = Lock()
     workers = 1 if threadNum <= 1 else min(threadNum, len(urls))
@@ -680,7 +680,7 @@ def __downloadUrls__(
     try:
         if workers == 1:
             for index, (url, partPath) in enumerate(zip(urls, partPaths)):
-                __downloadSegment__(
+                _downloadSegment(
                     url,
                     partPath,
                     progress,
@@ -693,7 +693,7 @@ def __downloadUrls__(
             with ThreadPoolExecutor(max_workers=workers) as thread_pool:
                 futures = {
                     thread_pool.submit(
-                        copy_context().run, __downloadSegment__,
+                        copy_context().run, _downloadSegment,
                         url,
                         partPath,
                         progress,
@@ -714,9 +714,9 @@ def __downloadUrls__(
                         pending.cancel()
                     raise
 
-        __concatenateFiles__(partPaths, outputPath, expectedSize=totalSize)
+        _concatenateFiles(partPaths, outputPath, expectedSize=totalSize)
         complete_transfer(outputPath)
-        __removeDir__(partsDir)
+        _removeDir(partsDir)
         return True, ''
     except DownloadCancelled:
         raise
@@ -725,7 +725,7 @@ def __downloadUrls__(
         return False, str(e)
 
 
-def __downloadErrorHint__(err):
+def _downloadErrorHint(err):
     text = str(err or "").lower()
     if "playback client rejected" in text:
         return " (hint: login kept; try HiFi or --quality-priority Max,HiFi,High,Normal)"
@@ -753,7 +753,7 @@ def __downloadErrorHint__(err):
     return ""
 
 
-def __encrypted__(stream, srcPath, descPath):
+def _encrypted(stream, srcPath, descPath):
     if aigpy.string.isNull(stream.encryptionKey):
         with open(srcPath, 'rb') as source, open(descPath, 'wb') as output:
             for chunk in iter(lambda: source.read(1024 * 1024), b''):
@@ -764,21 +764,21 @@ def __encrypted__(stream, srcPath, descPath):
         decrypt_file(srcPath, descPath, key, nonce)
 
 
-def __isFlacInM4a__(stream):
+def _isFlacInM4a(stream):
     codec = (getattr(stream, 'codec', None) or '').lower()
     container = (getattr(stream, 'container', None) or '').lower()
     manifestMimeType = (getattr(stream, 'manifestMimeType', None) or '').lower()
     return 'flac' in codec and ('mp4' in container or 'dash+xml' in manifestMimeType)
 
 
-def __containerFallbackPath__(path):
+def _containerFallbackPath(path):
     return path.rsplit('.', 1)[0] + '.m4a'
 
 
-def __existingMediaState__(path, stream):
+def _existingMediaState(path, stream):
     candidates = [path]
-    if SETTINGS.saveAsFlac and __isFlacInM4a__(stream):
-        fallback = __containerFallbackPath__(path)
+    if SETTINGS.saveAsFlac and _isFlacInM4a(stream):
+        fallback = _containerFallbackPath(path)
         if fallback != path:
             candidates.append(fallback)
     identity = audio_identity(stream)
@@ -789,7 +789,7 @@ def __existingMediaState__(path, stream):
     return None, False
 
 
-def __manifestMediaFacts__(stream):
+def _manifestMediaFacts(stream):
     return {
         key: value for key, value in {
             'quality': getattr(stream, 'soundQuality', None),
@@ -804,9 +804,9 @@ def __manifestMediaFacts__(stream):
     }
 
 
-def __verifyMediaQuality__(path, stream):
+def _verifyMediaQuality(path, stream):
     """Probe final audio when ffprobe is available and retain verified facts."""
-    facts = __manifestMediaFacts__(stream)
+    facts = _manifestMediaFacts(stream)
     ffprobe = shutil.which('ffprobe')
     if not ffprobe:
         return facts
@@ -862,12 +862,12 @@ def __verifyMediaQuality__(path, stream):
     return facts
 
 
-def __exportFlacFromContainer__(path, stream):
-    if not SETTINGS.saveAsFlac or not __isFlacInM4a__(stream):
+def _exportFlacFromContainer(path, stream):
+    if not SETTINGS.saveAsFlac or not _isFlacInM4a(stream):
         return path
 
     flacPath = path.rsplit('.', 1)[0] + '.flac'
-    fallbackPath = __containerFallbackPath__(path)
+    fallbackPath = _containerFallbackPath(path)
     ffmpeg = shutil.which('ffmpeg')
     if not ffmpeg:
         logging.warning("saveAsFlac is enabled but ffmpeg was not found; saving container as %s", fallbackPath)
@@ -876,7 +876,7 @@ def __exportFlacFromContainer__(path, stream):
         return fallbackPath
 
     tempPath = f"{flacPath}.tmp.{os.getpid()}.flac"
-    __removeFile__(tempPath)
+    _removeFile(tempPath)
     try:
         completed = run_process(
             [ffmpeg, '-nostdin', '-y', '-hide_banner', '-loglevel', 'error',
@@ -887,12 +887,12 @@ def __exportFlacFromContainer__(path, stream):
             text=True,
             check=False,
         )
-        if completed.returncode != 0 or __localFileSize__(tempPath) <= 0:
+        if completed.returncode != 0 or _localFileSize(tempPath) <= 0:
             detail = (completed.stderr or completed.stdout or '').strip()
             raise RuntimeError(detail or f"ffmpeg exited with code {completed.returncode}")
         os.replace(tempPath, flacPath)
         if os.path.abspath(path) != os.path.abspath(flacPath):
-            __removeFile__(path)
+            _removeFile(path)
         return flacPath
     except DownloadCancelled:
         raise
@@ -902,26 +902,26 @@ def __exportFlacFromContainer__(path, stream):
             os.replace(path, fallbackPath)
         return fallbackPath
     finally:
-        __removeFile__(tempPath)
+        _removeFile(tempPath)
 
 
-def __lyricsText__(value):
+def _lyricsText(value):
     if value is None:
         return ''
     text = str(value)
     return text if text.strip() else ''
 
 
-def __hasTimedLyrics__(lyricsData):
-    return bool(__lyricsText__(getattr(lyricsData, 'subtitles', None)))
+def _hasTimedLyrics(lyricsData):
+    return bool(_lyricsText(getattr(lyricsData, 'subtitles', None)))
 
 
-def __lyricsPayload__(lyricsData):
+def _lyricsPayload(lyricsData):
     if lyricsData is None:
         return '', '', ''
 
-    subtitles = __lyricsText__(getattr(lyricsData, 'subtitles', None))
-    lyrics = __lyricsText__(getattr(lyricsData, 'lyrics', None))
+    subtitles = _lyricsText(getattr(lyricsData, 'subtitles', None))
+    lyrics = _lyricsText(getattr(lyricsData, 'lyrics', None))
     metadataLyrics = lyrics or subtitles
 
     if subtitles:
@@ -931,8 +931,8 @@ def __lyricsPayload__(lyricsData):
     return '', '', ''
 
 
-def __writeTextFile__(path, content):
-    __ensureParentDir__(path)
+def _writeTextFile(path, content):
+    _ensureParentDir(path)
     tempPath = f"{path}.tmp.{os.getpid()}"
     try:
         with open(tempPath, 'w', encoding='utf-8', newline='') as output:
@@ -941,23 +941,23 @@ def __writeTextFile__(path, content):
     except DownloadCancelled:
         raise
     except Exception:
-        __removeFile__(tempPath)
+        _removeFile(tempPath)
         raise
 
 
-def __writeLyricsFile__(trackPath, lyricsData):
-    metadataLyrics, fileLyrics, extension = __lyricsPayload__(lyricsData)
+def _writeLyricsFile(trackPath, lyricsData):
+    metadataLyrics, fileLyrics, extension = _lyricsPayload(lyricsData)
     if SETTINGS.lyricFile and fileLyrics:
         lyricPath = trackPath.rsplit(".", 1)[0] + extension
-        __writeTextFile__(lyricPath, fileLyrics)
+        _writeTextFile(lyricPath, fileLyrics)
     return metadataLyrics
 
 
-def __normalizeLyricsMatchText__(value):
+def _normalizeLyricsMatchText(value):
     return " ".join(str(value or "").casefold().split())
 
 
-def __iterArtists__(artists):
+def _iterArtists(artists):
     # TIDAL omits `artists` for some items (aigpy then stores None) and the
     # models default to a single prototype instance, so the attribute is not
     # always an iterable list of artists (issue #38).
@@ -966,38 +966,38 @@ def __iterArtists__(artists):
     return []
 
 
-def __rawArtistNames__(artists):
+def _rawArtistNames(artists):
     return [
         str(getattr(artist, 'name', '')).strip()
-        for artist in __iterArtists__(artists)
+        for artist in _iterArtists(artists)
         if getattr(artist, 'name', None)
     ]
 
 
-def __artistNames__(artists):
+def _artistNames(artists):
     return [
-        __normalizeLyricsMatchText__(getattr(artist, 'name', ''))
-        for artist in __iterArtists__(artists)
+        _normalizeLyricsMatchText(getattr(artist, 'name', ''))
+        for artist in _iterArtists(artists)
         if getattr(artist, 'name', None)
     ]
 
 
-def __albumTitle__(item):
+def _albumTitle(item):
     album = getattr(item, 'album', None)
-    return __normalizeLyricsMatchText__(getattr(album, 'title', ''))
+    return _normalizeLyricsMatchText(getattr(album, 'title', ''))
 
 
-def __lyricsCandidateScore__(track, candidate):
+def _lyricsCandidateScore(track, candidate):
     if getattr(candidate, 'id', None) == getattr(track, 'id', None):
         return -1
 
-    trackTitle = __normalizeLyricsMatchText__(getattr(track, 'title', ''))
-    candidateTitle = __normalizeLyricsMatchText__(getattr(candidate, 'title', ''))
+    trackTitle = _normalizeLyricsMatchText(getattr(track, 'title', ''))
+    candidateTitle = _normalizeLyricsMatchText(getattr(candidate, 'title', ''))
     if trackTitle != candidateTitle:
         return -1
 
-    trackArtists = set(__artistNames__(getattr(track, 'artists', [])))
-    candidateArtists = set(__artistNames__(getattr(candidate, 'artists', [])))
+    trackArtists = set(_artistNames(getattr(track, 'artists', [])))
+    candidateArtists = set(_artistNames(getattr(candidate, 'artists', [])))
     if not trackArtists or not candidateArtists:
         return -1
 
@@ -1007,8 +1007,8 @@ def __lyricsCandidateScore__(track, candidate):
 
     score = 100 + (min(len(artistOverlap), 3) * 20)
 
-    trackArtistOrder = __artistNames__(getattr(track, 'artists', []))
-    candidateArtistOrder = __artistNames__(getattr(candidate, 'artists', []))
+    trackArtistOrder = _artistNames(getattr(track, 'artists', []))
+    candidateArtistOrder = _artistNames(getattr(candidate, 'artists', []))
     if trackArtistOrder and candidateArtistOrder and trackArtistOrder[0] == candidateArtistOrder[0]:
         score += 15
 
@@ -1029,8 +1029,8 @@ def __lyricsCandidateScore__(track, candidate):
         elif durationDelta <= 5:
             score += 10
 
-    trackAlbum = __albumTitle__(track)
-    candidateAlbum = __albumTitle__(candidate)
+    trackAlbum = _albumTitle(track)
+    candidateAlbum = _albumTitle(candidate)
     if trackAlbum and candidateAlbum and trackAlbum == candidateAlbum:
         score += 10
 
@@ -1041,10 +1041,10 @@ def __lyricsCandidateScore__(track, candidate):
     return score
 
 
-def __mergeLyrics__(primary, timed):
+def _mergeLyrics(primary, timed):
     if primary is None:
         return timed
-    if timed is None or not __hasTimedLyrics__(timed):
+    if timed is None or not _hasTimedLyrics(timed):
         return primary
 
     def firstPresent(attribute):
@@ -1055,18 +1055,18 @@ def __mergeLyrics__(primary, timed):
     merged.lyricsProvider = firstPresent('lyricsProvider')
     merged.providerCommontrackId = firstPresent('providerCommontrackId')
     merged.providerLyricsId = firstPresent('providerLyricsId')
-    merged.lyrics = __lyricsText__(getattr(primary, 'lyrics', None)) or __lyricsText__(getattr(timed, 'lyrics', None))
+    merged.lyrics = _lyricsText(getattr(primary, 'lyrics', None)) or _lyricsText(getattr(timed, 'lyrics', None))
     merged.subtitles = getattr(timed, 'subtitles', None)
     return merged
 
 
-def __findTimedLyricsForTrack__(track):
+def _findTimedLyricsForTrack(track):
     title = getattr(track, 'title', None)
     if aigpy.string.isNull(title):
         return None
 
     queries = []
-    artists = __rawArtistNames__(getattr(track, 'artists', []))
+    artists = _rawArtistNames(getattr(track, 'artists', []))
     for artist in artists[:5]:
         queries.append(f"{title} {artist}")
     if len(artists) > 1:
@@ -1093,7 +1093,7 @@ def __findTimedLyricsForTrack__(track):
         (
             (score, candidate)
             for candidate in candidatesById.values()
-            for score in [__lyricsCandidateScore__(track, candidate)]
+            for score in [_lyricsCandidateScore(track, candidate)]
             if score >= 0
         ),
         key=lambda item: item[0],
@@ -1107,12 +1107,12 @@ def __findTimedLyricsForTrack__(track):
             raise
         except Exception:
             continue
-        if __hasTimedLyrics__(lyrics):
+        if _hasTimedLyrics(lyrics):
             return lyrics
     return None
 
 
-def __getLyricsForTrack__(track):
+def _getLyricsForTrack(track):
     primary = None
     try:
         primary = TIDAL_API.getLyrics(track.id)
@@ -1121,15 +1121,15 @@ def __getLyricsForTrack__(track):
     except Exception as e:
         logging.info("Unable to get lyrics for track %s: %s", getattr(track, 'id', ''), e)
 
-    if not SETTINGS.lyricFile or __hasTimedLyrics__(primary):
+    if not SETTINGS.lyricFile or _hasTimedLyrics(primary):
         return primary
 
-    return __mergeLyrics__(primary, __findTimedLyricsForTrack__(track))
+    return _mergeLyrics(primary, _findTimedLyricsForTrack(track))
 
 
-def __saveLyricsForTrack__(track, trackPath):
+def _saveLyricsForTrack(track, trackPath):
     try:
-        return __writeLyricsFile__(trackPath, __getLyricsForTrack__(track))
+        return _writeLyricsFile(trackPath, _getLyricsForTrack(track))
     except DownloadCancelled:
         raise
     except Exception as e:
@@ -1137,7 +1137,7 @@ def __saveLyricsForTrack__(track, trackPath):
         return ''
 
 
-def __parseContributors__(roleType, Contributors):
+def _parseContributors(roleType, Contributors):
     if Contributors is None:
         return None
     try:
@@ -1146,7 +1146,7 @@ def __parseContributors__(roleType, Contributors):
         return None
 
 
-def __metadataSaveError__(result):
+def _metadataSaveError(result):
     if isinstance(result, tuple):
         if len(result) > 0 and result[0] is False:
             return str(result[1]) if len(result) > 1 else "metadata writer returned false"
@@ -1156,15 +1156,15 @@ def __metadataSaveError__(result):
     return None
 
 
-def __ensureMetadataTags__(tagTool):
+def _ensureMetadataTags(tagTool):
     handle = getattr(tagTool, '_handle', None)
     if handle is not None and getattr(handle, 'tags', None) is None and hasattr(handle, 'add_tags'):
         handle.add_tags()
 
 
-def __metadataArtistNames__(item):
+def _metadataArtistNames(item):
     """Return tag artist names, falling back to the item's primary artist."""
-    names = __rawArtistNames__(getattr(item, 'artists', None))
+    names = _rawArtistNames(getattr(item, 'artists', None))
     if names:
         return names
     artist = getattr(item, 'artist', None)
@@ -1172,44 +1172,44 @@ def __metadataArtistNames__(item):
     return [str(name).strip()] if name else []
 
 
-def __setMetaData__(track: Track, album: Album, filepath, contributors, lyrics):
+def _setMetaData(track: Track, album: Album, filepath, contributors, lyrics):
     obj = aigpy.tag.TagTool(filepath)
     obj.album = track.album.title
     obj.title = track.title
     if not aigpy.string.isNull(track.version):
         obj.title += f' ({track.version})'
 
-    obj.artist = __metadataArtistNames__(track)
+    obj.artist = _metadataArtistNames(track)
     obj.copyright = track.copyRight
     obj.tracknumber = track.trackNumber
     obj.discnumber = track.volumeNumber
-    obj.composer = __parseContributors__('Composer', contributors)
+    obj.composer = _parseContributors('Composer', contributors)
     obj.isrc = track.isrc
 
-    obj.albumartist = __metadataArtistNames__(album)
+    obj.albumartist = _metadataArtistNames(album)
     obj.date = album.releaseDate
     obj.totaldisc = int(getattr(album, 'numberOfVolumes', 0) or 0)
     obj.lyrics = lyrics
     if obj.totaldisc <= 1:
         obj.totaltrack = int(getattr(album, 'numberOfTracks', 0) or 0)
     coverpath = TIDAL_API.getCoverUrl(album.cover, "1280", "1280")
-    __ensureMetadataTags__(obj)
+    _ensureMetadataTags(obj)
     artwork = None
     try:
         if coverpath:
-            response = __httpRequest__('GET', coverpath, allow_redirects=True, stream=True)
+            response = _httpRequest('GET', coverpath, allow_redirects=True, stream=True)
             try:
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as output:
                     artwork = output.name
                     output.write(response_bytes(response, MAX_ARTWORK_BYTES, 'Cover artwork'))
             finally:
                 response.close()
-        error = __metadataSaveError__(obj.save(artwork or ''))
+        error = _metadataSaveError(obj.save(artwork or ''))
         if error is not None:
             raise RuntimeError(error)
     finally:
         if artwork:
-            __removeFile__(artwork)
+            _removeFile(artwork)
 
 
 def downloadCover(album):
@@ -1220,7 +1220,7 @@ def downloadCover(album):
     if aigpy.string.isNull(url):
         return False, "Cover URL is empty."
 
-    check, err = __downloadUrls__([url], path, SETTINGS.showProgress, threadNum=1)
+    check, err = _downloadUrls([url], path, SETTINGS.showProgress, threadNum=1)
     if not check:
         msg = str(err)
         Printf.err(f"DL Cover[{album.title}] failed: {msg}")
@@ -1228,7 +1228,7 @@ def downloadCover(album):
     return True, ''
 
 
-def __volumeNumber__(item):
+def _volumeNumber(item):
     try:
         return max(1, int(getattr(item, 'volumeNumber', 0) or 1))
     except (TypeError, ValueError):
@@ -1259,14 +1259,14 @@ def downloadAlbumInfo(album, tracks):
             declaredVolumes = int(getattr(album, 'numberOfVolumes', 0) or 0)
         except (TypeError, ValueError):
             declaredVolumes = 0
-        volumeCount = max(declaredVolumes, max((__volumeNumber__(item) for item in tracks), default=1))
+        volumeCount = max(declaredVolumes, max((_volumeNumber(item) for item in tracks), default=1))
         for volumeNumber in range(1, volumeCount + 1):
             infos += f"===========CD {volumeNumber}=============\n"
             for item in tracks:
-                if __volumeNumber__(item) != volumeNumber:
+                if _volumeNumber(item) != volumeNumber:
                     continue
                 infos += f"{f'[{item.trackNumber}]':<8}{item.title}\n"
-        __writeTextFile__(path, infos)
+        _writeTextFile(path, infos)
         return True
     except DownloadCancelled:
         raise
@@ -1275,7 +1275,7 @@ def downloadAlbumInfo(album, tracks):
         return False
 
 
-def __finalizeVideoFile__(partPath, path):
+def _finalizeVideoFile(partPath, path):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError('Install ffmpeg to finalize video downloads as MP4; the downloaded parts were kept.')
@@ -1289,14 +1289,14 @@ def __finalizeVideoFile__(partPath, path):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=300,
         )
         check_cancelled()
-        if completed.returncode != 0 or __localFileSize__(tempPath) <= 0:
+        if completed.returncode != 0 or _localFileSize(tempPath) <= 0:
             detail = (completed.stderr or b'').decode('utf-8', 'replace').strip()
             raise RuntimeError('Video conversion failed: ' + (detail or 'ffmpeg produced no output'))
         os.replace(tempPath, path)
-        __removeFile__(partPath)
+        _removeFile(partPath)
         return path
     finally:
-        __removeFile__(tempPath)
+        _removeFile(tempPath)
 
 
 def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, userProgress=None):
@@ -1319,9 +1319,9 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
         Printf.video(video, stream)
         logging.info("[DL Video] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.m3u8Url)
 
-        __ensureParentDir__(path)
+        _ensureParentDir(path)
 
-        response = __httpRequest__("GET", stream.m3u8Url, allow_redirects=True, stream=True)
+        response = _httpRequest("GET", stream.m3u8Url, allow_redirects=True, stream=True)
         try:
             m3u8content = response_bytes(response, MAX_MANIFEST_BYTES, 'HLS manifest')
             manifest_url = response.url or stream.m3u8Url
@@ -1336,7 +1336,7 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
             Printf.err(f"DL Video[{title}] getTsUrls failed.")
             return False, "GetTsUrls failed."
 
-        check, msg = __downloadUrls__(
+        check, msg = _downloadUrls(
             urls,
             partPath,
             SETTINGS.showProgress,
@@ -1346,9 +1346,9 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
             sourceIdentity=identity,
         )
         if check:
-            path = __finalizeVideoFile__(partPath, path)
+            path = _finalizeVideoFile(partPath, path)
             record_completion(path, identity)
-            __removeFile__(partPath + '.source.json')
+            _removeFile(partPath + '.source.json')
             Printf.success(title)
             return True, ''
         else:
@@ -1363,23 +1363,23 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
         destination.close()
 
 
-def __getTrackStream__(track_id):
+def _getTrackStream(track_id):
     priority = SETTINGS.getDownloadAudioQualityPriority()
     return TIDAL_API.getStreamUrlByPriority(track_id, priority)
 
 
-def __wantsAtmosDownload__():
+def _wantsAtmosDownload():
     return any(quality == AudioQuality.Atmos for quality in SETTINGS.getDownloadAudioQualityPriority())
 
 
-def __resolveTrackForAtmosDownload__(track: Track, album=None):
+def _resolveTrackForAtmosDownload(track: Track, album=None):
     """Swap stereo catalog IDs for Atmos twins when Atmos quality is requested.
 
     Covers album, track, playlist, and mix paths — not only start_track().
     """
-    if track is None or not __wantsAtmosDownload__():
+    if track is None or not _wantsAtmosDownload():
         return track, album
-    if TIDAL_API.__hasAtmosMode__(track):
+    if TIDAL_API._hasAtmosMode(track):
         return track, album
 
     atmos = TIDAL_API.findAtmosTrackVariant(track)
@@ -1404,7 +1404,7 @@ def __resolveTrackForAtmosDownload__(track: Track, album=None):
     return atmos, atmos_album
 
 
-def __ensureTrackStreamable__(track):
+def _ensureTrackStreamable(track):
     if getattr(track, 'allowStreaming', None) is False:
         raise Exception("Track is not available for streaming on this account.")
     if getattr(track, 'streamReady', None) is False:
@@ -1427,15 +1427,15 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
     destination = ExitStack()
     try:
         check_cancelled()
-        track, album = __resolveTrackForAtmosDownload__(track, album)
+        track, album = _resolveTrackForAtmosDownload(track, album)
         title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
-        __ensureTrackStreamable__(track)
-        stream = __getTrackStream__(track.id)
+        _ensureTrackStreamable(track)
+        stream = _getTrackStream(track.id)
         stream.trackid = track.id
         path = getTrackPath(track, stream, album, playlist)
         destination.enter_context(output_lock(os.path.splitext(path)[0]))
         partPath = path + '.part'
-        partsDir = __partsDirectory__(partPath)
+        partsDir = _partsDirectory(partPath)
 
         if SETTINGS.showTrackInfo and not SETTINGS.multiThread:
             Printf.track(track, stream)
@@ -1444,10 +1444,10 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             userProgress.updateStream(stream)
 
         # Inspect receipts once for both skipping and metadata-only repair.
-        existingPath, metadataComplete = __existingMediaState__(path, stream)
+        existingPath, metadataComplete = _existingMediaState(path, stream)
         if SETTINGS.checkExist and existingPath is not None and metadataComplete:
             if SETTINGS.lyricFile:
-                __saveLyricsForTrack__(track, existingPath)
+                _saveLyricsForTrack(track, existingPath)
             Printf.success(aigpy.path.getFileName(existingPath) + " (skip:already exists!)")
             return True, ''
 
@@ -1460,21 +1460,21 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
                 raise
             except Exception:
                 contributors = None
-            lyrics = __saveLyricsForTrack__(track, existingPath)
+            lyrics = _saveLyricsForTrack(track, existingPath)
             try:
-                __setMetaData__(track, album, existingPath, contributors, lyrics)
-                facts = __verifyMediaQuality__(existingPath, stream)
+                _setMetaData(track, album, existingPath, contributors, lyrics)
+                facts = _verifyMediaQuality(existingPath, stream)
                 record_completion(existingPath, audio_identity(stream), media_facts=facts)
-                __removeFile__(partPath)
-                __removeFile__(partPath + '.source.json')
-                __removeDir__(partsDir)
+                _removeFile(partPath)
+                _removeFile(partPath + '.source.json')
+                _removeDir(partsDir)
                 Printf.success(title + ' (metadata repaired)')
             except DownloadCancelled:
                 raise
             except Exception as error:
                 # A failed tagger may have partially touched the container.
                 # Re-probe before preserving it as media-complete.
-                facts = __verifyMediaQuality__(existingPath, stream)
+                facts = _verifyMediaQuality(existingPath, stream)
                 record_completion(
                     existingPath, audio_identity(stream), metadata_complete=False, media_facts=facts
                 )
@@ -1487,31 +1487,31 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         # download
         logging.info("[DL Track] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.url)
 
-        __ensureParentDir__(path)
+        _ensureParentDir(path)
 
         # Do not issue a HEAD/ranged-GET size probe for every DASH object.
         # Each real GET supplies Content-Length/Content-Range for per-object
         # verification, and the completed-transfer marker records the final
         # assembled size for safe local reuse. This roughly halves CDN request
         # count for segmented audio and avoids an up-front parallel burst.
-        check, err = __downloadUrls__(
+        check, err = _downloadUrls(
             stream.urls, partPath, SETTINGS.showProgress and not SETTINGS.multiThread,
             userProgress, SETTINGS.segmentsPerTrack if SETTINGS.multiThread else 1,
             max(int(partSize), 64 * 1024), probeSize=False,
             sourceIdentity=audio_identity(stream),
         )
         if not check:
-            __logFailedTrack__(track, album, playlist, err)
-            Printf.err(f"DL Track '{title}' failed: {str(err)}{__downloadErrorHint__(err)}")
+            _logFailedTrack(track, album, playlist, err)
+            Printf.err(f"DL Track '{title}' failed: {str(err)}{_downloadErrorHint(err)}")
             return False, str(err)
 
         # encrypted -> decrypt and remove encrypted file.
         # On failure, the outer handler keeps a complete partPath for retry.
         stem, extension = os.path.splitext(path)
         processingPath = f'{stem}.processing.{os.getpid()}{extension}'
-        __encrypted__(stream, partPath, processingPath)
-        __removeDir__(partsDir)
-        processingPath = __exportFlacFromContainer__(processingPath, stream)
+        _encrypted(stream, partPath, processingPath)
+        _removeDir(partsDir)
+        processingPath = _exportFlacFromContainer(processingPath, stream)
         path = stem + os.path.splitext(processingPath)[1]
 
         # contributors
@@ -1522,11 +1522,11 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         except Exception:
             contributors = None
 
-        lyrics = __saveLyricsForTrack__(track, path)
+        lyrics = _saveLyricsForTrack(track, path)
 
         metadata_complete = True
         try:
-            __setMetaData__(track, album, processingPath, contributors, lyrics)
+            _setMetaData(track, album, processingPath, contributors, lyrics)
         except DownloadCancelled:
             raise
         except Exception as e:
@@ -1537,7 +1537,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
                 userProgress.note_warning(f'Metadata could not be saved for {title}')
         # Verify after tagging too: a failed writer must not leave a corrupt
         # container marked as media-complete.
-        media_facts = __verifyMediaQuality__(processingPath, stream)
+        media_facts = _verifyMediaQuality(processingPath, stream)
         check_cancelled()
         os.replace(processingPath, path)
         record_completion(
@@ -1548,8 +1548,8 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         )
         # The final media is complete regardless of whether optional metadata
         # succeeded. Its receipt is enough for a tag-only retry.
-        __removeFile__(partPath)
-        __removeFile__(partPath + '.source.json')
+        _removeFile(partPath)
+        _removeFile(partPath + '.source.json')
         Printf.success(title)
 
         return True, ''
@@ -1557,14 +1557,14 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         raise
     except Exception as e:
         # Preserve complete/partial transfer state for resume; only drop empty parts.
-        if partPath and __localFileSize__(partPath) <= 0:
-            __removeFile__(partPath)
-        __logFailedTrack__(track, album, playlist, e)
-        Printf.err(f"DL Track '{title}' failed: {str(e)}{__downloadErrorHint__(e)}")
+        if partPath and _localFileSize(partPath) <= 0:
+            _removeFile(partPath)
+        _logFailedTrack(track, album, playlist, e)
+        Printf.err(f"DL Track '{title}' failed: {str(e)}{_downloadErrorHint(e)}")
         return False, str(e)
     finally:
         if processingPath:
-            __removeFile__(processingPath)
+            _removeFile(processingPath)
         destination.close()
 
 
@@ -1576,7 +1576,7 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
     if progress is not None and total:
         progress.begin_collection(total)
 
-    def __getAlbum__(item: Track):
+    def _getAlbum(item: Track):
         albumId = getattr(getattr(item, 'album', None), 'id', None)
         if albumId is None:
             return None
@@ -1596,7 +1596,7 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
             downloadedCovers.add(albumId)
         return itemAlbum
 
-    def __trackProgressKwargs__(index):
+    def _trackProgressKwargs(index):
         if progress is None:
             return {}
         return {"userProgress": progress.for_entry(index + 1) if hasattr(progress, "for_entry") else progress}
@@ -1607,11 +1607,11 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
             check_cancelled()
             itemAlbum = album
             if itemAlbum is None:
-                itemAlbum = __getAlbum__(item)
+                itemAlbum = _getAlbum(item)
                 item.trackNumberOnPlaylist = index + 1
             if progress is not None:
                 progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
-            check, _ = downloadTrack(item, itemAlbum, playlist, **__trackProgressKwargs__(index))
+            check, _ = downloadTrack(item, itemAlbum, playlist, **_trackProgressKwargs(index))
             if progress is not None:
                 progress.finish_entry(index + 1, total, check)
                 if not check and hasattr(progress, 'note_failed_track'):
@@ -1625,7 +1625,7 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
                 check_cancelled()
                 itemAlbum = album
                 if itemAlbum is None:
-                    itemAlbum = __getAlbum__(item)
+                    itemAlbum = _getAlbum(item)
                     item.trackNumberOnPlaylist = index + 1
                 if progress is not None:
                     progress.begin_entry(index + 1, total, getattr(item, 'title', '') or '')
@@ -1634,7 +1634,7 @@ def downloadTracks(tracks, album: Album = None, playlist: Playlist = None, progr
                     item,
                     itemAlbum,
                     playlist,
-                    **__trackProgressKwargs__(index),
+                    **_trackProgressKwargs(index),
                 )] = index
 
             success = True

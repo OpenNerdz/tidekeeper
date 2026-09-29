@@ -61,21 +61,21 @@ class Language(object):
     def __init__(self) -> None:
         self.select = LangEnglish()
 
-    def __toInt__(self, str):
+    def _toInt(self, str):
         try:
             return int(str)
         except (TypeError, ValueError):
             return 0
 
     def setLang(self, index):
-        index = self.__toInt__(index)
+        index = self._toInt(index)
         if index >= 0 and index < len(_ALL_LANGUAGE_):
             self.select = _ALL_LANGUAGE_[index][1]
         else:
             self.select = LangEnglish()
 
     def getLangName(self, index):
-        index = self.__toInt__(index)
+        index = self._toInt(index)
         if index >= 0 and index < len(_ALL_LANGUAGE_):
             return _ALL_LANGUAGE_[index][0]
         return ""

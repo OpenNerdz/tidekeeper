@@ -43,7 +43,7 @@ class DownloadBackendTests(unittest.TestCase):
         source_file.write_bytes(b"track-bytes" * 2048)
         output_file = self.root / "track.out"
 
-        ok, msg = download.__downloadUrls__([f"{self.base_url}/track.bin"], str(output_file), threadNum=1)
+        ok, msg = download._downloadUrls([f"{self.base_url}/track.bin"], str(output_file), threadNum=1)
 
         self.assertTrue(ok, msg)
         self.assertEqual(output_file.read_bytes(), source_file.read_bytes())
@@ -54,7 +54,7 @@ class DownloadBackendTests(unittest.TestCase):
         (self.source / "002.bin").write_bytes(b"third")
         output_file = self.root / "joined.out"
 
-        ok, msg = download.__downloadUrls__([
+        ok, msg = download._downloadUrls([
             f"{self.base_url}/000.bin",
             f"{self.base_url}/001.bin",
             f"{self.base_url}/002.bin",
@@ -69,7 +69,7 @@ class DownloadBackendTests(unittest.TestCase):
         (self.source / "002.bin").write_bytes(b"media-two")
         output_file = self.root / "joined-sequential.out"
 
-        ok, msg = download.__downloadUrls__([
+        ok, msg = download._downloadUrls([
             f"{self.base_url}/000.bin",
             f"{self.base_url}/001.bin",
             f"{self.base_url}/002.bin",
@@ -83,7 +83,7 @@ class DownloadBackendTests(unittest.TestCase):
         output_file.write_bytes(b"known-good")
 
         with mock.patch.object(download.time, "sleep") as sleep:
-            ok, msg = download.__downloadUrls__([f"{self.base_url}/missing.bin"], str(output_file), threadNum=1)
+            ok, msg = download._downloadUrls([f"{self.base_url}/missing.bin"], str(output_file), threadNum=1)
 
         self.assertFalse(ok)
         self.assertIn("404", msg)
@@ -106,8 +106,8 @@ class DownloadBackendTests(unittest.TestCase):
             def close(self):
                 pass
 
-        with mock.patch.object(download, "__httpRequest__", return_value=FakeResponse()) as request:
-            ok, msg = download.__downloadUrls__(
+        with mock.patch.object(download, "_httpRequest", return_value=FakeResponse()) as request:
+            ok, msg = download._downloadUrls(
                 ["https://example.invalid/media.bin"],
                 str(output_file),
                 threadNum=1,
@@ -145,9 +145,9 @@ class DownloadBackendTests(unittest.TestCase):
             FakeResponse([b"first-"], requests.ConnectionError("connection dropped")),
             FakeResponse([b"second"], status_code=206, headers={"Content-Range": "bytes 6-11/12"}),
         ]
-        with mock.patch.object(download, "__httpRequest__", side_effect=responses) as request, \
+        with mock.patch.object(download, "_httpRequest", side_effect=responses) as request, \
              mock.patch.object(download.time, "sleep"):
-            ok, msg = download.__downloadUrls__(
+            ok, msg = download._downloadUrls(
                 ["https://example.invalid/media.bin"],
                 str(output_file),
                 threadNum=1,
@@ -180,8 +180,8 @@ class DownloadBackendTests(unittest.TestCase):
 
         bad_partial = FakeResponse(206, {"Content-Range": "bytes 0-5/12"}, [b"WRONG!"])
         full_body = FakeResponse(200, {}, [b"complete-body"])
-        with mock.patch.object(download, "__httpRequest__", side_effect=[bad_partial, full_body]) as request:
-            ok, msg = download.__downloadUrls__(
+        with mock.patch.object(download, "_httpRequest", side_effect=[bad_partial, full_body]) as request:
+            ok, msg = download._downloadUrls(
                 ["https://example.invalid/media.bin"],
                 str(output_file),
                 threadNum=1,
@@ -200,7 +200,7 @@ class DownloadBackendTests(unittest.TestCase):
         (self.source / "001.bin").write_bytes(b"BBBBCCCC")
         output_file = self.root / "seg-resume.out"
 
-        ok, msg = download.__downloadUrls__([
+        ok, msg = download._downloadUrls([
             f"{self.base_url}/000.bin",
             f"{self.base_url}/001.bin",
         ], str(output_file), threadNum=1, probeSize=False)
@@ -220,9 +220,9 @@ class DownloadBackendTests(unittest.TestCase):
                 pass
 
         output_file = self.root / "short.out"
-        with mock.patch.object(download, "__httpRequest__", return_value=FakeResponse()), \
+        with mock.patch.object(download, "_httpRequest", return_value=FakeResponse()), \
              mock.patch.object(download.time, "sleep"):
-            ok, msg = download.__downloadUrls__(
+            ok, msg = download._downloadUrls(
                 ["https://example.invalid/media.bin"],
                 str(output_file),
                 threadNum=1,
@@ -240,9 +240,9 @@ class DownloadBackendTests(unittest.TestCase):
         output_file.write_bytes(payload)
         download.complete_transfer(str(output_file))
 
-        with mock.patch.object(download, "__httpRequest__") as request, \
-             mock.patch.object(download, "__remoteSize__", return_value=len(payload)):
-            ok, msg = download.__downloadUrls__(
+        with mock.patch.object(download, "_httpRequest") as request, \
+             mock.patch.object(download, "_remoteSize", return_value=len(payload)):
+            ok, msg = download._downloadUrls(
                 ["https://example.invalid/media.bin"],
                 str(output_file),
                 threadNum=1,
@@ -259,7 +259,7 @@ class DownloadBackendTests(unittest.TestCase):
         parts_dir = Path(str(output_file) + ".parts")
 
         with mock.patch.object(download.time, "sleep") as sleep:
-            ok, msg = download.__downloadUrls__([
+            ok, msg = download._downloadUrls([
                 f"{self.base_url}/000.bin",
                 f"{self.base_url}/missing.bin",
             ], str(output_file), threadNum=1, probeSize=False)
@@ -276,7 +276,7 @@ class DownloadBackendTests(unittest.TestCase):
         (self.source / "002.bin").write_bytes(b"three")
         output_file = self.root / "parallel.out"
 
-        ok, msg = download.__downloadUrls__([
+        ok, msg = download._downloadUrls([
             f"{self.base_url}/000.bin",
             f"{self.base_url}/001.bin",
             f"{self.base_url}/002.bin",
@@ -294,7 +294,7 @@ class DownloadBackendTests(unittest.TestCase):
         try:
             download.SETTINGS.saveAsFlac = True
             with mock.patch.object(download.shutil, "which", return_value=None):
-                final_path = download.__exportFlacFromContainer__(str(source), stream)
+                final_path = download._exportFlacFromContainer(str(source), stream)
         finally:
             download.SETTINGS.saveAsFlac = old_value
 
@@ -317,7 +317,7 @@ class DownloadBackendTests(unittest.TestCase):
             download.SETTINGS.saveAsFlac = True
             with mock.patch.object(download.shutil, "which", return_value="/usr/bin/ffmpeg"), \
                  mock.patch.object(download.subprocess, "run", side_effect=fake_run) as run:
-                final_path = download.__exportFlacFromContainer__(str(source), stream)
+                final_path = download._exportFlacFromContainer(str(source), stream)
         finally:
             download.SETTINGS.saveAsFlac = old_value
 
@@ -343,8 +343,8 @@ class DownloadBackendTests(unittest.TestCase):
         try:
             download.SETTINGS.saveAsFlac = True
             download.SETTINGS.checkExist = True
-            with mock.patch.object(download, "__remoteSize__", return_value=-1):
-                self.assertEqual(download.__existingMediaState__(str(existing), stream), (str(existing), True))
+            with mock.patch.object(download, "_remoteSize", return_value=-1):
+                self.assertEqual(download._existingMediaState(str(existing), stream), (str(existing), True))
         finally:
             for key, value in old_values.items():
                 setattr(download.SETTINGS, key, value)
@@ -365,8 +365,8 @@ class DownloadBackendTests(unittest.TestCase):
         try:
             download.SETTINGS.saveAsFlac = True
             download.SETTINGS.checkExist = True
-            with mock.patch.object(download, "__remoteSize__", return_value=-1):
-                self.assertEqual(download.__existingMediaState__(str(existing), stream), (None, False))
+            with mock.patch.object(download, "_remoteSize", return_value=-1):
+                self.assertEqual(download._existingMediaState(str(existing), stream), (None, False))
         finally:
             for key, value in old_values.items():
                 setattr(download.SETTINGS, key, value)
@@ -383,10 +383,10 @@ class DownloadRetryTests(unittest.TestCase):
         response.raise_for_status.side_effect = requests.HTTPError(response=response)
         session = mock.Mock()
         session.request.return_value = response
-        with mock.patch.object(download, "__httpSession__", return_value=session), \
+        with mock.patch.object(download, "_httpSession", return_value=session), \
              mock.patch.object(download.time, "sleep") as sleep:
             with self.assertRaises(requests.HTTPError):
-                download.__httpRequest__("GET", "http://example.invalid/missing")
+                download._httpRequest("GET", "http://example.invalid/missing")
         self.assertEqual(session.request.call_count, 1)
         sleep.assert_not_called()
 
@@ -396,9 +396,9 @@ class DownloadRetryTests(unittest.TestCase):
         success.raise_for_status.return_value = None
         session = mock.Mock()
         session.request.side_effect = [failed, success]
-        with mock.patch.object(download, "__httpSession__", return_value=session), \
+        with mock.patch.object(download, "_httpSession", return_value=session), \
              mock.patch.object(download.time, "sleep") as sleep:
-            result = download.__httpRequest__("GET", "http://example.invalid/track")
+            result = download._httpRequest("GET", "http://example.invalid/track")
         self.assertIs(result, success)
         self.assertEqual(session.request.call_count, 2)
         sleep.assert_called_once()
@@ -408,9 +408,9 @@ class DownloadRetryTests(unittest.TestCase):
         success.raise_for_status.return_value = None
         session = mock.Mock()
         session.request.side_effect = [requests.ConnectionError("drop"), success]
-        with mock.patch.object(download, "__httpSession__", return_value=session), \
+        with mock.patch.object(download, "_httpSession", return_value=session), \
              mock.patch.object(download.time, "sleep") as sleep:
-            result = download.__httpRequest__("GET", "http://example.invalid/track")
+            result = download._httpRequest("GET", "http://example.invalid/track")
         self.assertIs(result, success)
         self.assertEqual(session.request.call_count, 2)
         sleep.assert_called_once()
@@ -418,10 +418,10 @@ class DownloadRetryTests(unittest.TestCase):
     def test_incomplete_write_still_retries_after_http_200(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "incomplete.out"
-            with mock.patch.object(download, "__httpRequest__", side_effect=IOError("disk full")), \
+            with mock.patch.object(download, "_httpRequest", side_effect=IOError("disk full")), \
                  mock.patch.object(download.time, "sleep") as sleep:
                 with self.assertRaises(IOError):
-                    download.__downloadSingleUrl__(
+                    download._downloadSingleUrl(
                         "http://example.invalid/track.bin",
                         str(output_file),
                     )
@@ -473,9 +473,9 @@ class GuiDownloadStatusTests(unittest.TestCase):
             def download_sized(_url, path, *args, **kwargs):
                 Path(path).write_bytes(b'x' * 12)
                 return 12
-            with mock.patch.object(download, "__remoteSize__") as probe, \
-                 mock.patch.object(download, "__downloadSingleUrl__", side_effect=download_sized):
-                ok, msg = download.__downloadUrls__(
+            with mock.patch.object(download, "_remoteSize") as probe, \
+                 mock.patch.object(download, "_downloadSingleUrl", side_effect=download_sized):
+                ok, msg = download._downloadUrls(
                     ["http://example.invalid/track.bin"],
                     str(output_file),
                     threadNum=1,
@@ -492,9 +492,9 @@ class GuiDownloadStatusTests(unittest.TestCase):
             def download_sized(_url, path, *args, **kwargs):
                 Path(path).write_bytes(b'x' * 8)
                 return 8
-            with mock.patch.object(download, "__remoteSize__", return_value=8) as probe, \
-                 mock.patch.object(download, "__downloadSingleUrl__", side_effect=download_sized):
-                ok, msg = download.__downloadUrls__(
+            with mock.patch.object(download, "_remoteSize", return_value=8) as probe, \
+                 mock.patch.object(download, "_downloadSingleUrl", side_effect=download_sized):
+                ok, msg = download._downloadUrls(
                     ["http://example.invalid/track.bin"],
                     str(output_file),
                     threadNum=1,
@@ -526,22 +526,22 @@ class GuiDownloadStatusTests(unittest.TestCase):
             path = str(Path(temp_dir) / "song.m4a")
             download.SETTINGS.showTrackInfo = False
             try:
-                with mock.patch.object(download, "__resolveTrackForAtmosDownload__", return_value=(track, None)), \
-                     mock.patch.object(download, "__getTrackStream__", return_value=stream), \
+                with mock.patch.object(download, "_resolveTrackForAtmosDownload", return_value=(track, None)), \
+                     mock.patch.object(download, "_getTrackStream", return_value=stream), \
                      mock.patch.object(download, "getTrackPath", return_value=path), \
-                     mock.patch.object(download, "__existingMediaState__", return_value=(None, False)), \
-                     mock.patch.object(download, "__remoteSize__") as probe, \
-                     mock.patch.object(download, "__isReusableAssembledFile__", return_value=False), \
-                     mock.patch.object(download, "__localFileSize__", return_value=0), \
-                     mock.patch.object(download, "__downloadUrls__", return_value=(True, "")) as downloaded, \
-                     mock.patch.object(download, "__encrypted__", side_effect=lambda _stream, _src, out: Path(out).write_bytes(b"media")), \
-                     mock.patch.object(download, "__removeDir__"), \
-                     mock.patch.object(download, "__exportFlacFromContainer__", side_effect=lambda out, _stream: out), \
+                     mock.patch.object(download, "_existingMediaState", return_value=(None, False)), \
+                     mock.patch.object(download, "_remoteSize") as probe, \
+                     mock.patch.object(download, "_isReusableAssembledFile", return_value=False), \
+                     mock.patch.object(download, "_localFileSize", return_value=0), \
+                     mock.patch.object(download, "_downloadUrls", return_value=(True, "")) as downloaded, \
+                     mock.patch.object(download, "_encrypted", side_effect=lambda _stream, _src, out: Path(out).write_bytes(b"media")), \
+                     mock.patch.object(download, "_removeDir"), \
+                     mock.patch.object(download, "_exportFlacFromContainer", side_effect=lambda out, _stream: out), \
                      mock.patch.object(download.TIDAL_API, "getTrackContributors", return_value=None), \
-                     mock.patch.object(download, "__saveLyricsForTrack__", return_value=""), \
-                     mock.patch.object(download, "__setMetaData__"), \
-                     mock.patch.object(download, "__verifyMediaQuality__", return_value={}), \
-                     mock.patch.object(download, "__ensureParentDir__"):
+                     mock.patch.object(download, "_saveLyricsForTrack", return_value=""), \
+                     mock.patch.object(download, "_setMetaData"), \
+                     mock.patch.object(download, "_verifyMediaQuality", return_value={}), \
+                     mock.patch.object(download, "_ensureParentDir"):
                     ok, err = download.downloadTrack(track)
             finally:
                 download.SETTINGS.showTrackInfo = old_show
@@ -558,9 +558,9 @@ class GuiDownloadStatusTests(unittest.TestCase):
             output_file.write_bytes(b"already-downloaded-bytes")
             download.complete_transfer(str(output_file))
 
-            with mock.patch.object(download, "__httpRequest__") as request, \
-                 mock.patch.object(download, "__remoteSize__") as probe:
-                ok, msg = download.__downloadUrls__(
+            with mock.patch.object(download, "_httpRequest") as request, \
+                 mock.patch.object(download, "_remoteSize") as probe:
+                ok, msg = download._downloadUrls(
                     urls,
                     str(output_file),
                     threadNum=1,
@@ -582,8 +582,8 @@ class GuiDownloadStatusTests(unittest.TestCase):
 
             response = mock.Mock(status_code=200, headers={"Content-Length": "5"})
             response.iter_content.return_value = iter([b"fresh"])
-            with mock.patch.object(download, "__httpRequest__", return_value=response) as request:
-                ok, msg = download.__downloadUrls__(
+            with mock.patch.object(download, "_httpRequest", return_value=response) as request:
+                ok, msg = download._downloadUrls(
                     urls,
                     str(output_file),
                     threadNum=1,
@@ -691,20 +691,20 @@ class DirectInputAndProgressTests(unittest.TestCase):
         broken = SimpleNamespace(addCurCount=mock.Mock(side_effect=RuntimeError("widget gone")))
         healthy = SimpleNamespace(addCurNum=mock.Mock())
         with self.assertLogs(level="DEBUG") as logs:
-            download.__noteProgress__(broken, healthy, 512, threading.Lock())
+            download._noteProgress(broken, healthy, 512, threading.Lock())
         healthy.addCurNum.assert_called_once_with(512)
         self.assertTrue(any("addCurCount" in line and "widget gone" in line for line in logs.output))
 
     def test_progress_helpers_ignore_missing_sinks_and_zero_sizes(self):
         sink = SimpleNamespace(setMaxNum=mock.Mock(), addCurNum=mock.Mock())
-        download.__setUserProgressMax__(None, 10)
-        download.__setUserProgressMax__(sink, 0)
-        download.__noteProgress__(None, sink, -1)
-        download.__noteProgress__(None, None, 10)
+        download._setUserProgressMax(None, 10)
+        download._setUserProgressMax(sink, 0)
+        download._noteProgress(None, sink, -1)
+        download._noteProgress(None, None, 10)
         sink.setMaxNum.assert_not_called()
         sink.addCurNum.assert_not_called()
         # Sinks missing a method are skipped rather than raising AttributeError.
-        download.__noteProgress__(SimpleNamespace(), sink, 8)
+        download._noteProgress(SimpleNamespace(), sink, 8)
         sink.addCurNum.assert_called_once_with(8)
 
 

@@ -99,8 +99,8 @@ class CliUiTests(unittest.TestCase):
         self.assertNotIn("+", text)
 
     def test_wide_api_key_picker_preserves_sparse_ids(self):
-        with mock.patch.object(Printf, '__isCompact__', return_value=False), \
-             mock.patch.object(Printf, '__gettable__') as table:
+        with mock.patch.object(Printf, '_isCompact', return_value=False), \
+             mock.patch.object(Printf, '_gettable') as table:
             Printf.apikeys(apiKey.getItems())
         self.assertEqual([row[0] for row in table.call_args.args[1]], [1, 4, 5])
 
@@ -249,14 +249,14 @@ class CliUiTests(unittest.TestCase):
         start.assert_called_once_with("artist-id", True)
 
     def test_default_config_path(self):
-        assert(PATHS.__getHomePath__() == PATHS.__getDefaultHomePath__())
+        assert(PATHS._getHomePath() == PATHS._getDefaultHomePath())
 
     def test_config_path_override_overrides_paths(self):
         with mock.patch("sys.argv", ["tidekeeper", "-c", "/home/user/tidekeeper/config"]):
             with mock.patch("tidal_dl.os.path.isdir") as mock_isdir:
                 mock_isdir.return_value = True
                 tidal_dl.preMainCommand()
-        assert(PATHS.__getHomePath__() == "/home/user/tidekeeper/config")
+        assert(PATHS._getHomePath() == "/home/user/tidekeeper/config")
 
     def test_config_path_requires_existing_directory(self):
         with mock.patch("sys.argv", ["tidekeeper", "-c", "/magic/config"]):
@@ -286,7 +286,7 @@ class CliUiTests(unittest.TestCase):
              mock.patch("tidal_dl.Printf.choices", side_effect=KeyboardInterrupt) as choices:
             self.assertEqual(tidal_dl.main(), 130)
         choices.assert_called()
-        self.assertEqual(PATHS.__getHomePath__(), config_home)
+        self.assertEqual(PATHS._getHomePath(), config_home)
         self.assertTrue(Path(PATHS.getLogPath()).is_file())
 
 

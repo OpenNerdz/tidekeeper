@@ -271,34 +271,34 @@ class TidalAPI(object):
         self._atmosTrackTwinCache.clear()
         self._atmosUnavailableTrackIds.clear()
 
-    def __responseBody__(self, response):
+    def _responseBody(self, response):
         try:
             body = response.json()
             return body if isinstance(body, dict) else {}
         except ValueError:
             return {}
 
-    def __isAssetNotReady__(self, response):
+    def _isAssetNotReady(self, response):
         if response is None or response.status_code != 401:
             return False
-        body = self.__responseBody__(response)
+        body = self._responseBody(response)
         sub_status = body.get('subStatus', body.get('sub_status'))
         if sub_status == 4005 or str(sub_status) == '4005':
             return True
         message = str(body.get('userMessage', '')).lower()
         return 'not ready for playback' in message or 'asset is not ready' in message
 
-    def __isPlaybackPath__(self, path):
+    def _isPlaybackPath(self, path):
         return 'playbackinfo' in (path or '')
 
-    def __shouldTryLegacyApiHost__(self, path, error):
-        if self.__isPlaybackPath__(path) or self.__isStaleClientError__(error):
+    def _shouldTryLegacyApiHost(self, path, error):
+        if self._isPlaybackPath(path) or self._isStaleClientError(error):
             return False
         if isinstance(error, TidalApiError):
             return error.statusCode in (404, 500, 502, 503, 504)
         return True
 
-    def __responseErrorCodes__(self, response):
+    def _responseErrorCodes(self, response):
         try:
             data = response.json()
         except ValueError:
@@ -319,7 +319,7 @@ class TidalAPI(object):
                     codes.append(str(data.get(key)))
         return codes
 
-    def __responseText__(self, response):
+    def _responseText(self, response):
         text = getattr(response, 'text', None)
         if text:
             return str(text)
@@ -328,15 +328,15 @@ class TidalAPI(object):
             return content.decode('utf-8', 'replace')
         return str(content)
 
-    def __httpError__(self, action, response):
-        detail = self.__responseText__(response)[:200].replace("\n", " ")
+    def _httpError(self, action, response):
+        detail = self._responseText(response)[:200].replace("\n", " ")
         return TidalApiError(
             f"{action} failed: HTTP {response.status_code} {detail}",
             response.status_code,
-            self.__responseErrorCodes__(response),
+            self._responseErrorCodes(response),
         )
 
-    def __refreshSavedAccessToken__(self):
+    def _refreshSavedAccessToken(self):
         if aigpy.string.isNull(getattr(TOKEN, 'refreshToken', None)):
             return False
 
@@ -362,18 +362,18 @@ class TidalAPI(object):
                 logging.info("Unable to refresh saved access token: %s", error)
                 return False
 
-    def __requestIntervalSeconds__(self):
+    def _requestIntervalSeconds(self):
         if SETTINGS.downloadDelay is False:
             return 0.0
         return max(0.0, float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0.0))
 
-    def __waitForStreamRequestQuota__(self):
+    def _waitForStreamRequestQuota(self):
         if SETTINGS.downloadDelay is False:
             return
         syncPlaybackRateLimiter()
         self.playbackRateLimiter.wait()
 
-    def __waitForCatalogRequestQuota__(self):
+    def _waitForCatalogRequestQuota(self):
         """Pace catalog calls only while adaptive backoff is elevated after 429s.
 
         Normal search stays snappy; after rate limits, catalog traffic cools down
@@ -389,76 +389,76 @@ class TidalAPI(object):
             return
         limiter.wait()
 
-    def __applyRateLimitPenalty__(self, response, attempt):
-        delay = self.__retryAfter__(response, attempt)
+    def _applyRateLimitPenalty(self, response, attempt):
+        delay = self._retryAfter(response, attempt)
         if getattr(SETTINGS, 'adaptiveRateLimit', True):
             penalize = getattr(self.playbackRateLimiter, 'penalize', None)
             if penalize is not None:
                 delay = penalize(delay)
         return delay
 
-    def __backOffForRateLimit__(self, action, response, budget):
+    def _backOffForRateLimit(self, action, response, budget):
         """Sleep after an HTTP 429, or raise once the cumulative wait cap is reached.
 
         Shared by the catalog and OpenAPI manifest request loops so both apply
         the same adaptive penalty, logging, and wait-cap semantics.
         """
-        delay = self.__applyRateLimitPenalty__(response, budget.attempts)
+        delay = self._applyRateLimitPenalty(response, budget.attempts)
         if not budget.allows(delay):
-            raise self.__httpError__(action, response)
+            raise self._httpError(action, response)
         print(f"Too many requests, automatically waiting {delay:g} seconds before retry.")
         response.close()
         cancellable_sleep(delay)
         budget.record(delay)
 
-    def __backOffForAssetNotReady__(self, response, attempt):
+    def _backOffForAssetNotReady(self, response, attempt):
         """Sleep with a linear, capped delay while TIDAL finishes preparing an asset."""
         delay = min(5 * (attempt + 1), 30)
         print(f"Asset not ready for playback, waiting {delay:g} seconds before retry.")
         response.close()
         cancellable_sleep(delay)
 
-    def __rewardStreamRequest__(self):
+    def _rewardStreamRequest(self):
         if not getattr(SETTINGS, 'adaptiveRateLimit', True):
             return
         reward = getattr(self.playbackRateLimiter, 'reward', None)
         if reward is not None:
             reward()
 
-    def __isPlaybackBlockedError__(self, error):
+    def _isPlaybackBlockedError(self, error):
         if not isinstance(error, TidalApiError):
             return False
         # Generic 403/404 responses can be track- or endpoint-specific. Only an
         # explicit client capability error is safe to cache across tracks.
         return 'CLIENT_NOT_ENTITLED' in error.errorCodes
 
-    def __isNonRetryableTidalApiError__(self, error, playbackRequest=False):
+    def _isNonRetryableTidalApiError(self, error, playbackRequest=False):
         if not isinstance(error, TidalApiError):
             return False
         if error.statusCode == 429:
             # A 429 reaches this handler only after its wait budget is spent.
             return True
-        if self.__isPlaybackBlockedError__(error):
+        if self._isPlaybackBlockedError(error):
             return True
         if playbackRequest and error.statusCode == 401:
             return True
         return error.statusCode in (400, 403, 404, 405, 406, 410, 422)
 
-    def __isStaleClientError__(self, error):
+    def _isStaleClientError(self, error):
         if isinstance(error, TidalApiError) and any(str(code) == '4022' for code in error.errorCodes):
             return True
         text = str(error or "").lower()
         return 'client referenced in the request' in text or 'substatus 4022' in text
 
-    def __isStaleClientResponse__(self, response):
+    def _isStaleClientResponse(self, response):
         if response is None or response.status_code != 404:
             return False
-        body = self.__responseBody__(response)
-        if any(str(code) == '4022' for code in self.__responseErrorCodes__(response)):
+        body = self._responseBody(response)
+        if any(str(code) == '4022' for code in self._responseErrorCodes(response)):
             return True
         return 'client referenced in the request' in str(body.get('userMessage', '')).lower()
 
-    def __playbackClientError__(self, endpoint, quality):
+    def _playbackClientError(self, endpoint, quality):
         # Do not include response bodies, bearer tokens, or OAuth secrets in
         # diagnostics. A playback-only 4022 does not prove the login is stale.
         client = self.apiKey.get('platform') or 'unknown'
@@ -473,10 +473,10 @@ class TidalAPI(object):
             ['4022'],
         )
 
-    def __markPlaybackParamBlocked__(self, audio_param, error):
+    def _markPlaybackParamBlocked(self, audio_param, error):
         if not audio_param or not isinstance(error, TidalApiError):
             return
-        if self.__isStaleClientError__(error):
+        if self._isStaleClientError(error):
             # A 4022 does not prove this quality is unavailable for every track.
             # Keep later downloads from inheriting a playback-specific failure.
             return
@@ -486,41 +486,41 @@ class TidalAPI(object):
         if 'CLIENT_NOT_ENTITLED' in error.errorCodes:
             self._playbackBlockedParams[audio_param] = time.monotonic() + PLAYBACK_BLOCK_TTL_SECONDS
 
-    def __isPlaybackParamBlocked__(self, audio_param):
+    def _isPlaybackParamBlocked(self, audio_param):
         expires = self._playbackBlockedParams.get(audio_param, 0)
         if expires > time.monotonic():
             return True
         self._playbackBlockedParams.pop(audio_param, None)
         return False
 
-    def __isRateLimitError__(self, error):
+    def _isRateLimitError(self, error):
         if isinstance(error, TidalApiError) and error.statusCode is not None:
             return error.statusCode == 429
         text = str(error or "").lower()
         return any(token in text for token in ("429", "too many requests", "rate limit"))
 
-    def __shouldSkipOpenApiFallback__(self, error):
-        return self.__isRateLimitError__(error) or (
-            self.__isStaleClientError__(error) and not isinstance(error, TidalPlaybackClientError)
+    def _shouldSkipOpenApiFallback(self, error):
+        return self._isRateLimitError(error) or (
+            self._isStaleClientError(error) and not isinstance(error, TidalPlaybackClientError)
         )
 
-    def __retryAfter__(self, response, attempt):
+    def _retryAfter(self, response, attempt):
         return retry_delay(response, default=min(5 * (attempt + 1), 30), cap=300,
-                           minimum=max(1.0, self.__requestIntervalSeconds__()))
+                           minimum=max(1.0, self._requestIntervalSeconds()))
 
-    def __get__(self, path, params=None, urlpre=None):
+    def _get(self, path, params=None, urlpre=None):
         if urlpre is not None:
-            return self.__getOnce__(path, params, urlpre)
+            return self._getOnce(path, params, urlpre)
         try:
-            return self.__getOnce__(path, params, API_BASE_PRIMARY)
+            return self._getOnce(path, params, API_BASE_PRIMARY)
         except DownloadCancelled:
             raise
         except Exception as e:
-            if self.__shouldTryLegacyApiHost__(path, e):
-                return self.__getOnce__(path, params, API_BASE_LEGACY)
+            if self._shouldTryLegacyApiHost(path, e):
+                return self._getOnce(path, params, API_BASE_LEGACY)
             raise
 
-    def __getOnce__(self, path, params=None, urlpre=API_BASE_PRIMARY):
+    def _getOnce(self, path, params=None, urlpre=API_BASE_PRIMARY):
         params = {} if params is None else dict(params)
         params['countryCode'] = self.key.countryCode
         errmsg = "Get operation err!"
@@ -528,7 +528,7 @@ class TidalAPI(object):
         lastError = None
         refreshedToken = False
         url = urlpre + path
-        playbackRequest = self.__isPlaybackPath__(path)
+        playbackRequest = self._isPlaybackPath(path)
         maxAttempts = PLAYBACK_ASSET_NOT_READY_ATTEMPTS if playbackRequest else CATALOG_MAX_ATTEMPTS
         index = 0
         rateLimitBudget = RateLimitWaitBudget()
@@ -538,10 +538,10 @@ class TidalAPI(object):
             try:
                 header = {'authorization': f'Bearer {self.key.accessToken}'}
                 if playbackRequest:
-                    self.__waitForStreamRequestQuota__()
+                    self._waitForStreamRequestQuota()
                 else:
                     # Only engages after a 429 raised the adaptive interval.
-                    self.__waitForCatalogRequestQuota__()
+                    self._waitForCatalogRequestQuota()
 
                 respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT,
                                            allow_redirects=False)
@@ -549,27 +549,27 @@ class TidalAPI(object):
                 if respond.status_code == 429:
                     # Always apply adaptive penalty (catalog and playback) so one
                     # storm cools the whole client, not only stream endpoints.
-                    self.__backOffForRateLimit__("Get operation", respond, rateLimitBudget)
+                    self._backOffForRateLimit("Get operation", respond, rateLimitBudget)
                     consumeAttempt = False
                     continue
 
-                if respond.status_code == 401 and self.__isAssetNotReady__(respond):
-                    self.__backOffForAssetNotReady__(respond, index)
+                if respond.status_code == 401 and self._isAssetNotReady(respond):
+                    self._backOffForAssetNotReady(respond, index)
                     continue
 
-                if respond.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():
+                if respond.status_code == 401 and not refreshedToken and self._refreshSavedAccessToken():
                     refreshedToken = True
                     continue
 
-                if respond.status_code == 404 and self.__isStaleClientResponse__(respond):
+                if respond.status_code == 404 and self._isStaleClientResponse(respond):
                     if playbackRequest:
-                        raise self.__playbackClientError__(
+                        raise self._playbackClientError(
                             path, params.get('audioquality') or params.get('videoquality') or 'unknown',
                         )
-                    if not refreshedToken and self.__refreshSavedAccessToken__():
+                    if not refreshedToken and self._refreshSavedAccessToken():
                         refreshedToken = True
                         continue
-                    error = self.__httpError__("Get operation", respond)
+                    error = self._httpError("Get operation", respond)
                     self.clearSavedSession()
                     raise TidalApiError(
                         "Get operation failed: the saved login session references an API client "
@@ -580,7 +580,7 @@ class TidalAPI(object):
                     )
 
                 if respond.status_code != 200:
-                    raise self.__httpError__("Get operation", respond)
+                    raise self._httpError("Get operation", respond)
 
                 try:
                     result = json.loads(respond.text)
@@ -596,18 +596,18 @@ class TidalAPI(object):
                     )
                 if 'status' not in result:
                     if playbackRequest:
-                        self.__rewardStreamRequest__()
+                        self._rewardStreamRequest()
                     return result
 
                 if 'userMessage' in result and result['userMessage'] is not None:
                     errmsg += result['userMessage']
                 break
             except TidalApiError as e:
-                if self.__isNonRetryableTidalApiError__(e, playbackRequest) or index >= maxAttempts - 1:
+                if self._isNonRetryableTidalApiError(e, playbackRequest) or index >= maxAttempts - 1:
                     raise e
                 lastError = e
                 if e.statusCode in (500, 502, 503, 504):
-                    cancellable_sleep(self.__retryAfter__(respond, index))
+                    cancellable_sleep(self._retryAfter(respond, index))
             except DownloadCancelled:
                 raise
             except Exception as e:
@@ -620,15 +620,15 @@ class TidalAPI(object):
                 if consumeAttempt:
                     index += 1
 
-        if respond is not None and self.__isAssetNotReady__(respond):
-            body = self.__responseBody__(respond)
+        if respond is not None and self._isAssetNotReady(respond):
+            body = self._responseBody(respond)
             message = body.get('userMessage') or 'Asset is not ready for playback'
             raise Exception(f"{errmsg}{message}") from lastError
         if lastError is not None and aigpy.string.isNull(errmsg.replace("Get operation err!", "")):
             raise Exception(f"{errmsg} {lastError}") from lastError
         raise Exception(errmsg) from lastError
 
-    def __getPlaybackData__(self, item_id, params, media='tracks'):
+    def _getPlaybackData(self, item_id, params, media='tracks'):
         params = dict(params or {})
         params['prefetch'] = 'false'
         endpoints = [
@@ -640,7 +640,7 @@ class TidalAPI(object):
         last_error = None
         for base, path in endpoints:
             try:
-                return self.__getOnce__(path, params, base)
+                return self._getOnce(path, params, base)
             except DownloadCancelled:
                 raise
             except Exception as e:
@@ -649,21 +649,21 @@ class TidalAPI(object):
                 # A v4 404 must fall through to the unversioned and legacy
                 # endpoints. Stop only for account/client, auth, or rate-limit
                 # failures that cannot be repaired by changing the route.
-                if (self.__isPlaybackBlockedError__(e)
-                        or self.__isRateLimitError__(e)
-                        or self.__isStaleClientError__(e)
+                if (self._isPlaybackBlockedError(e)
+                        or self._isRateLimitError(e)
+                        or self._isStaleClientError(e)
                         or (isinstance(e, TidalApiError) and e.statusCode == 401)):
                     break
         raise last_error
 
-    def __getItems__(self, path, params=None):
+    def _getItems(self, path, params=None):
         params = {} if params is None else dict(params)
         params['limit'] = 50
         params['offset'] = 0
         total = 0
         ret = []
         while True:
-            data = self.__get__(path, params)
+            data = self._get(path, params)
             if 'totalNumberOfItems' in data:
                 total = data['totalNumberOfItems']
             ret += data["items"]
@@ -673,11 +673,11 @@ class TidalAPI(object):
             params['offset'] += num
         return ret
 
-    def __getResolutionList__(self, url):
+    def _getResolutionList(self, url):
         # Use the media transport for manifest URLs too: it checks every
         # redirect and carries no catalog authorization header.
-        from .download import __httpRequest__
-        response = __httpRequest__('GET', url, allow_redirects=True, stream=True)
+        from .download import _httpRequest
+        response = _httpRequest('GET', url, allow_redirects=True, stream=True)
         try:
             ret = []
             content = response_bytes(response, MAX_MANIFEST_BYTES, 'HLS manifest')
@@ -694,7 +694,7 @@ class TidalAPI(object):
         finally:
             response.close()
 
-    def __post__(self, path, data, auth=None, urlpre='https://auth.tidal.com/v1/oauth2'):
+    def _post(self, path, data, auth=None, urlpre='https://auth.tidal.com/v1/oauth2'):
         url = urlpre + path
         lastAttempt = AUTH_MAX_ATTEMPTS - 1
         for attempt in range(AUTH_MAX_ATTEMPTS):
@@ -708,7 +708,7 @@ class TidalAPI(object):
                 try:
                     result = response.json()
                 except ValueError as error:
-                    detail = self.__responseText__(response)[:200].replace("\n", " ")
+                    detail = self._responseText(response)[:200].replace("\n", " ")
                     if response.status_code < 500:
                         raise TidalApiError(
                             f"Auth operation failed: HTTP {response.status_code} {detail}",
@@ -723,8 +723,8 @@ class TidalAPI(object):
                     raise TidalApiError("Auth endpoint returned an invalid JSON payload.", response.status_code)
                 if response.status_code == 429 or response.status_code >= 500:
                     if attempt == lastAttempt:
-                        raise self.__httpError__("Auth operation", response)
-                    delay = self.__retryAfter__(response, attempt)
+                        raise self._httpError("Auth operation", response)
+                    delay = self._retryAfter(response, attempt)
                     response.close()
                     cancellable_sleep(delay)
                     continue
@@ -742,7 +742,7 @@ class TidalAPI(object):
                     response.close()
         raise TidalApiError("Auth operation failed after retries.")
 
-    def __oauthData__(self, **fields):
+    def _oauthData(self, **fields):
         """OAuth form body for the active client, with its secret when it has one."""
         data = {'client_id': self.apiKey['clientId'], **fields, 'scope': 'r_usr w_usr w_sub'}
         if not aigpy.string.isNull(self.apiKey.get('clientSecret')):
@@ -760,7 +760,7 @@ class TidalAPI(object):
         with self._authStateLock:
             self.cancelDeviceLogin()
             generation = self._deviceLoginGeneration
-        result = self.__post__('/device_authorization', self.__oauthData__())
+        result = self._post('/device_authorization', self._oauthData())
         if 'status' in result and result['status'] != 200:
             raise Exception("Device authorization failed. Please choose another apikey.")
 
@@ -786,7 +786,7 @@ class TidalAPI(object):
         with self._authStateLock:
             generation = self._deviceLoginGeneration
             device_code = self.key.deviceCode
-        result = self.__post__('/token', self.__oauthData__(
+        result = self._post('/token', self._oauthData(
             device_code=device_code,
             grant_type='urn:ietf:params:oauth:grant-type:device_code',
         ))
@@ -829,7 +829,7 @@ class TidalAPI(object):
             if response.status_code in (401, 403):
                 return False
             if response.status_code != 200:
-                raise self.__httpError__('Session verification', response)
+                raise self._httpError('Session verification', response)
             result = response.json()
             return (isinstance(result, dict) and result.get('status', 200) == 200
                     and result.get('userId') is not None and bool(result.get('countryCode')))
@@ -841,7 +841,7 @@ class TidalAPI(object):
 
     def refreshAccessToken(self, refreshToken) -> bool:
         generation = self._sessionGeneration
-        result = self.__post__('/token', self.__oauthData__(
+        result = self._post('/token', self._oauthData(
             refresh_token=refreshToken,
             grant_type='refresh_token',
         ))
@@ -866,7 +866,7 @@ class TidalAPI(object):
                                     allow_redirects=False)
         try:
             if response.status_code != 200:
-                raise self.__httpError__('Login', response)
+                raise self._httpError('Login', response)
             result = response.json()
         except ValueError:
             raise Exception(f"Login failed: unexpected HTTP {response.status_code} response from TIDAL.")
@@ -890,19 +890,19 @@ class TidalAPI(object):
         return
 
     def getAlbum(self, id) -> Album:
-        return aigpy.model.dictToModel(self.__get__('albums/' + str(id)), Album())
+        return aigpy.model.dictToModel(self._get('albums/' + str(id)), Album())
 
     def getPlaylist(self, id) -> Playlist:
-        return aigpy.model.dictToModel(self.__get__('playlists/' + str(id)), Playlist())
+        return aigpy.model.dictToModel(self._get('playlists/' + str(id)), Playlist())
 
     def getArtist(self, id) -> Artist:
-        return aigpy.model.dictToModel(self.__get__('artists/' + str(id)), Artist())
+        return aigpy.model.dictToModel(self._get('artists/' + str(id)), Artist())
 
     def getTrack(self, id) -> Track:
-        return aigpy.model.dictToModel(self.__get__('tracks/' + str(id)), Track())
+        return aigpy.model.dictToModel(self._get('tracks/' + str(id)), Track())
 
     def getVideo(self, id) -> Video:
-        return aigpy.model.dictToModel(self.__get__('videos/' + str(id)), Video())
+        return aigpy.model.dictToModel(self._get('videos/' + str(id)), Video())
 
     def getMix(self, id) -> Mix:
         mix = Mix()
@@ -935,7 +935,7 @@ class TidalAPI(object):
                   "offset": offset,
                   "limit": limit,
                   "types": typeStr}
-        return aigpy.model.dictToModel(self.__get__('search', params=params), SearchResult())
+        return aigpy.model.dictToModel(self._get('search', params=params), SearchResult())
 
     def _asItemList(self, items):
         if items is None:
@@ -953,16 +953,16 @@ class TidalAPI(object):
         items = getattr(getattr(result, bucket, None), 'items', None)
         return self._asItemList(items)
 
-    def __normalizeSearchName__(self, text) -> str:
+    def _normalizeSearchName(self, text) -> str:
         return re.sub(r'[^a-z0-9]+', '', (text or '').casefold())
 
     def findMatchingSearchArtists(self, text, artists=None):
-        needle = self.__normalizeSearchName__(text)
+        needle = self._normalizeSearchName(text)
         if len(needle) < 2:
             return []
         matches = []
         for artist in artists or []:
-            name = self.__normalizeSearchName__(getattr(artist, 'name', None))
+            name = self._normalizeSearchName(getattr(artist, 'name', None))
             if name and name == needle:
                 matches.append(artist)
         return matches
@@ -1064,16 +1064,16 @@ class TidalAPI(object):
         return self.preferAtmosSearchAlbums(albums)
 
     def getLyrics(self, id) -> Lyrics:
-        data = self.__get__(f'tracks/{str(id)}/lyrics', urlpre='https://api.tidal.com/v1/')
+        data = self._get(f'tracks/{str(id)}/lyrics', urlpre='https://api.tidal.com/v1/')
         return aigpy.model.dictToModel(data, Lyrics())
 
     def getItems(self, id, type: Type):
         if type == Type.Playlist:
-            data = self.__getItems__('playlists/' + str(id) + "/items")
+            data = self._getItems('playlists/' + str(id) + "/items")
         elif type == Type.Album:
-            data = self.__getItems__('albums/' + str(id) + "/items")
+            data = self._getItems('albums/' + str(id) + "/items")
         elif type == Type.Mix:
-            data = self.__getItems__('mixes/' + str(id) + '/items')
+            data = self._getItems('mixes/' + str(id) + '/items')
         else:
             raise Exception("invalid Type!")
 
@@ -1097,10 +1097,10 @@ class TidalAPI(object):
         if cache_key in cache:
             return list(cache[cache_key])
 
-        data = self.__getItems__(f'artists/{str(id)}/albums')
+        data = self._getItems(f'artists/{str(id)}/albums')
         albums = list(aigpy.model.dictToModel(item, Album()) for item in data)
         if includeEP:
-            data = self.__getItems__(f'artists/{str(id)}/albums', {"filter": "EPSANDSINGLES"})
+            data = self._getItems(f'artists/{str(id)}/albums', {"filter": "EPSANDSINGLES"})
             albums += list(aigpy.model.dictToModel(item, Album()) for item in data)
         cache[cache_key] = list(albums)
         return albums
@@ -1124,7 +1124,7 @@ class TidalAPI(object):
                 seen.add(album_id)
             enriched.append(album)
 
-            if self.__hasAtmosMode__(album):
+            if self._hasAtmosMode(album):
                 continue
             twin = self.findAtmosAlbumVariant(album)
             twin_id = str(getattr(twin, "id", "") or "") if twin is not None else ""
@@ -1135,7 +1135,7 @@ class TidalAPI(object):
         return enriched
 
     def getArtistVideos(self, id):
-        data = self.__getItems__(f'artists/{str(id)}/videos')
+        data = self._getItems(f'artists/{str(id)}/videos')
         videos = []
         for item in data:
             if isinstance(item, dict) and item.get('type') == 'video' and 'item' in item:
@@ -1152,15 +1152,15 @@ class TidalAPI(object):
             # never return encrypted DASH bytes as playable audio.
             raise TidalStreamUnavailable(str(error)) from error
 
-    def __decodeManifestDataUri__(self, uri):
+    def _decodeManifestDataUri(self, uri):
         if not isinstance(uri, str) or ',' not in uri:
             raise TidalStreamUnavailable('Stream manifest is empty.')
         header, payload = uri.split(',', 1)
         if ';base64' not in header.lower():
             raise TidalStreamUnavailable('Stream manifest encoding is unsupported.')
-        return self.__decodeManifest__(payload)
+        return self._decodeManifest(payload)
 
-    def __decodeManifest__(self, payload):
+    def _decodeManifest(self, payload):
         if not isinstance(payload, str) or len(payload) > 4 * ((MAX_MANIFEST_BYTES + 2) // 3):
             raise TidalStreamUnavailable('Stream manifest is empty or too large.')
         try:
@@ -1171,7 +1171,7 @@ class TidalAPI(object):
         except (ValueError, UnicodeDecodeError) as error:
             raise TidalStreamUnavailable('Stream manifest is invalid.') from error
 
-    def __dashStreamUrl__(self, track_id, sound_quality, xmldata, **facts):
+    def _dashStreamUrl(self, track_id, sound_quality, xmldata, **facts):
         try:
             representation = best_dash_representation(xmldata)
         except ProtectedManifestError as error:
@@ -1195,18 +1195,18 @@ class TidalAPI(object):
             ret.url = ret.urls[0]
         return ret
 
-    def __openApiFormatsForQuality__(self, quality: AudioQuality):
+    def _openApiFormatsForQuality(self, quality: AudioQuality):
         if quality in (AudioQuality.Max, AudioQuality.Master):
             return ['FLAC_HIRES', 'FLAC']
         return ['FLAC']
 
-    def __openApiManifestUsages__(self):
+    def _openApiManifestUsages(self):
         return ('DOWNLOAD', 'PLAYBACK')
 
-    def __isRetryableManifestError__(self, error):
+    def _isRetryableManifestError(self, error):
         if not isinstance(error, TidalApiError):
             return False
-        if self.__isStaleClientError__(error):
+        if self._isStaleClientError(error):
             # Retry a different configured quality, not every usage/format
             # permutation of a client the manifest service just rejected.
             return False
@@ -1219,7 +1219,7 @@ class TidalAPI(object):
         # Other 403/404/405 can still be usage- or format-specific.
         return error.statusCode in (403, 404, 405)
 
-    def __getOpenApiTrackManifest__(self, id, formats, usages=None):
+    def _getOpenApiTrackManifest(self, id, formats, usages=None):
         formats = list(formats)
         formatAttempts = [formats]
         if len(formats) > 1:
@@ -1228,13 +1228,13 @@ class TidalAPI(object):
             formatAttempts.append(formats[-1:])
 
         last_error = None
-        for usage in usages or self.__openApiManifestUsages__():
+        for usage in usages or self._openApiManifestUsages():
             for attemptFormats in formatAttempts:
                 try:
-                    attributes = self.__getOpenApiTrackManifestOnce__(id, attemptFormats, usage)
+                    attributes = self._getOpenApiTrackManifestOnce(id, attemptFormats, usage)
                 except TidalApiError as e:
                     last_error = e
-                    if not self.__isRetryableManifestError__(e):
+                    if not self._isRetryableManifestError(e):
                         raise
                     logging.debug(
                         "Track manifest usage=%s formats=%s unavailable, trying next option: %s",
@@ -1262,7 +1262,7 @@ class TidalAPI(object):
                 return attributes
         raise last_error
 
-    def __getOpenApiTrackManifestOnce__(self, id, formats, usage):
+    def _getOpenApiTrackManifestOnce(self, id, formats, usage):
         params = [
             ('manifestType', 'MPEG_DASH'),
             ('uriScheme', 'DATA'),
@@ -1276,12 +1276,12 @@ class TidalAPI(object):
         try:
             refreshedToken = False
             rateLimitBudget = RateLimitWaitBudget()
-            # Mirrors __getOnce__: only asset-not-ready responses consume attempts;
+            # Mirrors _getOnce: only asset-not-ready responses consume attempts;
             # 429s are bounded by the wait budget and token refresh happens once.
             attempt = 0
             while attempt < PLAYBACK_ASSET_NOT_READY_ATTEMPTS:
                 check_cancelled()
-                self.__waitForStreamRequestQuota__()
+                self._waitForStreamRequestQuota()
                 response = self.session.get(
                     f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
                     headers={
@@ -1294,27 +1294,27 @@ class TidalAPI(object):
                 )
 
                 if response.status_code == 429:
-                    self.__backOffForRateLimit__("Track manifest request", response, rateLimitBudget)
+                    self._backOffForRateLimit("Track manifest request", response, rateLimitBudget)
                     continue
 
-                if response.status_code == 401 and self.__isAssetNotReady__(response):
-                    self.__backOffForAssetNotReady__(response, attempt)
+                if response.status_code == 401 and self._isAssetNotReady(response):
+                    self._backOffForAssetNotReady(response, attempt)
                     attempt += 1
                     continue
 
-                if response.status_code == 401 and not refreshedToken and self.__refreshSavedAccessToken__():
+                if response.status_code == 401 and not refreshedToken and self._refreshSavedAccessToken():
                     refreshedToken = True
                     response.close()
                     continue
 
                 break
 
-            if self.__isStaleClientResponse__(response):
-                raise self.__playbackClientError__(
+            if self._isStaleClientResponse(response):
+                raise self._playbackClientError(
                     f'openapi/v2/trackManifests/{id}', f'{",".join(formats)} ({usage})',
                 )
             if response is None or response.status_code != 200:
-                raise self.__httpError__("Track manifest request", response)
+                raise self._httpError("Track manifest request", response)
 
             try:
                 data = response.json()
@@ -1335,13 +1335,13 @@ class TidalAPI(object):
                     "Track manifest request failed: response attributes are missing.",
                     response.status_code,
                 )
-            self.__rewardStreamRequest__()
+            self._rewardStreamRequest()
             return attributes
         finally:
             if response is not None:
                 response.close()
 
-    def __openApiFlacSoundQuality__(self, formats):
+    def _openApiFlacSoundQuality(self, formats):
         available = set(formats or [])
         if 'FLAC_HIRES' in available:
             return 'HI_RES_LOSSLESS'
@@ -1349,17 +1349,17 @@ class TidalAPI(object):
             return 'LOSSLESS'
         return None
 
-    def __getAtmosStreamUrl__(self, id):
+    def _getAtmosStreamUrl(self, id):
         track_id = str(id)
         if track_id in self._atmosUnavailableTrackIds:
             raise TidalStreamUnavailable("Dolby Atmos stream is not available for this track.")
 
         try:
-            attrs = self.__getOpenApiTrackManifest__(id, ['EAC3_JOC'])
+            attrs = self._getOpenApiTrackManifest(id, ['EAC3_JOC'])
         except DownloadCancelled:
             raise
         except Exception as e:
-            if self.__isPermanentAtmosUnavailableError__(e):
+            if self._isPermanentAtmosUnavailableError(e):
                 self._atmosUnavailableTrackIds.add(track_id)
             raise
 
@@ -1373,12 +1373,12 @@ class TidalAPI(object):
             self._atmosUnavailableTrackIds.add(track_id)
             raise TidalStreamUnavailable("Dolby Atmos manifest is empty.")
 
-        xmldata = self.__decodeManifestDataUri__(uri)
-        ret = self.__dashStreamUrl__(id, 'DOLBY_ATMOS', xmldata, manifestHash=attrs.get('manifestHash'))
+        xmldata = self._decodeManifestDataUri(uri)
+        ret = self._dashStreamUrl(id, 'DOLBY_ATMOS', xmldata, manifestHash=attrs.get('manifestHash'))
         self._atmosUnavailableTrackIds.discard(track_id)
         return ret
 
-    def __isPermanentAtmosUnavailableError__(self, error):
+    def _isPermanentAtmosUnavailableError(self, error):
         if isinstance(error, TidalStreamUnavailable):
             return True
         if not isinstance(error, TidalApiError):
@@ -1387,11 +1387,11 @@ class TidalAPI(object):
         # transient CDN/auth glitches that Retry Failed should try again.
         return 'CLIENT_NOT_ENTITLED' in error.errorCodes
 
-    def __getOpenApiFlacStreamUrl__(self, id, quality: AudioQuality):
-        requested_formats = self.__openApiFormatsForQuality__(quality)
-        attrs = self.__getOpenApiTrackManifest__(id, requested_formats)
+    def _getOpenApiFlacStreamUrl(self, id, quality: AudioQuality):
+        requested_formats = self._openApiFormatsForQuality(quality)
+        attrs = self._getOpenApiTrackManifest(id, requested_formats)
         formats = attrs.get('formats') or []
-        sound_quality = self.__openApiFlacSoundQuality__(formats)
+        sound_quality = self._openApiFlacSoundQuality(formats)
         if sound_quality is None:
             raise TidalStreamUnavailable("Lossless FLAC stream is not available for this track.")
 
@@ -1399,27 +1399,27 @@ class TidalAPI(object):
         if ',' not in uri:
             raise TidalStreamUnavailable("Lossless FLAC manifest is empty.")
 
-        xmldata = self.__decodeManifestDataUri__(uri)
-        return self.__dashStreamUrl__(id, sound_quality, xmldata, manifestHash=attrs.get('manifestHash'))
+        xmldata = self._decodeManifestDataUri(uri)
+        return self._dashStreamUrl(id, sound_quality, xmldata, manifestHash=attrs.get('manifestHash'))
 
-    def __getAudioStreamUrlForQuality__(self, id, quality: AudioQuality):
+    def _getAudioStreamUrlForQuality(self, id, quality: AudioQuality):
         chain = []
         if quality == AudioQuality.Atmos:
             # Atmos is OpenAPI-only. Do not probe standard playback with the
             # accidental HI_RES mapping — that wastes a limited call and is not
             # the next quality the user configured (use quality-priority instead).
-            chain.append(lambda: self.__getAtmosStreamUrl__(id))
+            chain.append(lambda: self._getAtmosStreamUrl(id))
         else:
             if quality in (AudioQuality.HiFi, AudioQuality.Max, AudioQuality.Master):
-                chain.append(lambda q=quality: self.__getOpenApiFlacStreamUrl__(id, q))
-            chain.append(lambda: self.__getStandardStreamUrl__(id, quality))
+                chain.append(lambda q=quality: self._getOpenApiFlacStreamUrl(id, q))
+            chain.append(lambda: self._getStandardStreamUrl(id, quality))
 
         last_error = None
         last_stream = None
         for index, getter in enumerate(chain):
             try:
                 stream = getter()
-                mismatch = self.__streamQualityMismatch__(stream, quality)
+                mismatch = self._streamQualityMismatch(stream, quality)
                 if mismatch is not None and index < len(chain) - 1:
                     last_error = mismatch
                     last_stream = stream
@@ -1429,13 +1429,13 @@ class TidalAPI(object):
                 raise
             except Exception as e:
                 last_error = e
-                if index < len(chain) - 1 and self.__shouldSkipOpenApiFallback__(e):
+                if index < len(chain) - 1 and self._shouldSkipOpenApiFallback(e):
                     break
         if last_stream is not None:
             return last_stream
         raise last_error
 
-    def __audioQualityParam__(self, quality: AudioQuality):
+    def _audioQualityParam(self, quality: AudioQuality):
         if quality == AudioQuality.Normal:
             return "LOW"
         if quality == AudioQuality.High:
@@ -1446,7 +1446,7 @@ class TidalAPI(object):
             return "HI_RES_LOSSLESS"
         return "HI_RES"
 
-    def __audioQualityLabel__(self, quality: AudioQuality):
+    def _audioQualityLabel(self, quality: AudioQuality):
         labels = {
             AudioQuality.Atmos: 'Dolby Atmos',
             AudioQuality.Max: 'Max',
@@ -1457,7 +1457,7 @@ class TidalAPI(object):
         }
         return labels.get(quality, str(quality))
 
-    def __streamAudioQuality__(self, stream):
+    def _streamAudioQuality(self, stream):
         quality = (getattr(stream, 'soundQuality', None) or '').upper()
         labels = {
             'DOLBY_ATMOS': AudioQuality.Atmos,
@@ -1469,17 +1469,17 @@ class TidalAPI(object):
         }
         return labels.get(quality)
 
-    def __streamQualityMismatch__(self, stream, requestedQuality):
-        actualQuality = self.__streamAudioQuality__(stream)
+    def _streamQualityMismatch(self, stream, requestedQuality):
+        actualQuality = self._streamAudioQuality(stream)
         if actualQuality == requestedQuality:
             return None
 
         actualLabel = getattr(stream, 'soundQuality', None) or 'unknown'
         return TidalStreamUnavailable(
-            f"Requested {self.__audioQualityLabel__(requestedQuality)} but TIDAL returned {actualLabel}."
+            f"Requested {self._audioQualityLabel(requestedQuality)} but TIDAL returned {actualLabel}."
         )
 
-    def __fallbackReason__(self, error):
+    def _fallbackReason(self, error):
         if isinstance(error, TidalPlaybackClientError):
             return "playback client rejected the requested format"
         if isinstance(error, TidalStreamUnavailable):
@@ -1493,17 +1493,17 @@ class TidalAPI(object):
                 return "requested format was blocked"
         return "requested format failed"
 
-    def __annotateStreamFallback__(self, stream, requestedQuality, actualQuality, fallbackError):
-        stream.requestedQuality = self.__audioQualityLabel__(requestedQuality)
+    def _annotateStreamFallback(self, stream, requestedQuality, actualQuality, fallbackError):
+        stream.requestedQuality = self._audioQualityLabel(requestedQuality)
         if fallbackError is None:
             return stream
 
-        stream.fallbackQuality = self.__audioQualityLabel__(actualQuality)
-        stream.fallbackReason = self.__fallbackReason__(fallbackError)
+        stream.fallbackQuality = self._audioQualityLabel(actualQuality)
+        stream.fallbackReason = self._fallbackReason(fallbackError)
         stream.fallbackError = str(fallbackError)
         return stream
 
-    def __isStreamFallbackError__(self, error):
+    def _isStreamFallbackError(self, error):
         if isinstance(error, TidalStreamUnavailable):
             return True
         if isinstance(error, TidalApiError):
@@ -1513,12 +1513,12 @@ class TidalAPI(object):
         message = str(error)
         return "CLIENT_NOT_ENTITLED" in message or "HTTP 403" in message
 
-    def __isManifestFallbackError__(self, error):
+    def _isManifestFallbackError(self, error):
         if isinstance(error, TidalPlaybackClientError):
             return True
-        if self.__isRateLimitError__(error) or self.__isStaleClientError__(error):
+        if self._isRateLimitError(error) or self._isStaleClientError(error):
             return False
-        if self.__isStreamFallbackError__(error):
+        if self._isStreamFallbackError(error):
             return True
         text = str(error or "").lower()
         return any(token in text for token in (
@@ -1528,14 +1528,14 @@ class TidalAPI(object):
             "can't get the streamurl",
         ))
 
-    def __normalizeAudioQuality__(self, quality):
+    def _normalizeAudioQuality(self, quality):
         if isinstance(quality, AudioQuality):
             return quality
         return Settings().getAudioQualityOrNone(quality)
 
-    def __getStandardStreamUrl__(self, id, quality: AudioQuality):
-        audio_param = self.__audioQualityParam__(quality)
-        if self.__isPlaybackParamBlocked__(audio_param):
+    def _getStandardStreamUrl(self, id, quality: AudioQuality):
+        audio_param = self._audioQualityParam(quality)
+        if self._isPlaybackParamBlocked(audio_param):
             raise TidalStreamUnavailable(
                 f"Playback API is unavailable for {audio_param}; using OpenAPI manifest."
             )
@@ -1546,11 +1546,11 @@ class TidalAPI(object):
             "assetpresentation": "FULL",
         }
         try:
-            data = self.__getPlaybackData__(id, paras)
+            data = self._getPlaybackData(id, paras)
         except DownloadCancelled:
             raise
         except Exception as e:
-            self.__markPlaybackParamBlocked__(audio_param, e)
+            self._markPlaybackParamBlocked(audio_param, e)
             raise
         resp = aigpy.model.dictToModel(data, StreamRespond())
         if str(resp.assetPresentation or '').upper() == 'PREVIEW':
@@ -1558,7 +1558,7 @@ class TidalAPI(object):
         mime_type = resp.manifestMimeType or ''
 
         if "vnd.tidal.bt" in mime_type:
-            manifest = json.loads(self.__decodeManifest__(resp.manifest))
+            manifest = json.loads(self._decodeManifest(resp.manifest))
             ret = StreamUrl()
             ret.trackid = resp.trackid
             ret.soundQuality = resp.audioQuality
@@ -1572,8 +1572,8 @@ class TidalAPI(object):
             ret.sampleRate = resp.sampleRate or manifest.get('sampleRate')
             return ret
         elif "dash+xml" in mime_type:
-            xmldata = self.__decodeManifest__(resp.manifest)
-            return self.__dashStreamUrl__(
+            xmldata = self._decodeManifest(resp.manifest)
+            return self._dashStreamUrl(
                 resp.trackid,
                 resp.audioQuality,
                 xmldata,
@@ -1583,11 +1583,11 @@ class TidalAPI(object):
 
         raise TidalStreamUnavailable("Can't get the streamUrl, type is " + mime_type)
 
-    def __streamCacheKey__(self, id, qualities):
+    def _streamCacheKey(self, id, qualities):
         return (self._sessionGeneration, self.key.userId, self.key.countryCode,
                 self.apiKey.get('clientId'), str(id), tuple(quality.name for quality in qualities))
 
-    def __getCachedStream__(self, key):
+    def _getCachedStream(self, key):
         now = time.monotonic()
         with self._streamCacheLock:
             cached = self._streamCache.get(key)
@@ -1600,7 +1600,7 @@ class TidalAPI(object):
             self._streamCache.move_to_end(key)
             return copy.deepcopy(stream)
 
-    def __cacheStream__(self, key, stream):
+    def _cacheStream(self, key, stream):
         now = time.monotonic()
         with self._streamCacheLock:
             # OrderedDict keeps insertion/access order, allowing expired and LRU
@@ -1619,7 +1619,7 @@ class TidalAPI(object):
     def getStreamUrlByPriority(self, id, qualities):
         priority = []
         for quality in qualities or []:
-            normalized = self.__normalizeAudioQuality__(quality)
+            normalized = self._normalizeAudioQuality(quality)
             if normalized is not None and normalized not in priority:
                 priority.append(normalized)
         if not priority:
@@ -1628,16 +1628,16 @@ class TidalAPI(object):
         # Keep the original request in the cache key and download diagnostics.
         # TIDAL retired MQA in July 2024. Legacy Master profiles should request
         # its FLAC replacement, not HI_RES or an impossible exact MQA match.
-        cacheKey = self.__streamCacheKey__(id, priority)
+        cacheKey = self._streamCacheKey(id, priority)
         requestedQuality = priority[0]
         priority = playback_quality_priority(priority)
-        cached = self.__getCachedStream__(cacheKey)
+        cached = self._getCachedStream(cacheKey)
         if cached is not None:
             return cached
 
         # One stream resolve at a time across multi-thread downloads.
         with self._streamResolveLock:
-            cached = self.__getCachedStream__(cacheKey)
+            cached = self._getCachedStream(cacheKey)
             if cached is not None:
                 return cached
 
@@ -1646,21 +1646,21 @@ class TidalAPI(object):
                 lastError = TidalStreamUnavailable("Master (MQA) was retired by TIDAL; using lossless FLAC.")
             for index, item in enumerate(priority):
                 try:
-                    stream = self.__getAudioStreamUrlForQuality__(id, item)
-                    mismatch = self.__streamQualityMismatch__(stream, item)
+                    stream = self._getAudioStreamUrlForQuality(id, item)
+                    mismatch = self._streamQualityMismatch(stream, item)
                     if mismatch is not None:
                         lastError = mismatch
                         if index == len(priority) - 1:
                             raise mismatch
                         continue
-                    stream = self.__annotateStreamFallback__(stream, requestedQuality, item, lastError)
-                    self.__cacheStream__(cacheKey, stream)
+                    stream = self._annotateStreamFallback(stream, requestedQuality, item, lastError)
+                    self._cacheStream(cacheKey, stream)
                     return stream
                 except DownloadCancelled:
                     raise
                 except Exception as e:
                     lastError = e
-                    if index == len(priority) - 1 or not self.__isManifestFallbackError__(e):
+                    if index == len(priority) - 1 or not self._isManifestFallbackError(e):
                         raise
             raise lastError
 
@@ -1670,27 +1670,27 @@ class TidalAPI(object):
 
     def getVideoStreamUrl(self, id, quality: VideoQuality):
         paras = {"videoquality": "HIGH", "playbackmode": "STREAM", "assetpresentation": "FULL"}
-        data = self.__getPlaybackData__(id, paras, media='videos')
+        data = self._getPlaybackData(id, paras, media='videos')
         resp = aigpy.model.dictToModel(data, StreamRespond())
         if str(resp.assetPresentation or '').upper() == 'PREVIEW':
             raise TidalStreamUnavailable('TIDAL returned a preview-only stream instead of the full video.')
 
         if "vnd.tidal.emu" in (resp.manifestMimeType or ''):
-            manifest = json.loads(self.__decodeManifest__(resp.manifest))
-            array = self.__getResolutionList__(manifest['urls'][0])
+            manifest = json.loads(self._decodeManifest(resp.manifest))
+            array = self._getResolutionList(manifest['urls'][0])
             eligible = [item for item in array if int(item.resolutions[1]) <= quality.value]
             return (eligible or array[:1])[-1]
         raise TidalStreamUnavailable("Can't get the streamUrl, type is " + str(resp.manifestMimeType or 'unknown'))
 
     def getTrackContributors(self, id):
-        return self.__get__(f'tracks/{str(id)}/contributors')
+        return self._get(f'tracks/{str(id)}/contributors')
 
     def getCoverUrl(self, sid, width="320", height="320"):
         if sid is None:
             return ""
         return f"https://resources.tidal.com/images/{sid.replace('-', '/')}/{width}x{height}.jpg"
 
-    def __artistList__(self, artists):
+    def _artistList(self, artists):
         if isinstance(artists, (list, tuple)):
             return [item for item in artists if item is not None]
         return []
@@ -1698,18 +1698,18 @@ class TidalAPI(object):
     def getArtistsID(self, artists=None):
         return ", ".join(
             str(getattr(item, 'id', None))
-            for item in self.__artistList__(artists)
+            for item in self._artistList(artists)
             if getattr(item, 'id', None) is not None
         )
 
     def getArtistsName(self, artists=None):
         return ", ".join(
             getattr(item, 'name', None)
-            for item in self.__artistList__(artists)
+            for item in self._artistList(artists)
             if getattr(item, 'name', None)
         )
 
-    def __hasAtmosMode__(self, data) -> bool:
+    def _hasAtmosMode(self, data) -> bool:
         modes = getattr(data, "audioModes", None) or []
         return any(str(mode).upper() == "DOLBY_ATMOS" for mode in modes)
 
@@ -1721,7 +1721,7 @@ class TidalAPI(object):
             if data.audioQuality == "HI_RES":
                 master = True
             # Atmos catalog rows often report audioQuality=LOW; audioModes is the real signal.
-            if self.__hasAtmosMode__(data):
+            if self._hasAtmosMode(data):
                 atmos = True
             if data.explicit is True:
                 explicit = True
@@ -1739,7 +1739,7 @@ class TidalAPI(object):
             array.append("E" if short else "Explicit")
         return separator.join(array)
 
-    def __normalizeCatalogTitle__(self, title) -> str:
+    def _normalizeCatalogTitle(self, title) -> str:
         text = (title or "").strip().lower()
         return " ".join(text.split())
 
@@ -1752,7 +1752,7 @@ class TidalAPI(object):
         """
         if album is None:
             return None
-        if self.__hasAtmosMode__(album):
+        if self._hasAtmosMode(album):
             return album
 
         album_id = str(getattr(album, "id", "") or "")
@@ -1765,7 +1765,7 @@ class TidalAPI(object):
         if artist is not None and getattr(artist, "id", None) is not None:
             artist_id = artist.id
         if artist_id is None:
-            for item in self.__artistList__(getattr(album, "artists", None)):
+            for item in self._artistList(getattr(album, "artists", None)):
                 if getattr(item, "id", None) is not None:
                     artist_id = item.id
                     break
@@ -1774,7 +1774,7 @@ class TidalAPI(object):
                 self._atmosAlbumTwinCache[album_id] = None
             return None
 
-        target_title = self.__normalizeCatalogTitle__(getattr(album, "title", None))
+        target_title = self._normalizeCatalogTitle(getattr(album, "title", None))
         if not target_title:
             if album_id:
                 self._atmosAlbumTwinCache[album_id] = None
@@ -1790,9 +1790,9 @@ class TidalAPI(object):
 
         matches = []
         for candidate in candidates:
-            if not self.__hasAtmosMode__(candidate):
+            if not self._hasAtmosMode(candidate):
                 continue
-            if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) != target_title:
+            if self._normalizeCatalogTitle(getattr(candidate, "title", None)) != target_title:
                 continue
             matches.append(candidate)
         if not matches:
@@ -1821,7 +1821,7 @@ class TidalAPI(object):
         """Return a Dolby Atmos catalog twin for a stereo track when available."""
         if track is None:
             return None
-        if self.__hasAtmosMode__(track):
+        if self._hasAtmosMode(track):
             return track
 
         track_id = str(getattr(track, "id", "") or "")
@@ -1857,7 +1857,7 @@ class TidalAPI(object):
             logging.info("Unable to list Atmos album %s tracks: %s", getattr(atmos_album, "id", ""), e)
             return None
 
-        target_title = self.__normalizeCatalogTitle__(getattr(track, "title", None))
+        target_title = self._normalizeCatalogTitle(getattr(track, "title", None))
         target_isrc = (getattr(track, "isrc", None) or "").strip().upper()
         target_number = getattr(track, "trackNumber", None)
         target_volume = getattr(track, "volumeNumber", None)
@@ -1871,12 +1871,12 @@ class TidalAPI(object):
             for candidate in atmos_tracks or []:
                 if target_number is not None and getattr(candidate, "trackNumber", None) == target_number:
                     if target_volume is None or getattr(candidate, "volumeNumber", None) == target_volume:
-                        if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
+                        if self._normalizeCatalogTitle(getattr(candidate, "title", None)) == target_title:
                             matched = candidate
                             break
         if matched is None:
             for candidate in atmos_tracks or []:
-                if self.__normalizeCatalogTitle__(getattr(candidate, "title", None)) == target_title:
+                if self._normalizeCatalogTitle(getattr(candidate, "title", None)) == target_title:
                     matched = candidate
                     break
 
@@ -1914,9 +1914,9 @@ class TidalAPI(object):
                 return Type.Null, url
         return Type.Null, url
 
-    def __isProbeableLookupError__(self, error):
+    def _isProbeableLookupError(self, error):
         """True when type probing should try the next media type."""
-        if self.__isRateLimitError__(error) or self.__isStaleClientError__(error):
+        if self._isRateLimitError(error) or self._isStaleClientError(error):
             return False
         if isinstance(error, TidalApiError):
             # Auth / entitlement / client errors must not look like "not found".
@@ -1958,11 +1958,11 @@ class TidalAPI(object):
                 lastError = e
                 # Surface auth, entitlement, throttling, and network problems
                 # instead of masking them as a generic "No result." while probing.
-                if not self.__isProbeableLookupError__(e):
+                if not self._isProbeableLookupError(e):
                     raise
                 continue
 
-        if lastError is not None and not self.__isProbeableLookupError__(lastError):
+        if lastError is not None and not self._isProbeableLookupError(lastError):
             raise lastError
         raise Exception("No result.")
 

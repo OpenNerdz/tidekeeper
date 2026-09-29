@@ -20,7 +20,7 @@ class StreamCacheTests(unittest.TestCase):
     def test_duplicate_track_resolution_uses_short_lived_cache(self):
         api = TidalAPI()
         stream = self._stream()
-        with mock.patch.object(api, "__getAudioStreamUrlForQuality__", return_value=stream) as resolve:
+        with mock.patch.object(api, "_getAudioStreamUrlForQuality", return_value=stream) as resolve:
             first = api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
             second = api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
 
@@ -30,7 +30,7 @@ class StreamCacheTests(unittest.TestCase):
 
     def test_callers_cannot_mutate_cached_stream(self):
         api = TidalAPI()
-        with mock.patch.object(api, "__getAudioStreamUrlForQuality__", return_value=self._stream()):
+        with mock.patch.object(api, "_getAudioStreamUrlForQuality", return_value=self._stream()):
             first = api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
             first.urls.append("corrupt")
             second = api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
@@ -46,7 +46,7 @@ class StreamCacheTests(unittest.TestCase):
             STREAM_CACHE_TTL_SECONDS + 1,  # second inner: expired
             STREAM_CACHE_TTL_SECONDS + 1,  # second cache store
         ]
-        with mock.patch.object(api, "__getAudioStreamUrlForQuality__", return_value=self._stream()) as resolve, \
+        with mock.patch.object(api, "_getAudioStreamUrlForQuality", return_value=self._stream()) as resolve, \
              mock.patch("tidal_dl.tidal.time.monotonic", side_effect=times):
             api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
             api.getStreamUrlByPriority(123, [AudioQuality.HiFi])
@@ -56,7 +56,7 @@ class StreamCacheTests(unittest.TestCase):
     def test_get_stream_url_shares_priority_cache(self):
         api = TidalAPI()
         stream = self._stream()
-        with mock.patch.object(api, "__getAudioStreamUrlForQuality__", return_value=stream) as resolve:
+        with mock.patch.object(api, "_getAudioStreamUrlForQuality", return_value=stream) as resolve:
             first = api.getStreamUrl(123, AudioQuality.HiFi)
             second = api.getStreamUrlByPriority(123, audio_quality_fallbacks(AudioQuality.HiFi))
 
@@ -71,13 +71,13 @@ class StreamCacheTests(unittest.TestCase):
         api = TidalAPI()
         stream = self._stream()
         with mock.patch("tidal_dl.tidal.STREAM_CACHE_MAX_ITEMS", 2):
-            api.__cacheStream__(("1", ("HiFi",)), stream)
-            api.__cacheStream__(("2", ("HiFi",)), stream)
-            self.assertIsNotNone(api.__getCachedStream__(("1", ("HiFi",))))
-            api.__cacheStream__(("3", ("HiFi",)), stream)
+            api._cacheStream(("1", ("HiFi",)), stream)
+            api._cacheStream(("2", ("HiFi",)), stream)
+            self.assertIsNotNone(api._getCachedStream(("1", ("HiFi",))))
+            api._cacheStream(("3", ("HiFi",)), stream)
 
-        self.assertIsNone(api.__getCachedStream__(("2", ("HiFi",))))
-        self.assertIsNotNone(api.__getCachedStream__(("1", ("HiFi",))))
+        self.assertIsNone(api._getCachedStream(("2", ("HiFi",))))
+        self.assertIsNotNone(api._getCachedStream(("1", ("HiFi",))))
         self.assertLessEqual(len(api._streamCache), STREAM_CACHE_MAX_ITEMS)
 
 

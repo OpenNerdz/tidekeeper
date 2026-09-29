@@ -87,21 +87,21 @@ class ReleaseFollowupTests(unittest.TestCase):
         def refresh(*args):
             self.api.cancelDeviceLogin()
             return grant
-        with mock.patch.object(self.api, '__post__', side_effect=refresh):
+        with mock.patch.object(self.api, '_post', side_effect=refresh):
             self.assertTrue(self.api.refreshAccessToken('saved-refresh'))
         self.assertEqual(self.api.key.accessToken, 'renewed-access')
         self.assertEqual(self.api._sessionGeneration, original_generation)
 
     def test_cancel_device_login_preserves_search_and_playback_session(self):
         self.api.key.accessToken = 'saved-access'
-        old_key = self.api.__streamCacheKey__('1', [AudioQuality.High])
+        old_key = self.api._streamCacheKey('1', [AudioQuality.High])
         def search(*args, **kwargs):
             self.api.cancelDeviceLogin()
             return response(json.dumps({'tracks': {'items': []}}).encode())
         with mock.patch.object(self.api.session, 'get', side_effect=search):
-            self.assertEqual(self.api.__getOnce__('search'), {'tracks': {'items': []}})
+            self.assertEqual(self.api._getOnce('search'), {'tracks': {'items': []}})
         self.assertEqual(self.api.key.accessToken, 'saved-access')
-        self.assertEqual(self.api.__streamCacheKey__('1', [AudioQuality.High]), old_key)
+        self.assertEqual(self.api._streamCacheKey('1', [AudioQuality.High]), old_key)
 
     def test_cancelled_device_grant_cannot_replace_saved_login(self):
         self.api.key.accessToken = 'saved-access'
@@ -109,7 +109,7 @@ class ReleaseFollowupTests(unittest.TestCase):
             self.api.cancelDeviceLogin()
             return {'user': {'userId': 'late-user', 'countryCode': 'US'},
                     'access_token': 'late-access', 'refresh_token': 'late-refresh', 'expires_in': 60}
-        with mock.patch.object(self.api, '__post__', side_effect=late_grant):
+        with mock.patch.object(self.api, '_post', side_effect=late_grant):
             self.assertFalse(self.api.checkAuthStatus())
         self.assertEqual(self.api.key.accessToken, 'saved-access')
 
@@ -123,7 +123,7 @@ class ReleaseFollowupTests(unittest.TestCase):
                 self.api.cancelDeviceLogin()
                 return result
             self.api.key.authCheckInterval = 5
-            with mock.patch.object(self.api, '__post__', side_effect=cancel):
+            with mock.patch.object(self.api, '_post', side_effect=cancel):
                 if method == self.api.getDeviceCode:
                     with self.assertRaisesRegex(Exception, 'cancelled'):
                         method()
@@ -148,9 +148,9 @@ class ReleaseFollowupTests(unittest.TestCase):
         partial.write_bytes(b'valid-prefix')
         result = response(b'unused', headers={'Content-Encoding': 'gzip'})
         result.iter_content = mock.Mock()
-        with mock.patch.object(download, '__httpRequest__', return_value=result) as request:
+        with mock.patch.object(download, '_httpRequest', return_value=result) as request:
             with self.assertRaisesRegex(ValueError, 'encoded response'):
-                download.__downloadSingleUrl__('https://cdn.example/audio', str(target))
+                download._downloadSingleUrl('https://cdn.example/audio', str(target))
         self.assertEqual(partial.read_bytes(), b'valid-prefix')
         result.iter_content.assert_not_called()
         result.close.assert_called_once()
@@ -161,9 +161,9 @@ class ReleaseFollowupTests(unittest.TestCase):
         target = self.root / 'audio.part'
         result = response(b'unused', status=206, headers={'Content-Range': 'bytes 4-9/10'})
         result.iter_content = mock.Mock()
-        with mock.patch.object(download, '__httpRequest__', return_value=result):
+        with mock.patch.object(download, '_httpRequest', return_value=result):
             with self.assertRaisesRegex(ValueError, 'unexpected byte range'):
-                download.__downloadSingleUrl__('https://cdn.example/audio', str(target))
+                download._downloadSingleUrl('https://cdn.example/audio', str(target))
         result.iter_content.assert_not_called()
         result.close.assert_called_once()
         self.assertFalse(target.exists())
@@ -173,10 +173,10 @@ class ReleaseFollowupTests(unittest.TestCase):
         result = response(status=302, headers={'Location': 'http://cdn.example/audio'})
         session = mock.Mock()
         session.request.return_value = result
-        with mock.patch.object(download, '__httpSession__', return_value=session), \
+        with mock.patch.object(download, '_httpSession', return_value=session), \
                 mock.patch.object(download, 'validate_media_url'):
             with self.assertRaisesRegex(ValueError, 'downgrade'):
-                download.__httpRequest__('GET', 'https://cdn.example/audio', allow_redirects=True)
+                download._httpRequest('GET', 'https://cdn.example/audio', allow_redirects=True)
         session.request.assert_called_once()
         result.close.assert_called_once()
 
@@ -185,10 +185,10 @@ class ReleaseFollowupTests(unittest.TestCase):
         second = response(b'audio', headers={'Content-Length': '5'})
         session = mock.Mock()
         session.request.side_effect = [first, second]
-        with mock.patch.object(download, '__httpSession__', return_value=session), \
+        with mock.patch.object(download, '_httpSession', return_value=session), \
                 mock.patch.object(download, 'validate_media_url'):
             target = self.root / 'audio'
-            self.assertEqual(download.__downloadSingleUrl__('https://cdn.example/audio', str(target)), 5)
+            self.assertEqual(download._downloadSingleUrl('https://cdn.example/audio', str(target)), 5)
         self.assertEqual(target.read_bytes(), b'audio')
         first.close.assert_called_once()
         second.close.assert_called_once()
@@ -259,22 +259,22 @@ class DestinationLockIntegrationTests(unittest.TestCase):
 
         with ExitStack() as patches:
             for name, value in (
-                ('output_lock', observe_lock), ('__downloadUrls__', transfer),
-                ('record_completion', receipt), ('__finalizeVideoFile__', finalize),
-                ('__getTrackStream__', lambda *args: stream),
+                ('output_lock', observe_lock), ('_downloadUrls', transfer),
+                ('record_completion', receipt), ('_finalizeVideoFile', finalize),
+                ('_getTrackStream', lambda *args: stream),
                 ('getTrackPath', lambda *args: str(target)), ('getVideoPath', lambda *args: str(target)),
-                ('__resolveTrackForAtmosDownload__', lambda track, album: (track, album)),
-                ('__encrypted__', lambda stream, source, path: os.replace(source, path)),
-                ('__exportFlacFromContainer__', lambda path, stream: path),
-                ('__verifyMediaQuality__', lambda *args: {}), ('__setMetaData__', lambda *args: None),
-                ('__saveLyricsForTrack__', lambda *args: ''),
+                ('_resolveTrackForAtmosDownload', lambda track, album: (track, album)),
+                ('_encrypted', lambda stream, source, path: os.replace(source, path)),
+                ('_exportFlacFromContainer', lambda path, stream: path),
+                ('_verifyMediaQuality', lambda *args: {}), ('_setMetaData', lambda *args: None),
+                ('_saveLyricsForTrack', lambda *args: ''),
             ):
                 patches.enter_context(mock.patch.object(download, name, side_effect=value))
-            transferred = download.__downloadUrls__
+            transferred = download._downloadUrls
             patches.enter_context(mock.patch.object(download.TIDAL_API, 'getVideoStreamUrl', return_value=stream))
             patches.enter_context(mock.patch.object(download.TIDAL_API, 'getTrackContributors', return_value=None))
             patches.enter_context(mock.patch.object(download.Printf, 'video'))
-            patches.enter_context(mock.patch.object(download, '__httpRequest__', return_value=response(
+            patches.enter_context(mock.patch.object(download, '_httpRequest', return_value=response(
                 b'#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:1,\nsegment\n')))
             first = threading.Thread(target=worker, name='first')
             second = threading.Thread(target=worker, name='second')

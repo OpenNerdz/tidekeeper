@@ -74,8 +74,8 @@ class ReliabilityTests(unittest.TestCase):
         parts.mkdir()
         (parts / '000000.part').write_bytes(b'OLD')
         Path(path).write_bytes(b'OLD-STREAM')
-        with mock.patch.object(download, '__httpRequest__', side_effect=[Response(b'NEW'), Response(b'DATA')]):
-            ok, message = download.__downloadUrls__(['https://cdn.invalid/new0', 'https://cdn.invalid/new1'],
+        with mock.patch.object(download, '_httpRequest', side_effect=[Response(b'NEW'), Response(b'DATA')]):
+            ok, message = download._downloadUrls(['https://cdn.invalid/new0', 'https://cdn.invalid/new1'],
                                                    path, threadNum=1, probeSize=False)
         self.assertTrue(ok, message)
         self.assertEqual(Path(path).read_bytes(), b'NEWDATA')
@@ -89,13 +89,13 @@ class ReliabilityTests(unittest.TestCase):
                 if segmented:
                     urls.append('https://cdn.invalid/new1')
                 error = requests.HTTPError('404', response=Response(status=404))
-                with mock.patch.object(download, '__httpRequest__', side_effect=error):
-                    ok, _ = download.__downloadUrls__(urls, path, probeSize=False, expectedSize=8)
+                with mock.patch.object(download, '_httpRequest', side_effect=error):
+                    ok, _ = download._downloadUrls(urls, path, probeSize=False, expectedSize=8)
                 self.assertFalse(ok)
                 self.assertEqual(Path(path).read_bytes(), b'OLD-DATA')
                 responses = [Response(b'NEW-'), Response(b'DATA')] if segmented else [Response(b'NEW-DATA')]
-                with mock.patch.object(download, '__httpRequest__', side_effect=responses):
-                    ok, message = download.__downloadUrls__(urls, path, probeSize=False, expectedSize=8)
+                with mock.patch.object(download, '_httpRequest', side_effect=responses):
+                    ok, message = download._downloadUrls(urls, path, probeSize=False, expectedSize=8)
                 self.assertTrue(ok, message)
                 self.assertEqual(Path(path).read_bytes(), b'NEW-DATA')
 
@@ -123,8 +123,8 @@ class ReliabilityTests(unittest.TestCase):
         Path(path + '.download').write_bytes(b'complete')
         response = Response(status=416, headers={'Content-Range': 'bytes */8'})
         error = requests.HTTPError('416', response=response)
-        with mock.patch.object(download, '__httpRequest__', side_effect=error):
-            ok, message = download.__downloadUrls__(urls, path, probeSize=False, expectedSize=8)
+        with mock.patch.object(download, '_httpRequest', side_effect=error):
+            ok, message = download._downloadUrls(urls, path, probeSize=False, expectedSize=8)
         self.assertTrue(ok, message)
         self.assertEqual(Path(path).read_bytes(), b'complete')
 
@@ -134,8 +134,8 @@ class ReliabilityTests(unittest.TestCase):
         prepare_transfer(path, urls)
         Path(path + '.download').write_bytes(b'overlong-data')
         error = requests.HTTPError('416', response=Response(status=416, headers={'Content-Range': 'bytes */3'}))
-        with mock.patch.object(download, '__httpRequest__', side_effect=[error, Response(b'new')]):
-            ok, message = download.__downloadUrls__(urls, path, probeSize=False, expectedSize=3)
+        with mock.patch.object(download, '_httpRequest', side_effect=[error, Response(b'new')]):
+            ok, message = download._downloadUrls(urls, path, probeSize=False, expectedSize=3)
         self.assertTrue(ok, message)
         self.assertEqual(Path(path).read_bytes(), b'new')
 
@@ -144,7 +144,7 @@ class ReliabilityTests(unittest.TestCase):
         path = str(self.root / 'track.flac')
         Path(path).write_bytes(b'fLaC' + b'\0' * 2048)
         stream = SimpleNamespace(trackid=1, soundQuality='LOSSLESS', codec='flac', container='mp4')
-        self.assertEqual(download.__existingMediaState__(path, stream), (None, False))
+        self.assertEqual(download._existingMediaState(path, stream), (None, False))
 
     def test_receipt_rejects_tampering_and_different_quality(self):
         path = str(self.root / 'track.flac')
@@ -170,14 +170,14 @@ class ReliabilityTests(unittest.TestCase):
         Path(path).write_bytes(b'media')
         record_completion(path, audio_identity(stream))
         SETTINGS.checkExist = False
-        with mock.patch.object(download, '__resolveTrackForAtmosDownload__', return_value=(track, None)), \
-             mock.patch.object(download, '__getTrackStream__', return_value=stream), \
+        with mock.patch.object(download, '_resolveTrackForAtmosDownload', return_value=(track, None)), \
+             mock.patch.object(download, '_getTrackStream', return_value=stream), \
              mock.patch.object(download, 'getTrackPath', return_value=path), \
-             mock.patch.object(download, '__remoteSize__', return_value=5), \
-             mock.patch.object(download, '__httpRequest__', return_value=Response(b'media')) as request, \
+             mock.patch.object(download, '_remoteSize', return_value=5), \
+             mock.patch.object(download, '_httpRequest', return_value=Response(b'media')) as request, \
              mock.patch.object(TIDAL_API, 'getTrackContributors', return_value=None), \
-             mock.patch.object(download, '__saveLyricsForTrack__', return_value=''), \
-             mock.patch.object(download, '__setMetaData__', side_effect=OSError('tagging failed')) as tag:
+             mock.patch.object(download, '_saveLyricsForTrack', return_value=''), \
+             mock.patch.object(download, '_setMetaData', side_effect=OSError('tagging failed')) as tag:
             self.assertTrue(download.downloadTrack(track, userProgress=progress)[0])
             self.assertEqual(len(warnings), 1)
             self.assertFalse(is_completed(path, audio_identity(stream)))
@@ -222,10 +222,10 @@ class ReliabilityTests(unittest.TestCase):
         # Both probes reach HTTP before cancellation, then must interrupt their
         # retry wait rather than lose the job context in the nested executor.
         with job_context(cancel=cancelled), \
-             mock.patch.object(download, '__httpSession__') as session:
+             mock.patch.object(download, '_httpSession') as session:
             session.return_value.request.side_effect = response
             with self.assertRaises(DownloadCancelled):
-                download.__remoteSize__(['https://cdn.invalid/1', 'https://cdn.invalid/2'])
+                download._remoteSize(['https://cdn.invalid/1', 'https://cdn.invalid/2'])
             self.assertEqual(session.return_value.request.call_count, 2)
 
     def test_video_skip_requires_verified_completion(self):
@@ -247,7 +247,7 @@ class ReliabilityTests(unittest.TestCase):
         with mock.patch.object(download.shutil, 'which', return_value='ffmpeg'), \
              mock.patch.object(download.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stderr=b'bad stream')):
             with self.assertRaisesRegex(RuntimeError, 'Video conversion failed'):
-                download.__finalizeVideoFile__(str(part), str(final))
+                download._finalizeVideoFile(str(part), str(final))
         self.assertEqual(part.read_bytes(), b'transport-stream')
         self.assertEqual(final.read_bytes(), b'previous-good-video')
 
@@ -256,7 +256,7 @@ class ReliabilityTests(unittest.TestCase):
         part.write_bytes(b'transport-stream')
         with mock.patch.object(download.shutil, 'which', return_value=None):
             with self.assertRaisesRegex(RuntimeError, 'ffmpeg'):
-                download.__finalizeVideoFile__(str(part), str(final))
+                download._finalizeVideoFile(str(part), str(final))
         self.assertTrue(part.exists())
         self.assertFalse(final.exists())
 
@@ -269,9 +269,9 @@ class ReliabilityTests(unittest.TestCase):
                 yield b'first'
                 cancelled.set()
                 yield b'second'
-        with job_context(cancel=cancelled), mock.patch.object(download, '__httpRequest__', return_value=Interrupted()):
+        with job_context(cancel=cancelled), mock.patch.object(download, '_httpRequest', return_value=Interrupted()):
             with self.assertRaises(DownloadCancelled):
-                download.__downloadUrls__(['https://cdn.invalid/file'], path, probeSize=False)
+                download._downloadUrls(['https://cdn.invalid/file'], path, probeSize=False)
         self.assertEqual(Path(path).read_bytes(), b'previous-good')
         self.assertEqual(Path(path + '.download').read_bytes(), b'first')
 
@@ -374,14 +374,14 @@ class ReliabilityTests(unittest.TestCase):
           </AdaptationSet></Period></MPD>'''
         api = TidalAPI()
         self.addCleanup(api.session.close)
-        stream = api.__dashStreamUrl__('1', 'LOSSLESS', manifest)
+        stream = api._dashStreamUrl('1', 'LOSSLESS', manifest)
         probe = SimpleNamespace(returncode=0, stdout=json.dumps({'streams': [{
             'codec_name': 'flac', 'sample_rate': '44100', 'bits_per_raw_sample': '16', 'channels': 2,
         }]}))
-        with mock.patch.object(download, '__localFileSize__', return_value=8192), \
+        with mock.patch.object(download, '_localFileSize', return_value=8192), \
                 mock.patch.object(download.shutil, 'which', return_value='ffprobe'), \
                 mock.patch.object(download, 'run_process', return_value=probe):
-            facts = download.__verifyMediaQuality__('fixture.flac', stream)
+            facts = download._verifyMediaQuality('fixture.flac', stream)
         self.assertEqual(facts['bitDepth'], 16)
         self.assertEqual(facts['verifiedBy'], 'ffprobe')
 
@@ -414,7 +414,7 @@ class ReliabilityTests(unittest.TestCase):
             api.clearSession()
             return {'user': {'userId': 1, 'countryCode': 'US'}, 'access_token': 'access',
                     'refresh_token': 'refresh', 'expires_in': 3600}
-        with mock.patch.object(api, '__post__', side_effect=complete_after_logout):
+        with mock.patch.object(api, '_post', side_effect=complete_after_logout):
             self.assertFalse(api.checkAuthStatus())
         self.assertFalse(api.key.accessToken)
         self.assertFalse(api._streamCache)
@@ -503,7 +503,7 @@ class ReliabilityTests(unittest.TestCase):
         api = TidalAPI()
         warnings = []
         data = [{'type': 'track', 'item': {'id': 1, 'title': 'Unavailable', 'streamReady': False}}]
-        with job_context(warning=warnings.append), mock.patch.object(api, '__getItems__', return_value=data):
+        with job_context(warning=warnings.append), mock.patch.object(api, '_getItems', return_value=data):
             self.assertEqual(api.getItems(1, Type.Album), ([], []))
         self.assertEqual(warnings, ['Skipped unavailable track: Unavailable'])
 

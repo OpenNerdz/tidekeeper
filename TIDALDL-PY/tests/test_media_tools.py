@@ -36,7 +36,7 @@ class MediaToolIntegrationTests(unittest.TestCase):
         stream = StreamUrl()
         stream.codec = 'flac'
         stream.sampleRate = 48000
-        facts = download.__verifyMediaQuality__(str(self.audio()), stream)
+        facts = download._verifyMediaQuality(str(self.audio()), stream)
         self.assertEqual(facts['codec'], 'flac')
         self.assertEqual(facts['sampleRate'], 48000)
         self.assertEqual(facts['verifiedBy'], 'ffprobe')
@@ -45,7 +45,7 @@ class MediaToolIntegrationTests(unittest.TestCase):
         path = self.root / 'unfinished.m4a'
         path.write_bytes(b'unfinished media')
         with self.assertRaisesRegex(RuntimeError, 'ffprobe validation'):
-            download.__verifyMediaQuality__(str(path), StreamUrl())
+            download._verifyMediaQuality(str(path), StreamUrl())
 
     def test_flac_container_remux_preserves_audio_quality(self):
         source = self.audio()
@@ -55,10 +55,10 @@ class MediaToolIntegrationTests(unittest.TestCase):
         stream.codec, stream.container = 'flac', 'mp4'
         stream.sampleRate = 48000
         with mock.patch.object(SETTINGS, 'saveAsFlac', True):
-            output = download.__exportFlacFromContainer__(str(container), stream)
+            output = download._exportFlacFromContainer(str(container), stream)
         self.assertEqual(Path(output).suffix, '.flac')
         self.assertFalse(container.exists())
-        facts = download.__verifyMediaQuality__(output, stream)
+        facts = download._verifyMediaQuality(output, stream)
         self.assertEqual(facts['codec'], 'flac')
         self.assertEqual(facts['sampleRate'], 48000)
 
@@ -67,7 +67,7 @@ class MediaToolIntegrationTests(unittest.TestCase):
         target = self.root / 'video.mp4'
         self.generate('-f', 'lavfi', '-i', 'color=c=blue:s=96x64:r=10:d=0.3',
                       '-c:v', 'mpeg2video', '-f', 'mpegts', str(source))
-        self.assertEqual(download.__finalizeVideoFile__(str(source), str(target)), str(target))
+        self.assertEqual(download._finalizeVideoFile(str(source), str(target)), str(target))
         self.assertFalse(source.exists())
         result = subprocess.run([shutil.which('ffprobe'), '-v', 'error', '-show_entries',
                                  'stream=codec_type', '-of', 'json', str(target)],
@@ -105,7 +105,7 @@ class MediaToolIntegrationTests(unittest.TestCase):
             SETTINGS.checkExist = SETTINGS.showProgress = False
             with mock.patch.object(download.TIDAL_API, 'getVideoStreamUrl', return_value=stream), \
                     mock.patch.object(download, 'getVideoPath', return_value=str(target)), \
-                    mock.patch.object(download, '__httpRequest__', side_effect=media_response), \
+                    mock.patch.object(download, '_httpRequest', side_effect=media_response), \
                     mock.patch.object(download.Printf, 'video'):
                 ok, message = download.downloadVideo(video)
             self.assertTrue(ok, message)

@@ -34,7 +34,7 @@ MAX_COMPONENT_BYTES = 240
 MAX_MEDIA_STEM_BYTES = 200
 
 
-def __truncateComponent__(value, original, max_bytes=MAX_COMPONENT_BYTES):
+def _truncateComponent(value, original, max_bytes=MAX_COMPONENT_BYTES):
     encoded = value.encode('utf-8')
     if len(encoded) <= max_bytes:
         return value
@@ -49,7 +49,7 @@ def __truncateComponent__(value, original, max_bytes=MAX_COMPONENT_BYTES):
     return '_' + suffix
 
 
-def __fixPath__(name: str):
+def _fixPath(name: str):
     """Return one portable, non-empty filesystem component."""
     original = unicodedata.normalize('NFC', str(name or ''))
     if not original:
@@ -62,39 +62,39 @@ def __fixPath__(name: str):
     stem = value.split('.', 1)[0].upper()
     if stem in WINDOWS_RESERVED_NAMES:
         value = '_' + value
-    return __truncateComponent__(value, original)
+    return _truncateComponent(value, original)
 
 
 
-def __safeTemplatePath__(path):
+def _safeTemplatePath(path):
     # Templates intentionally use '/' for subfolders on every platform. Treat
     # backslashes as separators too, then sanitize every component so '..', an
     # absolute path, controls, or Windows device names cannot escape the chosen
     # download directory.
     parts = re.split(r'[/\\]+', str(path or ''))
-    return '/'.join(__fixPath__(part) for part in parts if part not in ('', '.', '..')) or '_'
+    return '/'.join(_fixPath(part) for part in parts if part not in ('', '.', '..')) or '_'
 
 
-def __safeMediaPath__(path, extension):
-    directory, separator, stem = __safeTemplatePath__(path).rpartition('/')
-    stem = __truncateComponent__(stem, stem, MAX_MEDIA_STEM_BYTES)
+def _safeMediaPath(path, extension):
+    directory, separator, stem = _safeTemplatePath(path).rpartition('/')
+    stem = _truncateComponent(stem, stem, MAX_MEDIA_STEM_BYTES)
     return directory + separator + stem + extension
 
 
-def __getYear__(releaseDate: str):
+def _getYear(releaseDate: str):
     if releaseDate is None or releaseDate == '':
         return ''
     return aigpy.string.getSubOnlyEnd(releaseDate, '-')
 
 
-def __getDurationStr__(seconds):
+def _getDurationStr(seconds):
     time_string = str(datetime.timedelta(seconds=seconds))
     if time_string.startswith('0:'):
         time_string = time_string[2:]
     return time_string
 
 
-def __getExtension__(stream: StreamUrl):
+def _getExtension(stream: StreamUrl):
     container = (stream.container or '').lower()
     manifestMimeType = (stream.manifestMimeType or '').lower()
     codec = (stream.codec or '').lower()
@@ -110,7 +110,7 @@ def __getExtension__(stream: StreamUrl):
     return '.m4a'
 
 
-def __getStreamQuality__(stream: StreamUrl):
+def _getStreamQuality(stream: StreamUrl):
     quality = (getattr(stream, 'soundQuality', None) or '').strip()
     labels = {
         'DOLBY_ATMOS': 'Dolby Atmos',
@@ -125,26 +125,26 @@ def __getStreamQuality__(stream: StreamUrl):
     return quality.replace('_', ' ').title() if quality else ''
 
 
-def __isAtmosStream__(stream: StreamUrl):
+def _isAtmosStream(stream: StreamUrl):
     return (getattr(stream, 'soundQuality', None) or '').upper() == 'DOLBY_ATMOS'
 
 
-def __hasStreamIdentifierToken__(pathFormat: str):
+def _hasStreamIdentifierToken(pathFormat: str):
     return '{StreamQuality}' in pathFormat or '{Codec}' in pathFormat
 
 
-def __tokenValue__(value):
+def _tokenValue(value):
     if value is None:
         return ""
     return str(value)
 
 
 def getAlbumPath(album):
-    artistID = __fixPath__(TIDAL_API.getArtistsID(album.artists))
-    artistName = __fixPath__(TIDAL_API.getArtistsName(album.artists))
+    artistID = _fixPath(TIDAL_API.getArtistsID(album.artists))
+    artistName = _fixPath(TIDAL_API.getArtistsName(album.artists))
     primary_artist = getattr(album, 'artist', None)
-    albumArtistID = __fixPath__(__tokenValue__(getattr(primary_artist, 'id', None)))
-    albumArtistName = __fixPath__(__tokenValue__(getattr(primary_artist, 'name', None)))
+    albumArtistID = _fixPath(_tokenValue(getattr(primary_artist, 'id', None)))
+    albumArtistName = _fixPath(_tokenValue(getattr(primary_artist, 'name', None)))
 
     # album folder pre: [ME]
     flag = TIDAL_API.getFlag(album, Type.Album, True, "")
@@ -154,8 +154,8 @@ def getAlbumPath(album):
         flag = "[" + flag + "] "
 
     # album and addyear
-    albumName = __fixPath__(album.title)
-    year = __getYear__(album.releaseDate)
+    albumName = _fixPath(album.title)
+    year = _getYear(album.releaseDate)
 
     # retpath
     retpath = SETTINGS.albumFolderFormat
@@ -166,22 +166,22 @@ def getAlbumPath(album):
     retpath = retpath.replace(R"{AlbumArtistID}", albumArtistID)
     retpath = retpath.replace(R"{AlbumArtistName}", albumArtistName)
     retpath = retpath.replace(R"{Flag}", flag)
-    retpath = retpath.replace(R"{AlbumID}", __tokenValue__(album.id))
+    retpath = retpath.replace(R"{AlbumID}", _tokenValue(album.id))
     retpath = retpath.replace(R"{AlbumYear}", year)
     retpath = retpath.replace(R"{AlbumTitle}", albumName)
-    retpath = retpath.replace(R"{AudioQuality}", __tokenValue__(album.audioQuality))
-    retpath = retpath.replace(R"{DurationSeconds}", __tokenValue__(album.duration or 0))
-    retpath = retpath.replace(R"{Duration}", __fixPath__(__getDurationStr__(album.duration or 0)))
-    retpath = retpath.replace(R"{NumberOfTracks}", __tokenValue__(album.numberOfTracks or 0))
-    retpath = retpath.replace(R"{NumberOfVideos}", __tokenValue__(album.numberOfVideos or 0))
-    retpath = retpath.replace(R"{NumberOfVolumes}", __tokenValue__(album.numberOfVolumes or 0))
-    retpath = retpath.replace(R"{ReleaseDate}", __fixPath__(__tokenValue__(album.releaseDate)))
-    retpath = retpath.replace(R"{RecordType}", __tokenValue__(album.type))
+    retpath = retpath.replace(R"{AudioQuality}", _tokenValue(album.audioQuality))
+    retpath = retpath.replace(R"{DurationSeconds}", _tokenValue(album.duration or 0))
+    retpath = retpath.replace(R"{Duration}", _fixPath(_getDurationStr(album.duration or 0)))
+    retpath = retpath.replace(R"{NumberOfTracks}", _tokenValue(album.numberOfTracks or 0))
+    retpath = retpath.replace(R"{NumberOfVideos}", _tokenValue(album.numberOfVideos or 0))
+    retpath = retpath.replace(R"{NumberOfVolumes}", _tokenValue(album.numberOfVolumes or 0))
+    retpath = retpath.replace(R"{ReleaseDate}", _fixPath(_tokenValue(album.releaseDate)))
+    retpath = retpath.replace(R"{RecordType}", _tokenValue(album.type))
     retpath = retpath.replace(R"{None}", "")
-    return f"{SETTINGS.downloadPath}/{__safeTemplatePath__(retpath.strip())}"
+    return f"{SETTINGS.downloadPath}/{_safeTemplatePath(retpath.strip())}"
 
 def getPlaylistPath(playlist):
-    playlistName = __fixPath__(playlist.title)
+    playlistName = _fixPath(playlist.title)
 
     # retpath
     retpath = SETTINGS.playlistFolderFormat
@@ -189,7 +189,7 @@ def getPlaylistPath(playlist):
         retpath = SETTINGS.getDefaultPathFormat(Type.Playlist)
     retpath = retpath.replace(R"{PlaylistUUID}", str(playlist.uuid))
     retpath = retpath.replace(R"{PlaylistName}", playlistName)
-    return f"{SETTINGS.downloadPath}/{__safeTemplatePath__(retpath)}"
+    return f"{SETTINGS.downloadPath}/{_safeTemplatePath(retpath)}"
 
 
 def getTrackPath(track, stream, album=None, playlist=None):
@@ -198,38 +198,38 @@ def getTrackPath(track, stream, album=None, playlist=None):
     if album is not None:
         base = getAlbumPath(album)
         if int(getattr(album, 'numberOfVolumes', 0) or 0) > 1:
-            base += '/CD' + __fixPath__(str(track.volumeNumber or 1))
+            base += '/CD' + _fixPath(str(track.volumeNumber or 1))
 
     if playlist is not None and SETTINGS.usePlaylistFolder:
         base = getPlaylistPath(playlist)
         number = str(track.trackNumberOnPlaylist).rjust(2, '0')
 
     # artist
-    artists = __fixPath__(TIDAL_API.getArtistsName(track.artists))
-    artistID = __fixPath__(TIDAL_API.getArtistsID(track.artists))
+    artists = _fixPath(TIDAL_API.getArtistsName(track.artists))
+    artistID = _fixPath(TIDAL_API.getArtistsID(track.artists))
     primary_artist = getattr(track, 'artist', None)
-    trackArtistID = __fixPath__(__tokenValue__(getattr(primary_artist, 'id', None)))
-    trackArtistName = __fixPath__(__tokenValue__(getattr(primary_artist, 'name', None)))
+    trackArtistID = _fixPath(_tokenValue(getattr(primary_artist, 'id', None)))
+    trackArtistName = _fixPath(_tokenValue(getattr(primary_artist, 'name', None)))
 
     # title
-    title = __fixPath__(track.title)
+    title = _fixPath(track.title)
     if not aigpy.string.isNull(track.version):
-        title += f' ({__fixPath__(track.version)})'
+        title += f' ({_fixPath(track.version)})'
 
     # explicit
     explicit = "(Explicit)" if track.explicit else ''
 
     # album and addyear
-    albumName = __fixPath__(album.title) if album is not None else ''
-    year = __getYear__(album.releaseDate) if album is not None else ''
+    albumName = _fixPath(album.title) if album is not None else ''
+    year = _getYear(album.releaseDate) if album is not None else ''
 
     # extension
-    extension = __getExtension__(stream)
+    extension = _getExtension(stream)
 
     retpath = SETTINGS.trackFileFormat
     if retpath is None or len(retpath) <= 0:
         retpath = SETTINGS.getDefaultPathFormat(Type.Track)
-    hasStreamIdentifier = __hasStreamIdentifierToken__(retpath)
+    hasStreamIdentifier = _hasStreamIdentifierToken(retpath)
     retpath = retpath.replace(R"{TrackNumber}", number)
     retpath = retpath.replace(R"{ArtistName}", trackArtistName)
     retpath = retpath.replace(R"{ArtistsName}", artists)
@@ -240,16 +240,16 @@ def getTrackPath(track, stream, album=None, playlist=None):
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{AlbumYear}", year)
     retpath = retpath.replace(R"{AlbumTitle}", albumName)
-    retpath = retpath.replace(R"{AudioQuality}", __tokenValue__(track.audioQuality))
-    retpath = retpath.replace(R"{StreamQuality}", __fixPath__(__getStreamQuality__(stream)))
-    retpath = retpath.replace(R"{Codec}", __fixPath__(stream.codec or ''))
-    retpath = retpath.replace(R"{DurationSeconds}", __tokenValue__(track.duration or 0))
-    retpath = retpath.replace(R"{Duration}", __fixPath__(__getDurationStr__(track.duration or 0)))
-    retpath = retpath.replace(R"{TrackID}", __tokenValue__(track.id))
+    retpath = retpath.replace(R"{AudioQuality}", _tokenValue(track.audioQuality))
+    retpath = retpath.replace(R"{StreamQuality}", _fixPath(_getStreamQuality(stream)))
+    retpath = retpath.replace(R"{Codec}", _fixPath(stream.codec or ''))
+    retpath = retpath.replace(R"{DurationSeconds}", _tokenValue(track.duration or 0))
+    retpath = retpath.replace(R"{Duration}", _fixPath(_getDurationStr(track.duration or 0)))
+    retpath = retpath.replace(R"{TrackID}", _tokenValue(track.id))
     retpath = retpath.strip()
-    if __isAtmosStream__(stream) and SETTINGS.audioQuality == AudioQuality.Atmos and not hasStreamIdentifier:
+    if _isAtmosStream(stream) and SETTINGS.audioQuality == AudioQuality.Atmos and not hasStreamIdentifier:
         retpath += " [Dolby Atmos]"
-    return os.path.join(base, __safeMediaPath__(retpath, extension))
+    return os.path.join(base, _safeMediaPath(retpath, extension))
 
 
 def getVideoPath(video, album=None, playlist=None):
@@ -263,18 +263,18 @@ def getVideoPath(video, album=None, playlist=None):
     number = str(video.trackNumber).rjust(2, '0')
 
     # get artist
-    artists = __fixPath__(TIDAL_API.getArtistsName(video.artists))
-    artistID = __fixPath__(TIDAL_API.getArtistsID(video.artists))
+    artists = _fixPath(TIDAL_API.getArtistsName(video.artists))
+    artistID = _fixPath(TIDAL_API.getArtistsID(video.artists))
     primary_artist = getattr(video, 'artist', None)
-    videoArtistID = __fixPath__(__tokenValue__(getattr(primary_artist, 'id', None)))
-    videoArtistName = __fixPath__(__tokenValue__(getattr(primary_artist, 'name', None)))
+    videoArtistID = _fixPath(_tokenValue(getattr(primary_artist, 'id', None)))
+    videoArtistName = _fixPath(_tokenValue(getattr(primary_artist, 'name', None)))
 
     # explicit
     explicit = "(Explicit)" if video.explicit else ''
 
     # title and year and extension
-    title = __fixPath__(video.title)
-    year = __getYear__(video.releaseDate)
+    title = _fixPath(video.title)
+    year = _getYear(video.releaseDate)
     extension = ".mp4"
 
     retpath = SETTINGS.videoFileFormat
@@ -290,7 +290,7 @@ def getVideoPath(video, album=None, playlist=None):
     retpath = retpath.replace(R"{ExplicitFlag}", explicit)
     retpath = retpath.replace(R"{VideoYear}", year)
     retpath = retpath.replace(R"{VideoID}", str(video.id))
-    return os.path.join(base, __safeMediaPath__(retpath.strip(), extension))
+    return os.path.join(base, _safeMediaPath(retpath.strip(), extension))
 
 def openPath(path):
     target = os.path.abspath(os.path.expanduser(path or SETTINGS.downloadPath))
@@ -309,13 +309,13 @@ def openPath(path):
 class Paths(aigpy.model.ModelBase):
     homePathOverride = None
 
-    def __getHomePath__(self):
+    def _getHomePath(self):
         if self.homePathOverride is None:
-            return self.__getDefaultHomePath__()
+            return self._getDefaultHomePath()
         else:
             return self.homePathOverride
 
-    def __getDefaultHomePath__(self):
+    def _getDefaultHomePath(self):
         if "XDG_CONFIG_HOME" in os.environ:
             return os.environ['XDG_CONFIG_HOME']
         elif "HOME" in os.environ:
@@ -326,13 +326,13 @@ class Paths(aigpy.model.ModelBase):
             return os.path.abspath("./")
 
     def getLogPath(self):
-        return self.__getHomePath__() + '/.tidal-dl.log'
+        return self._getHomePath() + '/.tidal-dl.log'
 
     def getTokenPath(self):
-        return self.__getHomePath__() + '/.tidal-dl.token.json'
+        return self._getHomePath() + '/.tidal-dl.token.json'
 
     def getProfilePath(self):
-        return self.__getHomePath__() + '/.tidal-dl.json'
+        return self._getHomePath() + '/.tidal-dl.json'
 
 
     def getConfigDirectory(self):
