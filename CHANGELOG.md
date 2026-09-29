@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.29.0 - 2026-09-29
+
 <!-- release-title: Clearer errors and consistent download folders -->
 
 - Expand `~` in the download folder for every album, playlist, video, cover,
@@ -20,6 +22,8 @@
   terminal concurrency changes only when both values are valid.
 - Simplify internal naming, option parsing, and duplicated quality tables; remove
   unused manifest helpers and point-in-time review documents.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.9.28.2...v2026.9.29.0)
 
 ## 2026.9.28.2 - 2026-09-28
 
