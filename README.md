@@ -92,6 +92,7 @@ options directly:
 | `--doctor` | Check your login, download folder, and ffmpeg |
 | `--paths` | Show where settings, the login, and logs are stored |
 | `--open-output` | Open the download folder |
+| `--migrate-downloads FOLDER` | Merge downloads from an older literal-`~` folder without replacing existing files |
 | `--update` | Update Tidekeeper (`--update-gui` for the desktop app too) |
 | `-c, --configPathOverride FOLDER` | Keep settings and the login in another folder |
 
@@ -99,17 +100,18 @@ options directly:
 
 **Links** can be full URLs, links without `https://` (such as
 `tidal.com/browse/track/123` or `listen.tidal.com/album/456`), or bare IDs.
-**Text files** can hold links separated by lines, spaces, or commas. Lines
-starting with `#` are comments, a file can include other files, and repeated
-items are skipped. Tracks that fail are listed in `failed-tracks.txt` in the
-download folder. Pass that file back to `-l` to retry them.
+**List files** can use any filename extension and hold links separated by lines,
+spaces, or commas. Lines starting with `#` are comments, a file can include
+other files, and repeated items are skipped. Tracks that fail are listed in
+`failed-tracks.txt` in the download folder. Pass that file back to `-l` to retry
+them.
 
 ## Desktop app
 
 Search the catalog or paste links, then build a queue. **Download now** starts
 right away, and **Add to queue** lets you line up several downloads before you
-click **Start**. You can drag links from a browser, or `.txt` files from your
-file manager, onto the window.
+click **Start**. You can drag links from a browser, or list files from your file
+manager, onto the window.
 
 Select a queue row to see why it failed. **Retry incomplete** downloads only the
 items that did not finish. Settings apply to the next download; click **Save** to
@@ -174,10 +176,17 @@ Standalone apps can't update themselves. Download the new version from the
 Start with `tidekeeper --doctor`. It checks your login, download folder, and
 ffmpeg, and tells you what to fix.
 
-If another Tidekeeper process on the same computer is already writing the same
-file, the download waits and tells you why. Lock files live in your private
-app-state folder, not inside the music library, so downloads on shared or
-network storage do not need to support file locking themselves.
+If another Tidekeeper process is already writing the same file, the download
+waits and tells you why. Local coordination uses a bounded set of lock slots in
+your private app-state folder, falling back to temporary storage when a home
+folder is unavailable. A shared download root also gets one hidden bounded lock
+folder so separate containers or computers can coordinate when the shared
+filesystem supports file locking; downloads continue with local protection if
+it does not.
+
+Releases before 2026.9.29 could put album downloads in a literal `~` folder.
+Tidekeeper now merges folders it can discover without replacing conflicts. For
+an old folder elsewhere, run `tidekeeper --migrate-downloads '/old/path/~/Music'`.
 
 <details>
 <summary><b>I was signed out after updating or changing the TIDAL client</b></summary>

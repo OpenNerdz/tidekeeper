@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+<!-- release-title: Reliable containers and fully gated releases -->
+
+- Fall back from an unavailable home/app-state lock folder to private temporary
+  storage or the download root, so read-only homes and numeric Docker users can
+  download normally.
+- Bound local and shared lock files to 256 reusable slots, clean inactive legacy
+  per-track locks when an album is revisited, and coordinate separate machines
+  through one hidden folder at the shared download root when its filesystem
+  supports locking.
+- Merge discoverable downloads from the pre-2026.9.29 literal `~` folder without
+  replacing conflicts, and add `--migrate-downloads PATH` for any old launch
+  directory Tidekeeper cannot discover.
+- Accept transparently decoded compressed responses for fresh downloads while
+  continuing to reject unsafe encoded byte-range resumes.
+- Show the expanded download folder in errors and let remote logout revocation
+  finish when the desktop window closes.
+- Build releases on an isolated candidate, promote it only after every check and
+  platform build passes, and create the version tag only after PyPI verifies both
+  distributions. Automated release commits now use `github-actions[bot]`, and
+  the resulting tag does not launch a duplicate build.
+- Stop scheduled supporter commits to `main`; the desktop still refreshes the
+  current stargazer list directly and retains its bundled offline snapshot.
+
 ## 2026.9.29.3 - 2026-09-29
 
 <!-- release-title: Cleaner downloads and controlled releases -->
@@ -51,7 +74,8 @@
   failure log, and doctor check; previously only single tracks honored it and
   other downloads could land in a literal `~` folder.
 - Search the catalog when desktop search text matches a local folder name
-  (such as `download`); only `.txt` list files are treated as direct links.
+  (such as `download`); regular files are treated as direct-link lists regardless
+  of their filename extension.
 - Keep album, playlist, and artist downloads running when TIDAL omits a title.
 - Report readable errors such as "Get operation failed: Album not found"
   instead of joined text or stale gateway pages, and only suggest checking disk

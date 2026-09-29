@@ -1,4 +1,4 @@
-"""Validate release files, resume matching PyPI uploads, and publish a complete draft."""
+"""Validate release files, resume PyPI uploads, and publish complete GitHub releases."""
 
 import argparse
 import hashlib
@@ -152,45 +152,47 @@ def github_release(repository, tag):
         page += 1
 
 
-def github_draft(repository, tag, directory, notes_file):
+def _publish_validated_draft(repository, tag, release):
+    check_github_assets(release)
+    if not release['draft']:
+        return
+    latest = gh_json(f'repos/{repository}/releases/latest')
+    promote = latest is None or version_key(tag) > version_key(latest['tag_name'])
+    subprocess.run(['gh', 'release', 'edit', tag, '--repo', repository, '--draft=false',
+                    '--latest' if promote else '--latest=false'], check=True)
+
+
+def github_publish(repository, tag, directory, notes_file):
+    """Stage, validate, and publish assets after the tag and PyPI files exist."""
     validate_files(directory, expected_assets() | {'SHA256SUMS'})
     title, _ = release_notes(Path.cwd(), tag)
     existing = github_release(repository, tag)
     if existing and not existing['draft']:
         check_github_assets(existing)
-        # Never turn a public release back into a draft or replace its binaries.
         print(f'{tag} is already public; leaving its assets intact')
         return
-    if not existing:
-        subprocess.run(['gh', 'release', 'create', tag, '--repo', repository, '--verify-tag', '--draft',
+    if existing:
+        subprocess.run(['gh', 'release', 'edit', tag, '--repo', repository,
                         '--title', title, '--notes-file', str(notes_file)], check=True)
     else:
-        subprocess.run(['gh', 'release', 'edit', tag, '--repo', repository,
+        subprocess.run(['gh', 'release', 'create', tag, '--repo', repository, '--verify-tag', '--draft',
                         '--title', title, '--notes-file', str(notes_file)], check=True)
     subprocess.run(['gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
                     *map(str, sorted(directory.iterdir()))], check=True)
     uploaded = github_release(repository, tag)
     if uploaded is None:
         raise ValueError('The uploaded GitHub draft is missing')
-    check_github_assets(uploaded)
-
-
-def finalize(repository, tag):
-    release = github_release(repository, tag)
-    if not release:
-        raise ValueError('The validated GitHub draft is missing')
-    check_github_assets(release)
-    if release['draft']:
-        latest = gh_json(f'repos/{repository}/releases/latest')
-        promote = latest is None or version_key(tag) > version_key(latest['tag_name'])
-        subprocess.run(['gh', 'release', 'edit', tag, '--repo', repository, '--draft=false',
-                        '--latest' if promote else '--latest=false'], check=True)
+    _publish_validated_draft(repository, tag, uploaded)
+    published = github_release(repository, tag)
+    if published is None or published['draft']:
+        raise ValueError('The GitHub release was not published')
+    check_github_assets(published)
     print(f'Published https://github.com/{repository}/releases/tag/{tag}')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('checksums', 'stage-pypi', 'verify-pypi', 'draft', 'finalize'))
+    parser.add_argument('command', choices=('checksums', 'stage-pypi', 'verify-pypi', 'release'))
     parser.add_argument('--tag', required=True)
     parser.add_argument('--directory', type=Path)
     parser.add_argument('--staging', type=Path)
@@ -215,10 +217,8 @@ def main():
         print(f'{len(pending)} distributions need uploading')
     elif args.command == 'verify-pypi':
         wait_for_pypi(args.directory, args.tag)
-    elif args.command == 'draft':
-        github_draft(args.repository, args.tag, args.directory, args.notes)
     else:
-        finalize(args.repository, args.tag)
+        github_publish(args.repository, args.tag, args.directory, args.notes)
 
 
 if __name__ == '__main__':

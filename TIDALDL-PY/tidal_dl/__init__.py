@@ -42,7 +42,7 @@ def startGui():
 SHORT_OPTIONS = "hvgl:o:q:r:c:"
 LONG_OPTIONS = [
     "help", "version", "gui", "doctor", "update", "update-gui", "paths", "open-output",
-    "video-only", "videos-only", "link=", "output=", "quality=", "quality-priority=",
+    "video-only", "videos-only", "migrate-downloads=", "link=", "output=", "quality=", "quality-priority=",
     "resolution=", "configPathOverride=",
 ]
 
@@ -136,11 +136,25 @@ def mainCommand(opts=None):
             Printf.err("Could not open download folder: " + str(exc))
             return 1
 
+    migrations = [val for opt, val in opts if opt == '--migrate-downloads']
+    if migrations:
+        from .paths import migrateLegacyDownloads
+        try:
+            result = migrateLegacyDownloads(migrations[-1])
+            if result is None:
+                raise ValueError('Old download folder was not found')
+            Printf.success(result)
+            return 0
+        except (OSError, ValueError) as exc:
+            Printf.err('Could not migrate earlier downloads: ' + str(exc))
+            return 1
+
     if flags & {'--update', '--update-gui'}:
         return 0 if updateTidekeeper('--update-gui' in flags) else 1
 
-    if not aigpy.path.mkdirs(downloadRoot()):
-        Printf.err(LANG.select.MSG_PATH_ERR + SETTINGS.downloadPath)
+    download_path = downloadRoot()
+    if not aigpy.path.mkdirs(download_path):
+        Printf.err(LANG.select.MSG_PATH_ERR + download_path)
         return 1
 
     if flags & {'-g', '--gui'}:
@@ -150,7 +164,7 @@ def mainCommand(opts=None):
     if link is not None:
         if not loginByConfig() and not loginByWeb():
             return 1
-        Printf.info(f'{LANG.select.SETTING_DOWNLOAD_PATH}: {SETTINGS.downloadPath}')
+        Printf.info(f'{LANG.select.SETTING_DOWNLOAD_PATH}: {download_path}')
         return 0 if start(link, videoOnly) else 1
     return None
 

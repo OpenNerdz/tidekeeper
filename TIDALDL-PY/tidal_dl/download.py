@@ -462,8 +462,6 @@ def _downloadSingleUrl(
         response = None
         try:
             response = _httpRequest("GET", url, attempts=1, stream=True, allow_redirects=True, headers=headers)
-            if response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity'):
-                raise ValueError('The media server returned an encoded response that cannot be resumed safely.')
             mode = "wb"
             if resumeSize > 0:
                 rangeStart = _contentRangeStart(response)
@@ -488,15 +486,19 @@ def _downloadSingleUrl(
                                                headers={"Accept-Encoding": "identity"})
                     mode = "wb"
 
-            if response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity'):
+            encoded = response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity')
+            if encoded and (mode == 'ab' or response.status_code != 200):
                 raise ValueError('The media server returned an encoded response that cannot be resumed safely.')
             if response.status_code == 206 and _contentRangeStart(response) != resumeSize:
                 raise ValueError('The media server returned an unexpected byte range.')
 
-            responseTotal = _contentTotalSize(response)
+            # requests.iter_content transparently decodes a fresh encoded body.
+            # Its Content-Length describes the compressed bytes, so it cannot
+            # validate the size of the decoded file written below.
+            responseTotal = -1 if encoded else _contentTotalSize(response)
             if responseTotal > 0:
                 knownTotal = responseTotal
-            elif response.status_code == 200:
+            elif response.status_code == 200 and not encoded:
                 contentLength = _parseIntHeader(response.headers.get("Content-Length"))
                 if contentLength > 0:
                     knownTotal = contentLength

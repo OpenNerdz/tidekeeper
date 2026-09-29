@@ -13,6 +13,11 @@ VERSION_PATH = 'TIDALDL-PY/tidal_dl/printf.py'
 VERSION_RE = re.compile(r"^VERSION\s*=\s*['\"]([^'\"]+)['\"]", re.MULTILINE)
 TAG_RE = re.compile(r'v([0-9]{4})\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
 TITLE_RE = re.compile(r'<!-- release-title: (.+?) -->')
+CANDIDATE_BRANCH = 'release-candidate'
+SOURCE_MARKER = 'Tidekeeper-Source: '
+RELEASE_MARKER = 'Tidekeeper-Release: '
+BOT_NAME = 'github-actions[bot]'
+BOT_EMAIL = '41898282+github-actions[bot]@users.noreply.github.com'
 
 
 def command(*args):
@@ -144,7 +149,28 @@ def remote_tags():
 
 
 def fetch_tag(tag):
-    git('fetch', '--depth=1', 'origin', f'refs/tags/{tag}:refs/tags/{tag}')
+    git('fetch', 'origin', f'refs/tags/{tag}:refs/tags/{tag}')
+
+
+def remote_candidate():
+    result = git('ls-remote', '--heads', 'origin', f'refs/heads/{CANDIDATE_BRANCH}')
+    return result.split()[0] if result else None
+
+
+def candidate_metadata(ref):
+    body = git('show', '-s', '--format=%B', ref)
+    source = next((line.removeprefix(SOURCE_MARKER) for line in body.splitlines()
+                   if line.startswith(SOURCE_MARKER)), None)
+    tag = next((line.removeprefix(RELEASE_MARKER) for line in body.splitlines()
+                if line.startswith(RELEASE_MARKER)), None)
+    if source and tag:
+        version_key(tag)
+    return source, tag
+
+
+def configure_bot():
+    git('config', 'user.name', BOT_NAME)
+    git('config', 'user.email', BOT_EMAIL)
 
 
 def published_tag(repository):
@@ -168,14 +194,9 @@ def output_plan(ref, tag='', build=True):
     print(json.dumps(values))
 
 
-def prepare(root, mode, source, ref, repository, attempt=0):
+def prepare(root, mode, source, ref, repository):
     if mode == 'preview':
         output_plan(source)
-        return
-    if mode == 'tag':
-        tag = ref.removeprefix('refs/tags/')
-        release_notes(root, tag)
-        output_plan(source, tag)
         return
     if ref != 'refs/heads/main':
         raise ValueError('Automatic releases must originate from main')
@@ -183,25 +204,45 @@ def prepare(root, mode, source, ref, repository, attempt=0):
         raise ValueError('Release preparation requires a clean checkout')
     tags = remote_tags()
     latest = max(tags, key=version_key) if tags else None
-    marker = f'Tidekeeper-Source: {source}'
     if latest:
         fetch_tag(latest)
-        # A rerun after the bot's version commit must reuse the same tag.
+        # A rerun after the final tag exists must reuse the same immutable source.
         annotation = git('for-each-ref', '--format=%(contents)', f'refs/tags/{latest}')
-        if marker in annotation.splitlines():
+        if tags[latest] == source or f'{SOURCE_MARKER}{source}' in annotation.splitlines():
             git('checkout', '--detach', latest)
             release_notes(root, latest)
             output_plan(git('rev-parse', 'HEAD'), latest)
             return
-    git('fetch', '--depth=1', 'origin', 'main')
+    git('fetch', 'origin', 'main')
     tip = git('rev-parse', 'FETCH_HEAD')
     if tip != source:
-        changed = git('diff', '--name-only', source, tip).splitlines()
-        if changed != ['TIDALDL-PY/tidal_dl/gui_app/supporters.json']:
-            print('A newer main commit supersedes this run; it will handle publication.')
-            output_plan(source, build=False)
-            return
+        print('A newer main commit supersedes this run; it will handle publication.')
+        output_plan(source, build=False)
+        return
     git('checkout', '--detach', tip)
+    prepared_source, prepared_tag = candidate_metadata('HEAD')
+    if prepared_source and prepared_tag:
+        release_notes(root, prepared_tag)
+        output_plan(tip, prepared_tag)
+        return
+    promoted = git('log', '--format=%H', f'--grep=^{RELEASE_MARKER}v', tip).splitlines()
+    for commit in promoted:
+        promoted_source, promoted_tag = candidate_metadata(commit)
+        if promoted_source and promoted_tag and tags.get(promoted_tag) != commit:
+            raise ValueError(
+                f'{promoted_tag} was promoted but not tagged; rerun that failed release before publishing newer commits'
+            )
+    candidate = remote_candidate()
+    if candidate:
+        git('fetch', 'origin', f'refs/heads/{CANDIDATE_BRANCH}')
+        candidate = git('rev-parse', 'FETCH_HEAD')
+        candidate_source, candidate_tag = candidate_metadata(candidate)
+        if candidate_source == source and candidate_tag:
+            git('checkout', '--detach', candidate)
+            release_notes(root, candidate_tag)
+            output_plan(candidate, candidate_tag)
+            return
+        git('checkout', '--detach', tip)
     baseline = published_tag(repository)
     if baseline:
         fetch_tag(baseline)
@@ -239,42 +280,94 @@ def prepare(root, mode, source, ref, repository, attempt=0):
     version_file.write_text(VERSION_RE.sub(f"VERSION = '{version}'", source_text), encoding='utf-8')
     (root / 'CHANGELOG.md').write_text(updated, encoding='utf-8')
     release_notes(root, tag)
-    git('config', 'user.name', 'OpenNerdz')
-    git('config', 'user.email', '285293891+OpenNerdz@users.noreply.github.com')
+    configure_bot()
     git('add', VERSION_PATH, 'CHANGELOG.md')
-    git('commit', '-m', f'chore: release {tag} [skip ci]')
-    git('tag', '-a', tag, '-m', f'Tidekeeper automated release\n\n{marker}')
-    # A concurrent push fails both updates. Never force-update main or a tag.
+    git('commit', '-m', f'chore: prepare {tag} [skip ci]', '-m',
+        f'{SOURCE_MARKER}{source}\n{RELEASE_MARKER}{tag}')
+    candidate_commit = git('rev-parse', 'HEAD')
+    push = ['push']
+    if candidate:
+        push.append(f'--force-with-lease=refs/heads/{CANDIDATE_BRANCH}:{candidate}')
+    push.extend(('origin', f'HEAD:refs/heads/{CANDIDATE_BRANCH}'))
     try:
-        git('push', '--atomic', 'origin', 'HEAD:refs/heads/main', f'refs/tags/{tag}')
+        git(*push)
     except subprocess.CalledProcessError:
-        # Discard only this helper's local commit/tag before checking the remote
-        # again. If the response was lost after a successful push, its marker
-        # will recover the original release instead of allocating another one.
-        git('tag', '-d', tag)
-        git('reset', '--hard', tip)
-        if attempt >= 2:
+        if remote_candidate() != candidate_commit:
             raise
-        prepare(root, mode, source, ref, repository, attempt + 1)
+    output_plan(candidate_commit, tag)
+
+
+def promote(root, source, candidate, tag):
+    """Advance main to a checked candidate without creating its public tag."""
+    version_key(tag)
+    git('fetch', 'origin', 'main')
+    tip = git('rev-parse', 'FETCH_HEAD')
+    if tip == candidate:
         return
-    output_plan(git('rev-parse', 'HEAD'), tag)
+    if tip != source:
+        raise ValueError('Main changed after release checks; refusing to publish the candidate')
+    git('checkout', '--detach', candidate)
+    candidate_source, candidate_tag = candidate_metadata('HEAD')
+    if (candidate_source, candidate_tag) != (source, tag):
+        raise ValueError('Release candidate metadata does not match the checked source')
+    release_notes(root, tag)
+    try:
+        git('push', 'origin', f'{candidate}:refs/heads/main')
+    except subprocess.CalledProcessError:
+        git('fetch', 'origin', 'main')
+        if git('rev-parse', 'FETCH_HEAD') != candidate:
+            raise
+
+
+def tag_release(root, candidate, tag):
+    """Create the version tag only after PyPI verified the candidate distributions."""
+    version_key(tag)
+    git('checkout', '--detach', candidate)
+    source, candidate_tag = candidate_metadata('HEAD')
+    if not source or candidate_tag != tag:
+        raise ValueError('Release candidate metadata does not match the requested tag')
+    release_notes(root, tag)
+    existing = remote_tags().get(tag)
+    if existing and existing != candidate:
+        raise ValueError(f'{tag} already points to a different commit')
+    if not existing:
+        configure_bot()
+        git('tag', '-a', tag, '-m', f'Tidekeeper automated release\n\n{SOURCE_MARKER}{source}')
+        try:
+            git('push', 'origin', f'refs/tags/{tag}')
+        except subprocess.CalledProcessError:
+            if remote_tags().get(tag) != candidate:
+                raise
+    if remote_candidate() == candidate:
+        git('push', 'origin', '--delete', CANDIDATE_BRANCH)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     plan = commands.add_parser('prepare')
-    plan.add_argument('--mode', choices=('auto', 'preview', 'tag'), required=True)
+    plan.add_argument('--mode', choices=('auto', 'preview'), required=True)
     plan.add_argument('--source', required=True)
     plan.add_argument('--ref', required=True)
     plan.add_argument('--repository', required=True)
     notes = commands.add_parser('notes')
     notes.add_argument('--tag', required=True)
     notes.add_argument('--output', type=Path, required=True)
+    promotion = commands.add_parser('promote')
+    promotion.add_argument('--source', required=True)
+    promotion.add_argument('--candidate', required=True)
+    promotion.add_argument('--tag', required=True)
+    tagging = commands.add_parser('tag')
+    tagging.add_argument('--candidate', required=True)
+    tagging.add_argument('--tag', required=True)
     args = parser.parse_args()
     root = Path.cwd()
     if args.command == 'prepare':
         prepare(root, args.mode, args.source, args.ref, args.repository)
+    elif args.command == 'promote':
+        promote(root, args.source, args.candidate, args.tag)
+    elif args.command == 'tag':
+        tag_release(root, args.candidate, args.tag)
     else:
         title, body = release_notes(root, args.tag)
         body += ('\n\nValidation: Python 3.10–3.14 CI and all five native platform builds passed.\n\n'

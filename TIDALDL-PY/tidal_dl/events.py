@@ -21,7 +21,7 @@ from .enums import AUDIO_QUALITY_ORDER, AudioQuality, Type, VideoQuality
 from .inputs import parse_direct_inputs
 from .lang.language import LANG
 from .model import Album, Artist, Mix, Playlist, Track, Video
-from .paths import legacyDownloadNotice
+from .paths import legacyDownloadNotice, migrateLegacyDownloads
 from .printf import Printf
 from .settings import SETTINGS, TOKEN, syncPlaybackRateLimiter
 from .tidal import TIDAL_API
@@ -160,11 +160,18 @@ _legacyNoticeShown = False
 
 
 def _showLegacyDownloadNotice():
-    """Point once per run to downloads saved in a literal '~' folder by older versions."""
+    """Migrate discoverable downloads saved in a literal '~' folder once per run."""
     global _legacyNoticeShown
     if _legacyNoticeShown:
         return
     _legacyNoticeShown = True
+    try:
+        migration = migrateLegacyDownloads()
+    except (OSError, ValueError) as error:
+        migration = None
+        Printf.info(f'Could not migrate earlier downloads automatically: {error}')
+    if migration:
+        Printf.info(migration)
     notice = legacyDownloadNotice()
     if notice:
         Printf.info(notice)

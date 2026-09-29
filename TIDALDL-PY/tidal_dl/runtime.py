@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from threading import Lock, RLock
 
@@ -19,8 +20,12 @@ _cancel = contextvars.ContextVar('tidekeeper_cancel', default=None)
 _warning = contextvars.ContextVar('tidekeeper_warning', default=None)
 _output_locks = {}
 _output_locks_guard = Lock()
+_shared_lock_warnings = set()
 # Tell the user why a download pauses when another one is writing the same file.
 LOCK_NOTICE_SECONDS = 2.0
+LOCK_SLOT_COUNT = 256
+LEGACY_LOCK_GRACE_SECONDS = 24 * 60 * 60
+_LEGACY_LOCK_NAME = re.compile(r'^[0-9a-f]{64}\.lock$')
 
 
 class DownloadCancelled(Exception):
@@ -46,12 +51,7 @@ def check_cancelled():
         raise DownloadCancelled('Download cancelled; partial transfers kept for retry.')
 
 
-def lock_directory():
-    """Private per-user folder for destination locks.
-
-    Locks never go in download folders: they would clutter music libraries, and
-    shared, network, and Android storage often lack the OS locks filelock needs.
-    """
+def _preferred_lock_directory():
     if sys.platform == 'win32':
         base = os.environ.get('LOCALAPPDATA') or os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
         return os.path.join(base, 'Tidekeeper', 'locks')
@@ -62,39 +62,129 @@ def lock_directory():
     return os.path.join(state, 'tidekeeper', 'locks')
 
 
-@contextlib.contextmanager
-def output_lock(path):
-    """Serialize destination writers across threads and cooperating processes."""
-    key = os.path.normcase(os.path.realpath(path))
-    # Conservatively serialize filename case aliases, but keep distinct output
-    # directories distinct on case-sensitive filesystems.
-    key = os.path.join(os.path.dirname(key), os.path.basename(key).casefold())
-    directory = lock_directory()
-    # One lock file per full destination, so separate folders never block each other.
-    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(key)).hexdigest() + '.lock')
+def _temporary_lock_directory():
+    identity = str(os.getuid()) if hasattr(os, 'getuid') else os.environ.get('USERNAME', 'user')
+    identity = re.sub(r'[^A-Za-z0-9_.-]', '_', identity)
+    return os.path.join(tempfile.gettempdir(), f'tidekeeper-{identity}', 'locks')
+
+
+def _shared_lock_directory(path):
+    """One bounded lock folder shared by hosts that share the download root."""
+    try:
+        from .paths import downloadRoot
+        root = os.path.realpath(os.path.abspath(downloadRoot()))
+        target = os.path.realpath(os.path.abspath(path))
+        if os.path.commonpath((root, target)) != root:
+            return None
+    except (ImportError, OSError, ValueError):
+        return None
+    return os.path.join(root, '.tidekeeper-locks')
+
+
+def _prepare_lock_directory(directory, mode):
+    try:
+        os.makedirs(directory, mode=mode, exist_ok=True)
+        try:
+            os.chmod(directory, mode)
+        except OSError:
+            pass
+        with tempfile.NamedTemporaryFile(prefix='.probe-', dir=directory):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def _cleanup_legacy_lock_directory(directory, remove_empty=False):
+    """Best-effort removal of inactive per-destination locks from older releases."""
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    cutoff = time.time() - LEGACY_LOCK_GRACE_SECONDS
+    for name in names:
+        if not _LEGACY_LOCK_NAME.fullmatch(name):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            if os.path.getmtime(path) > cutoff:
+                continue
+            stale_lock = FileLock(path, mode=0o600, preserve_lock_file=True, fallback_to_soft=False)
+            stale_lock.acquire(timeout=0)
+            stale_lock.release()
+            os.unlink(path)
+        except (FileLockTimeout, OSError):
+            continue
+    if remove_empty:
+        try:
+            os.rmdir(directory)
+        except OSError:
+            pass
+
+
+def lock_directory(path=None):
+    """Return a verified local lock folder without making downloads depend on HOME."""
+    candidates = [(_preferred_lock_directory(), 0o700), (_temporary_lock_directory(), 0o700)]
+    shared = _shared_lock_directory(path) if path else None
+    if shared:
+        candidates.append((shared, 0o1777))
+    checked = set()
+    for directory, mode in candidates:
+        directory = os.path.abspath(directory)
+        if directory in checked:
+            continue
+        checked.add(directory)
+        if _prepare_lock_directory(directory, mode):
+            _cleanup_legacy_lock_directory(directory)
+            return directory
+    raise PermissionError('No writable lock folder is available in app state, temporary storage, or downloads')
+
+
+def _slot_path(directory, key):
+    slot = int.from_bytes(hashlib.sha256(os.fsencode(key)).digest()[:8], 'big') % LOCK_SLOT_COUNT
+    return os.path.join(directory, f'slot-{slot:03d}.lock')
+
+
+def _shared_key(path):
+    try:
+        from .paths import downloadRoot
+        root = os.path.realpath(os.path.abspath(downloadRoot()))
+        target = os.path.realpath(os.path.abspath(path))
+        return os.path.relpath(target, root).replace(os.sep, '/').casefold()
+    except (ImportError, OSError, ValueError):
+        return os.path.normcase(os.path.realpath(path))
+
+
+def _warn_shared_lock(directory, error):
     with _output_locks_guard:
-        if key not in _output_locks:
-            _output_locks[key] = (RLock(), FileLock(lock_path, mode=0o600,
-                                                  preserve_lock_file=True, fallback_to_soft=False), 0)
-        lock, file_lock, users = _output_locks[key]
-        _output_locks[key] = lock, file_lock, users + 1
-    acquired = file_acquired = announced = False
-    started = time.monotonic()
+        if directory in _shared_lock_warnings:
+            return
+        _shared_lock_warnings.add(directory)
+    report_warning(f'Shared download locking is unavailable at {directory}: {error}. '
+                   'Downloads on this computer remain protected.')
 
-    def announce_wait():
-        nonlocal announced
-        if not announced and time.monotonic() - started >= LOCK_NOTICE_SECONDS:
-            announced = True
-            print(f'Waiting for another download to finish writing "{os.path.basename(path)}"...')
 
+@contextlib.contextmanager
+def _cooperative_lock(lock_path, announce_wait, optional=False, shared=False):
+    with _output_locks_guard:
+        if lock_path not in _output_locks:
+            _output_locks[lock_path] = (
+                RLock(),
+                FileLock(lock_path, mode=0o666 if shared else 0o600,
+                         preserve_lock_file=True, fallback_to_soft=shared),
+                0,
+            )
+        thread_lock, file_lock, users = _output_locks[lock_path]
+        _output_locks[lock_path] = thread_lock, file_lock, users + 1
+    acquired = file_acquired = False
+    failure = None
     try:
         while not acquired:
             check_cancelled()
-            acquired = lock.acquire(timeout=0.1)
+            acquired = thread_lock.acquire(timeout=0.1)
             if not acquired:
                 announce_wait()
         check_cancelled()
-        os.makedirs(directory, mode=0o700, exist_ok=True)
         while not file_acquired:
             check_cancelled()
             try:
@@ -103,21 +193,69 @@ def output_lock(path):
             except FileLockTimeout:
                 announce_wait()
                 sleep(0.1)
+            except OSError as error:
+                if not optional:
+                    raise
+                failure = error
+                break
+        if failure is not None:
+            _warn_shared_lock(os.path.dirname(lock_path), failure)
         check_cancelled()
-        yield
+        yield file_acquired
     finally:
         try:
             if file_acquired:
                 file_lock.release()
         finally:
             if acquired:
-                lock.release()
+                thread_lock.release()
             with _output_locks_guard:
-                remaining = _output_locks[key][2] - 1
+                remaining = _output_locks[lock_path][2] - 1
                 if remaining:
-                    _output_locks[key] = lock, file_lock, remaining
+                    _output_locks[lock_path] = thread_lock, file_lock, remaining
                 else:
-                    del _output_locks[key]
+                    del _output_locks[lock_path]
+
+
+@contextlib.contextmanager
+def output_lock(path):
+    """Serialize destination writers locally and, when supported, across hosts."""
+    key = os.path.normcase(os.path.realpath(path))
+    # Conservatively serialize filename case aliases, but keep distinct output
+    # directories distinct on case-sensitive filesystems.
+    key = os.path.join(os.path.dirname(key), os.path.basename(key).casefold())
+    local_directory = lock_directory(path)
+    shared_directory = _shared_lock_directory(path)
+    local_is_shared = (
+        shared_directory is not None
+        and os.path.abspath(shared_directory) == os.path.abspath(local_directory)
+    )
+    local_path = _slot_path(local_directory, _shared_key(path) if local_is_shared else key)
+    shared_path = None
+    if shared_directory and not local_is_shared:
+        if _prepare_lock_directory(shared_directory, 0o1777):
+            _cleanup_legacy_lock_directory(shared_directory)
+            shared_path = _slot_path(shared_directory, _shared_key(path))
+        else:
+            _warn_shared_lock(shared_directory, 'folder is not writable')
+    old_directory = os.path.join(os.path.dirname(os.path.abspath(path)), '.tidekeeper-locks')
+    if not shared_directory or os.path.abspath(old_directory) != os.path.abspath(shared_directory):
+        _cleanup_legacy_lock_directory(old_directory, remove_empty=True)
+    announced = False
+    started = time.monotonic()
+
+    def announce_wait():
+        nonlocal announced
+        if not announced and time.monotonic() - started >= LOCK_NOTICE_SECONDS:
+            announced = True
+            print(f'Waiting for another download to finish writing "{os.path.basename(path)}"...')
+
+    with _cooperative_lock(local_path, announce_wait, shared=local_is_shared):
+        if shared_path:
+            with _cooperative_lock(shared_path, announce_wait, optional=True, shared=True):
+                yield
+        else:
+            yield
 
 
 def sleep(seconds):

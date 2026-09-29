@@ -236,6 +236,37 @@ class DownloadRootTests(unittest.TestCase):
             literal.parent.rmdir()
             self.assertIsNone(paths.legacyDownloadFolder())
 
+    def test_legacy_downloads_are_merged_without_overwriting_conflicts(self):
+        with tempfile.TemporaryDirectory() as working, tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict(os.environ, {'HOME': home}), mock.patch.object(SETTINGS, 'downloadPath', '~/Music'), \
+                mock.patch('os.getcwd', return_value=working):
+            literal = Path(working) / '~' / 'Music'
+            (literal / 'Artist').mkdir(parents=True)
+            (literal / 'Artist' / 'new.flac').write_bytes(b'new')
+            (literal / 'Artist' / 'existing.flac').write_bytes(b'old copy')
+            destination = Path(home) / 'Music' / 'Artist'
+            destination.mkdir(parents=True)
+            (destination / 'existing.flac').write_bytes(b'current copy')
+
+            result = paths.migrateLegacyDownloads()
+
+            self.assertIn('Moved 1 earlier download file', result)
+            self.assertIn('Kept 1 conflicting file', result)
+            self.assertEqual((destination / 'new.flac').read_bytes(), b'new')
+            self.assertEqual((destination / 'existing.flac').read_bytes(), b'current copy')
+            self.assertEqual((literal / 'Artist' / 'existing.flac').read_bytes(), b'old copy')
+
+    def test_explicit_legacy_folder_migrates_from_an_old_working_directory(self):
+        with tempfile.TemporaryDirectory() as old_working, tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict(os.environ, {'HOME': home}), mock.patch.object(SETTINGS, 'downloadPath', '~/Music'):
+            literal = Path(old_working) / '~' / 'Music'
+            literal.mkdir(parents=True)
+            (literal / 'song.flac').write_bytes(b'audio')
+            result = paths.migrateLegacyDownloads(str(literal))
+            self.assertIn('Moved 1 earlier download file', result)
+            self.assertEqual((Path(home) / 'Music' / 'song.flac').read_bytes(), b'audio')
+            self.assertFalse(literal.exists())
+
 
 class PathSafetyTests(ApiFixture, unittest.TestCase):
     def test_root_download_folder_is_preserved(self):

@@ -90,6 +90,7 @@ class Printf(object):
             ("--doctor", "Check config, auth, and local tools"),
             ("--paths", "Show download/config paths"),
             ("--open-output", "Open download folder"),
+            ("--migrate-downloads PATH", "Merge a literal-~ folder from older releases"),
             ("--video-only", "Download videos only for URL/ID/file"),
             ("-l, --link URL", "Download URL/ID/file"),
             ("-o, --output PATH", "Set save folder"),
@@ -189,7 +190,7 @@ class Printf(object):
         print(f"Quality: audio {audio}, video {video}")
         print(f"Save to: {path}")
         print("")
-        print(aigpy.cmd.green("Download: paste a TIDAL URL, ID, or .txt file and press Enter."))
+        print(aigpy.cmd.green("Download: paste a TIDAL URL, ID, or list file and press Enter."))
         print("")
         if compact:
             print("1 Login / refresh")

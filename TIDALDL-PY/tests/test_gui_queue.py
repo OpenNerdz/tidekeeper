@@ -894,6 +894,20 @@ class GuiQueueTests(unittest.TestCase):
         finally:
             self.window.active_workers.remove(worker)
 
+    def test_close_waits_for_logout_revocation_instead_of_cancelling_it(self):
+        from tidal_dl.gui_app.workers import TaskWorker
+        worker = TaskWorker(self.backend.revoke_session, 'old-access')
+        self.window.active_workers.add(worker)
+        event = mock.Mock()
+        try:
+            with mock.patch.object(worker, 'cancel') as cancel:
+                self.window.closeEvent(event)
+            cancel.assert_not_called()
+            event.ignore.assert_called_once()
+            event.accept.assert_not_called()
+        finally:
+            self.window.active_workers.remove(worker)
+
 
 if __name__ == "__main__":
     unittest.main()

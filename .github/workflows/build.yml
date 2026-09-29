@@ -3,7 +3,6 @@ name: Build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       publish:
@@ -15,8 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ (inputs.publish || startsWith(github.ref, 'refs/tags/')) && 'production' || github.ref }}
-  cancel-in-progress: ${{ !inputs.publish && !startsWith(github.ref, 'refs/tags/') }}
+  group: build-${{ inputs.publish && 'production' || github.ref }}
+  cancel-in-progress: ${{ !inputs.publish }}
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: '1'
@@ -24,7 +23,7 @@ env:
 
 jobs:
   preflight:
-    name: Prepare release or preview
+    name: Prepare candidate or preview
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -38,7 +37,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
-      - name: Prepare version, changelog, and immutable source
+          fetch-depth: 0
+      - name: Prepare isolated release candidate or preview source
         id: plan
         shell: bash
         env:
@@ -47,9 +47,7 @@ jobs:
           RELEASE_REQUESTED: ${{ inputs.publish }}
         run: |
           mode=preview
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            mode=tag
-          elif [[ "$RELEASE_REQUESTED" == true ]]; then
+          if [[ "$RELEASE_REQUESTED" == true ]]; then
             mode=auto
           fi
           python3 scripts/release.py prepare --mode "$mode" --source "$GITHUB_SHA" \
@@ -195,14 +193,14 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-  release:
-    name: Stage GitHub release
+  assets:
+    name: Validate release assets
     if: needs.preflight.outputs.publish == 'true'
     needs: [preflight, checks, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
       id-token: write
       attestations: write
     steps:
@@ -222,17 +220,38 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: release-assets/*
-      - name: Prepare concise notes and upload draft assets
+      - name: Save validated platform assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: validated-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  promote:
+    name: Promote checked candidate to main
+    needs: [preflight, assets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          fetch-depth: 0
+      - name: Advance main without creating a version tag
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_CANDIDATE: ${{ needs.preflight.outputs.ref }}
+          RELEASE_SOURCE: ${{ github.sha }}
         run: |
-          python3 scripts/release.py notes --tag "$RELEASE_TAG" --output release-notes.md
-          python3 scripts/publish-release.py draft --tag "$RELEASE_TAG" \
-            --repository "$GITHUB_REPOSITORY" --directory release-assets --notes release-notes.md
+          python3 scripts/release.py promote --source "$RELEASE_SOURCE" \
+            --candidate "$RELEASE_CANDIDATE" --tag "$RELEASE_TAG"
 
   publish:
-    needs: [preflight, release]
+    needs: [preflight, promote]
     permissions:
       contents: read
     uses: ./.github/workflows/publish.yml
@@ -244,7 +263,7 @@ jobs:
 
   finalize:
     name: Publish verified GitHub release
-    needs: [preflight, publish]
+    needs: [preflight, assets, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -253,10 +272,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.preflight.outputs.ref }}
-      - name: Publish the complete draft after PyPI verification
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: validated-release-assets
+          path: release-assets
+      - name: Create the tag and publish the complete GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_CANDIDATE: ${{ needs.preflight.outputs.ref }}
         run: |
-          python3 scripts/publish-release.py finalize --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY"
+          python3 scripts/release.py tag --candidate "$RELEASE_CANDIDATE" --tag "$RELEASE_TAG"
+          python3 scripts/release.py notes --tag "$RELEASE_TAG" --output release-notes.md
+          python3 scripts/publish-release.py release --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" --directory release-assets --notes release-notes.md
           echo "Released [$RELEASE_TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG)" >> "$GITHUB_STEP_SUMMARY"

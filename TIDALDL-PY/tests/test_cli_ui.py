@@ -183,12 +183,29 @@ class CliUiTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
 
+    def test_download_folder_error_shows_the_expanded_path(self):
+        self._restoreGlobalSettings()
+        SETTINGS.downloadPath = '~/Music'
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict('os.environ', {'HOME': home}), \
+                mock.patch.object(tidal_dl.aigpy.path, 'mkdirs', return_value=False), \
+                mock.patch.object(Printf, 'err') as error:
+            self.assertEqual(tidal_dl.mainCommand(opts=[]), 1)
+        self.assertIn(str(Path(home) / 'Music'), error.call_args.args[0])
+        self.assertNotIn('~/Music', error.call_args.args[0])
+
     def test_paths_flag_prints_paths_without_login(self):
         with mock.patch("sys.argv", ["tidekeeper", "--paths"]):
             with mock.patch.object(Printf, "paths") as paths:
                 tidal_dl.mainCommand()
 
         paths.assert_called_once_with()
+
+    def test_migrate_downloads_command_runs_without_login(self):
+        with mock.patch('tidal_dl.paths.migrateLegacyDownloads', return_value='Moved old downloads') as migrate, \
+                mock.patch.object(Printf, 'success') as success:
+            self.assertEqual(tidal_dl.mainCommand(opts=[('--migrate-downloads', '/old/~/Music')]), 0)
+        migrate.assert_called_once_with('/old/~/Music')
+        success.assert_called_once_with('Moved old downloads')
 
     def test_open_output_flag_uses_download_path(self):
         with mock.patch("sys.argv", ["tidekeeper", "--open-output"]):

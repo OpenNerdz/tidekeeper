@@ -81,14 +81,16 @@ class ReleaseMetadataTests(unittest.TestCase):
                      'TIDALDL-PY/setup.py', 'TIDALDL-PY/pyproject.toml', 'TIDALDL-PY/MANIFEST.in'):
             self.assertTrue(release.release_worthy([path]))
 
-    def test_pushes_are_previews_and_supporter_snapshots_are_daily(self):
+    def test_pushes_are_previews_tags_follow_pypi_and_supporters_do_not_commit(self):
         root = SCRIPTS.parent
         build = (root / '.github/workflows/build.yml').read_text(encoding='utf-8')
-        supporters = (root / '.github/workflows/supporters.yml').read_text(encoding='utf-8')
         self.assertIn('RELEASE_REQUESTED: ${{ inputs.publish }}', build)
         self.assertNotIn("github.event_name == 'push' || inputs.publish", build)
-        self.assertNotIn('watch:', supporters)
-        self.assertIn('cron: "17 4 * * *"', supporters)
+        self.assertNotIn('tags: ["v*"]', build)
+        self.assertNotIn('mode=tag', build)
+        self.assertLess(build.index('scripts/release.py promote'), build.index('uses: ./.github/workflows/publish.yml'))
+        self.assertLess(build.index('uses: ./.github/workflows/publish.yml'), build.index('scripts/release.py tag'))
+        self.assertFalse((root / '.github/workflows/supporters.yml').exists())
 
     def test_failed_release_notes_are_carried_into_the_next_release(self):
         original = ('## Unreleased\n\n<!-- release-title: Complete retry fixes -->\n\n- Fix publishing.\n\n'
@@ -160,18 +162,24 @@ class ReleaseGitTests(unittest.TestCase):
             release.prepare(self.repo, 'auto', source, 'refs/heads/main', 'example/repository')
         return plan.call_args
 
-    def test_release_updates_main_and_tag_together_and_rerun_reuses_them(self):
+    def promote(self, source, candidate, tag):
+        release.promote(self.repo, source, candidate, tag)
+
+    def tag_release(self, candidate, tag):
+        release.tag_release(self.repo, candidate, tag)
+
+    def test_release_candidate_is_checked_before_main_promotion_and_tagging(self):
         source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
         result = self.prepare(source)
         sha, tag = result.args
-        self.assertEqual(self.run_git('ls-remote', 'origin', 'refs/heads/main').split()[0], sha)
-        self.assertEqual(self.run_git('rev-parse', tag + '^{}'), sha)
-        identity = 'OpenNerdz <285293891+OpenNerdz@users.noreply.github.com>'
+        self.assertEqual(self.run_git('ls-remote', 'origin', 'refs/heads/main').split()[0], source)
+        self.assertEqual(self.run_git('ls-remote', 'origin',
+                                      f'refs/heads/{release.CANDIDATE_BRANCH}').split()[0], sha)
+        self.assertNotIn(tag, self.run_git('tag', '--list'))
+        identity = 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
         self.assertEqual(self.run_git('log', '-1', '--format=%an <%ae>|%cn <%ce>', sha),
                          f'{identity}|{identity}')
-        self.assertEqual(self.run_git('for-each-ref', '--format=%(taggername) %(taggeremail)',
-                                      f'refs/tags/{tag}'), identity)
-        self.assertIn(tag[1:], self.run_git('show', f'{tag}:{release.VERSION_PATH}'))
+        self.assertIn(tag[1:], self.run_git('show', f'{sha}:{release.VERSION_PATH}'))
         title, body = release.release_notes(self.repo, tag)
         self.assertEqual(title, f'{tag} — Reliable builds')
         self.assertIn('- Improve builds.', body)
@@ -179,6 +187,15 @@ class ReleaseGitTests(unittest.TestCase):
         original_tags = self.run_git('ls-remote', '--tags', 'origin')
         self.assertEqual(self.prepare(source).args, result.args)
         self.assertEqual(self.run_git('ls-remote', '--tags', 'origin'), original_tags)
+        self.promote(source, sha, tag)
+        self.assertEqual(self.run_git('ls-remote', 'origin', 'refs/heads/main').split()[0], sha)
+        self.assertEqual(self.run_git('ls-remote', '--tags', 'origin'), original_tags)
+        self.tag_release(sha, tag)
+        self.assertEqual(self.run_git('rev-parse', tag + '^{}'), sha)
+        self.assertEqual(self.run_git('for-each-ref', '--format=%(taggername) %(taggeremail)',
+                                      f'refs/tags/{tag}'), identity)
+        self.assertEqual(self.run_git('ls-remote', 'origin',
+                                      f'refs/heads/{release.CANDIDATE_BRANCH}'), '')
 
     def test_documentation_only_push_keeps_version_and_tag_unchanged(self):
         source = self.change('README.md', 'Updated docs\n')
@@ -187,9 +204,11 @@ class ReleaseGitTests(unittest.TestCase):
         self.assertEqual(result.kwargs, {'build': False})
         self.assertEqual(self.run_git('tag', '--list'), 'v2020.1.1.0')
 
-    def test_next_push_after_failed_release_keeps_daily_counter_and_carries_notes(self):
+    def test_next_release_keeps_daily_counter_and_carries_notes(self):
         source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
-        first_tag = self.prepare(source).args[1]
+        first_candidate, first_tag = self.prepare(source).args
+        self.promote(source, first_candidate, first_tag)
+        self.tag_release(first_candidate, first_tag)
         next_source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 2\n', 'fix: improve retries')
         original_command = release.command
 
@@ -213,31 +232,27 @@ class ReleaseGitTests(unittest.TestCase):
         self.assertFalse(result.kwargs['build'])
         self.assertEqual(self.run_git('tag', '--list'), 'v2020.1.1.0')
 
-    def test_supporter_bot_commit_does_not_lose_pending_application_release(self):
+    def test_competing_push_blocks_promotion_and_never_creates_a_release_tag(self):
         source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
-        self.change('TIDALDL-PY/tidal_dl/gui_app/supporters.json', '["new-user"]\n')
-        result = self.prepare(source)
-        self.assertEqual(len(result.args), 2)
-        self.assertEqual(json.loads((self.repo / 'TIDALDL-PY/tidal_dl/gui_app/supporters.json').read_text()), ['new-user'])
-
-    def test_competing_push_cannot_overwrite_main_or_leave_a_remote_release_tag(self):
-        source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
-        original_git = release.git
-
-        def competing_git(*args):
-            if args[:2] == ('push', '--atomic'):
-                tree = self.run_git('rev-parse', source + '^{tree}')
-                competing = self.run_git('commit-tree', tree, '-p', source, '-m', 'Concurrent commit')
-                self.run_git('push', 'origin', competing + ':refs/heads/main')
-            return original_git(*args)
-
-        with mock.patch.object(release, 'git', side_effect=competing_git):
-            result = self.prepare(source)
-        self.assertFalse(result.kwargs['build'])
+        candidate, tag = self.prepare(source).args
+        tree = self.run_git('rev-parse', source + '^{tree}')
+        competing = self.run_git('commit-tree', tree, '-p', source, '-m', 'Concurrent commit')
+        self.run_git('push', 'origin', competing + ':refs/heads/main')
+        with self.assertRaisesRegex(ValueError, 'Main changed'):
+            self.promote(source, candidate, tag)
         tags = self.run_git('ls-remote', '--tags', 'origin')
         self.assertEqual(len(tags.splitlines()), 2)  # Initial annotated tag only.
 
-    def test_lost_push_response_recovers_without_allocating_a_second_tag(self):
+    def test_new_changes_cannot_skip_an_untagged_promoted_release(self):
+        source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
+        candidate, tag = self.prepare(source).args
+        self.promote(source, candidate, tag)
+        newer = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 2\n')
+        with self.assertRaisesRegex(ValueError, f'{tag} was promoted but not tagged'):
+            self.prepare(newer)
+        self.assertNotIn(tag, self.run_git('tag', '--list'))
+
+    def test_lost_candidate_push_response_recovers_without_a_tag(self):
         source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
         original_git = release.git
         pushed = False
@@ -245,7 +260,7 @@ class ReleaseGitTests(unittest.TestCase):
         def lost_response(*args):
             nonlocal pushed
             output = original_git(*args)
-            if args[:2] == ('push', '--atomic') and not pushed:
+            if args and args[0] == 'push' and args[-1].endswith(release.CANDIDATE_BRANCH) and not pushed:
                 pushed = True
                 raise subprocess.CalledProcessError(1, args)
             return output
@@ -253,7 +268,7 @@ class ReleaseGitTests(unittest.TestCase):
         with mock.patch.object(release, 'git', side_effect=lost_response):
             result = self.prepare(source)
         self.assertEqual(len(result.args), 2)
-        self.assertEqual(len(self.run_git('ls-remote', '--tags', 'origin').splitlines()), 4)
+        self.assertEqual(len(self.run_git('ls-remote', '--tags', 'origin').splitlines()), 2)
 
     def test_dirty_checkout_is_never_reset_or_released(self):
         source = self.run_git('rev-parse', 'HEAD')
@@ -351,13 +366,6 @@ class ReleasePublishTests(unittest.TestCase):
         self.assertEqual((listing.call_count, sleep.call_count), (3, 2))
         self.assertGreaterEqual(publish.PYPI_VISIBILITY_ATTEMPTS * publish.PYPI_POLL_SECONDS, 300)
 
-    def test_incomplete_github_draft_is_never_published(self):
-        with mock.patch.object(publish, 'gh_json', return_value={'draft': True, 'assets': []}), \
-                mock.patch.object(publish.subprocess, 'run') as run, \
-                self.assertRaisesRegex(ValueError, 'complete platform'):
-            publish.finalize('example/repo', self.tag)
-        run.assert_not_called()
-
     def test_draft_lookup_paginates_and_fetches_by_id_after_tag_not_found(self):
         draft = {'id': 123, 'tag_name': self.tag, 'draft': True, 'assets': self.assets()}
         with mock.patch.object(publish, 'gh_json', side_effect=[
@@ -378,36 +386,66 @@ class ReleasePublishTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, 'inaccessible'):
             publish.github_release('example/repo', self.tag)
 
-    def test_existing_draft_is_updated_without_creating_a_duplicate(self):
+    def test_existing_draft_is_updated_validated_and_published(self):
         for path in self.directory.iterdir():
             path.unlink()
         for asset in self.assets():
             (self.directory / asset['name']).write_bytes(b'asset')
         draft = {'id': 123, 'tag_name': self.tag, 'draft': True, 'assets': self.assets()}
-        with mock.patch.object(publish, 'gh_json', side_effect=[None, [draft], draft] * 2), \
+        public = {**draft, 'draft': False}
+        with mock.patch.object(publish, 'github_release', side_effect=[draft, draft, public]), \
+                mock.patch.object(publish, 'gh_json', return_value={'tag_name': 'v2026.9.28.0'}), \
                 mock.patch.object(publish, 'release_notes', return_value=('Release title', 'Notes')), \
                 mock.patch.object(publish.subprocess, 'run') as run:
-            publish.github_draft('example/repo', self.tag, self.directory, Path('notes.md'))
-        self.assertEqual([call.args[0][2] for call in run.call_args_list], ['edit', 'upload'])
+            publish.github_publish('example/repo', self.tag, self.directory, Path('notes.md'))
+        self.assertEqual([call.args[0][2] for call in run.call_args_list], ['edit', 'upload', 'edit'])
+        self.assertIn('--draft=false', run.call_args_list[-1].args[0])
 
-    def test_draft_found_by_id_is_published_after_asset_validation(self):
-        draft = {'id': 123, 'tag_name': self.tag, 'draft': True, 'assets': self.assets()}
-        with mock.patch.object(publish, 'gh_json', side_effect=[
-            None, [draft], draft, {'tag_name': 'v2026.9.28.0'},
-        ]), mock.patch.object(publish.subprocess, 'run') as run:
-            publish.finalize('example/repo', self.tag)
-        self.assertIn('--draft=false', run.call_args.args[0])
-        self.assertIn('--latest', run.call_args.args[0])
+    def test_complete_release_is_staged_then_published_after_the_tag_exists(self):
+        for path in self.directory.iterdir():
+            path.unlink()
+        for name in publish.expected_assets() | {'SHA256SUMS'}:
+            (self.directory / name).write_bytes(b'asset')
+        draft = {'draft': True, 'assets': self.assets()}
+        published = {'draft': False, 'assets': self.assets()}
+        with mock.patch.object(publish, 'github_release', side_effect=[None, draft, published]), \
+                mock.patch.object(publish, 'gh_json', return_value={'tag_name': 'v2026.9.28.0'}), \
+                mock.patch.object(publish, 'release_notes', return_value=('Release title', 'Notes')), \
+                mock.patch.object(publish.subprocess, 'run') as run:
+            publish.github_publish('example/repo', self.tag, self.directory, Path('notes.md'))
+        command = run.call_args_list[0].args[0]
+        self.assertEqual(command[:4], ['gh', 'release', 'create', self.tag])
+        self.assertIn('--verify-tag', command)
+        self.assertIn('--draft', command)
+        self.assertEqual([call.args[0][2] for call in run.call_args_list], ['create', 'upload', 'edit'])
+
+    def test_incomplete_uploaded_draft_is_never_made_public(self):
+        for path in self.directory.iterdir():
+            path.unlink()
+        for name in publish.expected_assets() | {'SHA256SUMS'}:
+            (self.directory / name).write_bytes(b'asset')
+        with mock.patch.object(publish, 'github_release', side_effect=[None, {'draft': True, 'assets': []}]), \
+                mock.patch.object(publish, 'release_notes', return_value=('Release title', 'Notes')), \
+                mock.patch.object(publish.subprocess, 'run') as run, \
+                self.assertRaisesRegex(ValueError, 'complete platform'):
+            publish.github_publish('example/repo', self.tag, self.directory, Path('notes.md'))
+        self.assertEqual([call.args[0][2] for call in run.call_args_list], ['create', 'upload'])
 
     def test_old_release_retry_does_not_replace_newer_latest_release(self):
-        with mock.patch.object(publish, 'gh_json', side_effect=[
-            {'draft': True, 'assets': self.assets()}, {'tag_name': 'v2026.9.29.0'},
-        ]), mock.patch.object(publish.subprocess, 'run') as run:
-            publish.finalize('example/repo', self.tag)
+        draft = {'draft': True, 'assets': self.assets()}
+        with mock.patch.object(publish, 'gh_json', return_value={'tag_name': 'v2026.9.29.0'}), \
+                mock.patch.object(publish.subprocess, 'run') as run:
+            publish._publish_validated_draft('example/repo', self.tag, draft)
         self.assertIn('--latest=false', run.call_args.args[0])
 
     def test_already_public_release_is_not_modified(self):
-        with mock.patch.object(publish, 'gh_json', return_value={'draft': False, 'assets': self.assets()}), \
+        for path in self.directory.iterdir():
+            path.unlink()
+        for name in publish.expected_assets() | {'SHA256SUMS'}:
+            (self.directory / name).write_bytes(b'asset')
+        with mock.patch.object(publish, 'github_release',
+                               return_value={'draft': False, 'assets': self.assets()}), \
+                mock.patch.object(publish, 'release_notes', return_value=('Release title', 'Notes')), \
                 mock.patch.object(publish.subprocess, 'run') as run:
-            publish.finalize('example/repo', self.tag)
+            publish.github_publish('example/repo', self.tag, self.directory, Path('notes.md'))
         run.assert_not_called()

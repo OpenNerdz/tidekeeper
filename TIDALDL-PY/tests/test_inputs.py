@@ -69,12 +69,24 @@ class LinkListTests(ProfileFixture, unittest.TestCase):
         previous = events._legacyNoticeShown
         self.addCleanup(setattr, events, '_legacyNoticeShown', previous)
         events._legacyNoticeShown = False
-        with mock.patch.object(events, 'legacyDownloadNotice', return_value='Move old downloads'), \
+        with mock.patch.object(events, 'migrateLegacyDownloads', return_value=None), \
+                mock.patch.object(events, 'legacyDownloadNotice', return_value='Move old downloads'), \
                 mock.patch.object(events.Printf, 'info') as info, \
                 mock.patch.object(events, 'start_track', return_value=True):
             self.assertTrue(events.start_type(Type.Track, object()))
             self.assertTrue(events.start_type(Type.Track, object()))
         info.assert_called_once_with('Move old downloads')
+
+    def test_legacy_migration_failure_does_not_block_a_download(self):
+        previous = events._legacyNoticeShown
+        self.addCleanup(setattr, events, '_legacyNoticeShown', previous)
+        events._legacyNoticeShown = False
+        with mock.patch.object(events, 'migrateLegacyDownloads', side_effect=OSError('read-only source')), \
+                mock.patch.object(events, 'legacyDownloadNotice', return_value=None), \
+                mock.patch.object(events.Printf, 'info') as info, \
+                mock.patch.object(events, 'start_track', return_value=True):
+            self.assertTrue(events.start_type(Type.Track, object()))
+        self.assertIn('read-only source', info.call_args.args[0])
 
 
 class InputLimitTests(ApiFixture, unittest.TestCase):

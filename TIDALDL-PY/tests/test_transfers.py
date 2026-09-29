@@ -252,11 +252,21 @@ class ResponseAndProgressTests(ApiFixture, unittest.TestCase):
 
 
 class RangeAndRedirectTests(DownloadFolderApiFixture, unittest.TestCase):
+    def test_fresh_encoded_response_is_decoded_and_saved(self):
+        target = self.root / 'audio.part'
+        result = response(b'fresh', headers={'Content-Encoding': 'gzip', 'Content-Length': '25'})
+        result.iter_content = mock.Mock(return_value=iter([b'fresh']))
+        with mock.patch.object(download, '_httpRequest', return_value=result):
+            self.assertEqual(download._downloadSingleUrl('https://cdn.example/audio', str(target)), 5)
+        self.assertEqual(target.read_bytes(), b'fresh')
+
     def test_encoded_response_preserves_resume_file_and_closes_response(self):
         target = self.root / 'audio.part'
         partial = Path(str(target) + '.download')
         partial.write_bytes(b'valid-prefix')
-        result = response(b'unused', headers={'Content-Encoding': 'gzip'})
+        result = response(b'unused', status=206, headers={
+            'Content-Encoding': 'gzip', 'Content-Range': 'bytes 12-19/20',
+        })
         result.iter_content = mock.Mock()
         with mock.patch.object(download, '_httpRequest', return_value=result) as request:
             with self.assertRaisesRegex(ValueError, 'encoded response'):

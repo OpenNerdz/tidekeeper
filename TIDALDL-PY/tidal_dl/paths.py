@@ -15,7 +15,9 @@ import aigpy
 import datetime
 import hashlib
 import re
+import shutil
 import unicodedata
+from pathlib import Path
 
 from .enums import SOUND_QUALITIES, AudioQuality, Type, audio_quality_label
 from .model import StreamUrl
@@ -39,19 +41,30 @@ def downloadRoot():
     return os.path.expanduser(SETTINGS.downloadPath or '.')
 
 
-def legacyDownloadFolder():
-    """A folder literally named ``~`` left by releases before 2026.9.29.0, if any.
-
-    Those releases did not expand ``~`` for album, playlist, and video paths, so a
-    folder such as ``~/Music`` was created inside the working directory instead.
-    """
+def legacyDownloadFolders():
+    """Known literal-``~`` folders left by releases before 2026.9.29.0."""
     configured = SETTINGS.downloadPath or ''
     if not configured.startswith('~'):
-        return None
-    literal = os.path.abspath(configured)
-    if literal == os.path.abspath(downloadRoot()) or not os.path.isdir(literal):
-        return None
-    return literal
+        return []
+    roots = [os.getcwd(), os.environ.get('PWD'), os.path.expanduser('~')]
+    if 'PATHS' in globals():
+        roots.append(PATHS.getConfigDirectory())
+    roots.extend(filter(None, os.environ.get('TIDEKEEPER_LEGACY_ROOTS', '').split(os.pathsep)))
+    folders = []
+    destination = os.path.abspath(downloadRoot())
+    for root in roots:
+        if not root:
+            continue
+        literal = os.path.abspath(os.path.join(root, configured))
+        if literal != destination and os.path.isdir(literal) and literal not in folders:
+            folders.append(literal)
+    return folders
+
+
+def legacyDownloadFolder():
+    """The first discoverable literal-``~`` download folder, for compatibility."""
+    folders = legacyDownloadFolders()
+    return folders[0] if folders else None
 
 
 def legacyDownloadNotice():
@@ -59,8 +72,55 @@ def legacyDownloadNotice():
     folder = legacyDownloadFolder()
     if folder is None:
         return None
-    return (f"Downloads from earlier versions are in {folder}. Move them into {downloadRoot()} "
-            "so Tidekeeper recognizes them instead of downloading them again.")
+    return (f"Downloads from earlier versions remain in {folder}. Run "
+            f"tidekeeper --migrate-downloads {folder!r} to merge them into {downloadRoot()} safely.")
+
+
+def migrateLegacyDownloads(source=None):
+    """Merge old literal-``~`` downloads without replacing existing destination files."""
+    sources = [os.path.abspath(source)] if source else legacyDownloadFolders()
+    sources = [folder for folder in sources if os.path.isdir(folder)]
+    if not sources:
+        return None
+    destination = os.path.abspath(downloadRoot())
+    moved = conflicts = 0
+    migrated = []
+    for folder in sources:
+        try:
+            contains_destination = os.path.commonpath((folder, destination)) == folder
+        except ValueError:
+            contains_destination = False
+        if contains_destination:
+            raise ValueError('The old download folder cannot contain the current download folder')
+        migrated.append(folder)
+        for current, directories, filenames in os.walk(folder, topdown=False):
+            relative = os.path.relpath(current, folder)
+            target_directory = destination if relative == '.' else os.path.join(destination, relative)
+            for filename in filenames:
+                old_path = os.path.join(current, filename)
+                new_path = os.path.join(target_directory, filename)
+                if os.path.lexists(new_path):
+                    conflicts += 1
+                    continue
+                os.makedirs(target_directory, exist_ok=True)
+                shutil.move(old_path, new_path)
+                moved += 1
+            for directory in directories:
+                try:
+                    os.rmdir(os.path.join(current, directory))
+                except OSError:
+                    pass
+        try:
+            os.rmdir(folder)
+            literal_parent = Path(folder).parent
+            if literal_parent.name == '~':
+                literal_parent.rmdir()
+        except OSError:
+            pass
+    message = f'Moved {moved} earlier download file{"s" if moved != 1 else ""} into {destination}.'
+    if conflicts:
+        message += f' Kept {conflicts} conflicting file{"s" if conflicts != 1 else ""} in {migrated[0]}.'
+    return message
 
 
 def _truncateComponent(value, original, max_bytes=MAX_COMPONENT_BYTES):
@@ -362,7 +422,7 @@ class Paths(aigpy.model.ModelBase):
 
     def getPathSummary(self):
         return [
-            ("Download path", SETTINGS.downloadPath),
+            ("Download path", downloadRoot()),
             ("Config folder", self.getConfigDirectory()),
             ("Settings file", self.getProfilePath()),
             ("Token file", self.getTokenPath()),

@@ -124,7 +124,7 @@ NAMING_HINT = (
     "{TrackTitle} {PlaylistName} {VideoTitle} {StreamQuality} {Codec} {Flag}"
 )
 RESULTS_EMPTY = (
-    "Search the TIDAL catalog, paste links, or drop links and .txt lists here.\n"
+    "Search the TIDAL catalog, paste links, or drop links and list files here.\n"
     "Double-click an artist to browse their tracks."
 )
 QUEUE_EMPTY = "Nothing queued. Add results or links above."
@@ -206,7 +206,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1024, 620)
         self.resize(1180, 760)
         self.setStyleSheet(APP_STYLESHEET)
-        # Links dragged from a browser or .txt lists from a file manager land in Links.
+        # Links dragged from a browser or list files from a file manager land in Links.
         self.setAcceptDrops(True)
         self._build()
         self.results_table.viewport().installEventFilter(self)
@@ -1062,7 +1062,7 @@ class MainWindow(QMainWindow):
     def browse_direct_file(self):
         current = self.direct_text.toPlainText().strip().splitlines()
         start_dir = current[0] if current else ""
-        path, _ = QFileDialog.getOpenFileName(self, "URL list", start_dir, "Text files (*.txt);;All files (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "URL list", start_dir, "List files (*);;Text files (*.txt)")
         if path:
             self.direct_text.setPlainText(path)
 
@@ -1073,7 +1073,7 @@ class MainWindow(QMainWindow):
             self._set_queue_message(str(error))
             return []
         if not tokens:
-            self._set_queue_message("Enter a URL, ID, mix ID, or .txt file.")
+            self._set_queue_message("Enter a URL, ID, mix ID, or list file.")
             return []
         video_only = self.direct_video_only.isChecked()
         return [with_video_only(self.backend.direct_item(token), video_only) for token in tokens]
@@ -1859,10 +1859,12 @@ class MainWindow(QMainWindow):
         worker.signals.error.connect(self.account_log.append)
         self.start_worker(worker)
 
+    def _worker_must_finish_on_close(self, worker):
+        return getattr(worker, 'fn', None) in (self.backend.update_app, self.backend.revoke_session)
+
     def closeEvent(self, event):
         self._close_pending = True
-        updating = any(getattr(worker, 'fn', None) == self.backend.update_app
-                       for worker in self.active_workers)
+        updating = any(getattr(worker, 'fn', None) == self.backend.update_app for worker in self.active_workers)
         if updating:
             message = 'Closing after the update finishes. Please keep Tidekeeper open while installed files are replaced.'
         elif self.download_in_progress:
@@ -1884,9 +1886,9 @@ class MainWindow(QMainWindow):
             self._cancel_device_login()
         self._stop_device_login("")
         for worker in list(self.active_workers):
-            # Interrupting pip while it replaces installed files can leave the
-            # application unusable. Let an active update finish before exit.
-            if getattr(worker, 'fn', None) != self.backend.update_app:
+            # Updates and logout revocation must finish cleanly; other background
+            # requests are cancellable so shutdown does not hang on network I/O.
+            if not self._worker_must_finish_on_close(worker):
                 worker.cancel()
         if self.active_workers:
             event.ignore()

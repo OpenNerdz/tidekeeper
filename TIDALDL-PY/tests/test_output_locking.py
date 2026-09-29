@@ -43,6 +43,7 @@ class DestinationLockIntegrationTests(unittest.TestCase):
         SETTINGS.checkExist = True
         SETTINGS.showProgress = SETTINGS.showTrackInfo = SETTINGS.lyricFile = False
         SETTINGS.audioQuality = AudioQuality.High
+        SETTINGS.downloadPath = str(self.root)
 
     def test_track_and_video_writers_hold_lock_through_completion_receipt(self):
         for kind in ('track', 'video'):
@@ -135,13 +136,18 @@ class DestinationLockIntegrationTests(unittest.TestCase):
         code = '''
 import sys
 from pathlib import Path
+from tidal_dl.settings import SETTINGS
 from tidal_dl.runtime import output_lock
+SETTINGS.downloadPath = sys.argv[3]
 with output_lock(sys.argv[1]):
     Path(sys.argv[2]).touch()
     sys.stdin.read()
 '''
-        child = subprocess.Popen([sys.executable, '-c', code, target, str(ready)],
-                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        child_environment = dict(os.environ)
+        child_environment['XDG_STATE_HOME'] = str(self.root / 'other-private-state')
+        child = subprocess.Popen([sys.executable, '-c', code, target, str(ready), str(self.root)],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 env=child_environment)
         try:
             deadline = time.monotonic() + 10
             while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
@@ -172,10 +178,70 @@ with output_lock(sys.argv[1]):
         if os.path.samefile(first, second):
             self.skipTest('Filesystem does not distinguish directory case')
         with runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
-            self.assertEqual(len(runtime._output_locks), 2)
+            self.assertGreaterEqual(len(runtime._output_locks), 2)
             self.assertEqual(len(list(Path(runtime.lock_directory()).glob('*.lock'))), 2)
             self.assertFalse(list(first.rglob('*.lock')) + list(second.rglob('*.lock')))
         self.assertFalse(runtime._output_locks)
+
+    def test_unwritable_home_state_falls_back_to_temporary_storage(self):
+        temporary_locks = self.root / 'temporary-locks'
+
+        def prepare(directory, mode):
+            if directory == str(self.root / 'blocked-state'):
+                return False
+            Path(directory).mkdir(parents=True, exist_ok=True)
+            return True
+
+        with mock.patch.object(runtime, '_preferred_lock_directory',
+                               return_value=str(self.root / 'blocked-state')), \
+                mock.patch.object(runtime, '_temporary_lock_directory',
+                                  return_value=str(temporary_locks)), \
+                mock.patch.object(runtime, '_prepare_lock_directory', side_effect=prepare):
+            with runtime.output_lock(str(self.root / 'track')):
+                self.assertTrue(list(temporary_locks.glob('slot-*.lock')))
+
+    def test_shared_root_fallback_uses_portable_key_and_shared_locking(self):
+        target = str(self.root / 'Album' / 'track')
+        shared = self.root / '.tidekeeper-locks'
+        calls = []
+
+        @contextmanager
+        def observe(lock_path, announce_wait, optional=False, shared=False):
+            calls.append((lock_path, optional, shared))
+            yield True
+
+        def prepare(directory, mode):
+            return os.path.abspath(directory) == os.path.abspath(shared)
+
+        with mock.patch.object(runtime, '_prepare_lock_directory', side_effect=prepare), \
+                mock.patch.object(runtime, '_shared_key', return_value='Album/track') as shared_key, \
+                mock.patch.object(runtime, '_cooperative_lock', side_effect=observe):
+            with runtime.output_lock(target):
+                pass
+        shared_key.assert_called_with(target)
+        self.assertEqual(calls, [(runtime._slot_path(str(shared), 'Album/track'), False, True)])
+
+    def test_lock_files_are_bounded_slots_not_one_file_per_track(self):
+        with mock.patch.object(runtime, 'LOCK_SLOT_COUNT', 4):
+            for index in range(40):
+                with runtime.output_lock(str(self.root / f'track-{index}')):
+                    pass
+        private = Path(runtime.lock_directory())
+        self.assertLessEqual(len(list(private.glob('slot-*.lock'))), 4)
+        self.assertFalse(list(private.glob('[0-9a-f]' * 64 + '.lock')))
+
+    def test_inactive_legacy_album_locks_are_cleaned_when_revisited(self):
+        SETTINGS.downloadPath = str(self.root / 'other-download-root')
+        album = self.root / 'Album'
+        old_directory = album / '.tidekeeper-locks'
+        old_directory.mkdir(parents=True)
+        old_lock = old_directory / ('a' * 64 + '.lock')
+        old_lock.touch()
+        stale = time.time() - runtime.LEGACY_LOCK_GRACE_SECONDS - 1
+        os.utime(old_lock, (stale, stale))
+        with runtime.output_lock(str(album / 'track')):
+            pass
+        self.assertFalse(old_directory.exists())
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'Termux runs on Linux')
     def test_termux_locks_live_in_private_home_and_distinguish_destinations(self):
@@ -189,7 +255,7 @@ with output_lock(sys.argv[1]):
             with runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
                 locks = list((private_home / '.local' / 'state' / 'tidekeeper' / 'locks').glob('*.lock'))
                 self.assertEqual(len(locks), 2)
-                self.assertEqual(len(runtime._output_locks), 2)
+                self.assertGreaterEqual(len(runtime._output_locks), 2)
                 self.assertFalse(list((self.root / 'shared').rglob('*.lock')))
         self.assertFalse(runtime._output_locks)
 

@@ -37,13 +37,18 @@ owner-only permissions where the platform supports them.
 These are application safeguards, not a sandbox. Run Tidekeeper as a normal user,
 not an administrator, with configuration and download folders you trust.
 
-Tidekeeper coordinates writes between running copies on the same computer with
-lock files in a private per-user state folder, never in the download library.
-On Linux and Termux this is `~/.local/state/tidekeeper/locks` unless
-`XDG_STATE_HOME` is set; macOS uses `~/Library/Caches/Tidekeeper/locks`, and
-Windows uses `%LOCALAPPDATA%\Tidekeeper\locks`. Don't delete these files while
-Tidekeeper is running. Empty `.tidekeeper-locks` folders from older releases can
-be removed once every older Tidekeeper process has stopped.
+Tidekeeper coordinates writes with 256 reusable lock slots rather than one file
+per track. Local locks prefer a private per-user state folder and fall back to a
+user-specific temporary folder when the home directory is unavailable. Linux
+and Termux prefer `~/.local/state/tidekeeper/locks` unless `XDG_STATE_HOME` is
+set; macOS prefers `~/Library/Caches/Tidekeeper/locks`, and Windows prefers
+`%LOCALAPPDATA%\Tidekeeper\locks`.
+
+For separate computers or containers, Tidekeeper also uses
+`.tidekeeper-locks` at the configured download root. Unsupported shared locking
+falls back to local coordination with a warning. Inactive per-track lock files
+from older releases are removed after a grace period when that folder is next
+used. Don't manually delete active lock files while Tidekeeper is running.
 
 ## Dependencies
 
