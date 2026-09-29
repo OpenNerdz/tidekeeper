@@ -39,6 +39,30 @@ def downloadRoot():
     return os.path.expanduser(SETTINGS.downloadPath or '.')
 
 
+def legacyDownloadFolder():
+    """A folder literally named ``~`` left by releases before 2026.9.29.0, if any.
+
+    Those releases did not expand ``~`` for album, playlist, and video paths, so a
+    folder such as ``~/Music`` was created inside the working directory instead.
+    """
+    configured = SETTINGS.downloadPath or ''
+    if not configured.startswith('~'):
+        return None
+    literal = os.path.abspath(configured)
+    if literal == os.path.abspath(downloadRoot()) or not os.path.isdir(literal):
+        return None
+    return literal
+
+
+def legacyDownloadNotice():
+    """Tell the user where earlier downloads went, so they are not fetched again."""
+    folder = legacyDownloadFolder()
+    if folder is None:
+        return None
+    return (f"Downloads from earlier versions are in {folder}. Move them into {downloadRoot()} "
+            "so Tidekeeper recognizes them instead of downloading them again.")
+
+
 def _truncateComponent(value, original, max_bytes=MAX_COMPONENT_BYTES):
     encoded = value.encode('utf-8')
     if len(encoded) <= max_bytes:

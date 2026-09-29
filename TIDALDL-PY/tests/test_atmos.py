@@ -93,10 +93,18 @@ class AtmosCatalogTests(CatalogFixtures, unittest.TestCase):
         from tidal_dl.gui_app.backend import _item_quality
 
         album = SimpleNamespace(audioQuality="LOW", audioModes=["DOLBY_ATMOS"], explicit=True)
-        self.assertEqual(_item_quality(album, Type.Album), "Normal · Dolby Atmos · Explicit")
+        self.assertEqual(_item_quality(album, Type.Album), "Dolby Atmos · Explicit")
 
         stereo = SimpleNamespace(audioQuality="LOSSLESS", audioModes=["STEREO"], explicit=False)
         self.assertEqual(_item_quality(stereo, Type.Album), "HiFi")
+
+    def test_quality_labels_are_not_repeated_by_flags(self):
+        from tidal_dl.gui_app.backend import _item_quality
+
+        master = SimpleNamespace(audioQuality="HI_RES", audioModes=[], explicit=False)
+        self.assertEqual(_item_quality(master, Type.Album), "Master")
+        atmos = SimpleNamespace(audioQuality="DOLBY_ATMOS", audioModes=["DOLBY_ATMOS"], explicit=True)
+        self.assertEqual(_item_quality(atmos, Type.Track), "Dolby Atmos · Explicit")
 
     def test_find_atmos_album_variant_prefers_matching_title(self):
         api = TidalAPI()

@@ -37,9 +37,13 @@ owner-only permissions where the platform supports them.
 These are application safeguards, not a sandbox. Run Tidekeeper as a normal user,
 not an administrator, with configuration and download folders you trust.
 
-Tidekeeper coordinates writes between running copies with lock files in hidden
-`.tidekeeper-locks` folders (on Termux, in `~/.local/state/tidekeeper/locks`).
-Don't delete them while Tidekeeper is running.
+Tidekeeper coordinates writes between running copies on the same computer with
+lock files in a private per-user state folder, never in the download library.
+On Linux and Termux this is `~/.local/state/tidekeeper/locks` unless
+`XDG_STATE_HOME` is set; macOS uses `~/Library/Caches/Tidekeeper/locks`, and
+Windows uses `%LOCALAPPDATA%\Tidekeeper\locks`. Don't delete these files while
+Tidekeeper is running. Empty `.tidekeeper-locks` folders from older releases can
+be removed once every older Tidekeeper process has stopped.
 
 ## Dependencies
 

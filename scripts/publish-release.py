@@ -13,9 +13,11 @@ from pathlib import Path
 
 from release import release_notes, version_key
 
-# About six minutes: PyPI's JSON API is cached and can trail a successful upload.
+PYPI_INDEX_URL = 'https://pypi.org/simple/tidekeeper/'
+# Up to about six minutes for a new upload to appear in the index.
 PYPI_POLL_SECONDS = 15
 PYPI_VISIBILITY_ATTEMPTS = 24
+PYPI_REQUEST_ATTEMPTS = 3
 
 
 def digest(path):
@@ -46,9 +48,16 @@ def validate_files(directory, expected):
 
 
 def pypi_files(tag):
+    """Files pip's package index lists for this version, as {filename: sha256}.
+
+    PyPI refreshes this index on upload. The per-version JSON API is avoided: its
+    CDN caches the "not found" answer from the check made before uploading.
+    """
     version_key(tag)
-    request = urllib.request.Request(f'https://pypi.org/pypi/tidekeeper/{tag[1:]}/json',
-                                     headers={'User-Agent': 'Tidekeeper-release'})
+    version = tag[1:]
+    request = urllib.request.Request(PYPI_INDEX_URL, headers={
+        'Accept': 'application/vnd.pypi.simple.v1+json', 'User-Agent': 'Tidekeeper-release',
+    })
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.load(response)
@@ -56,13 +65,33 @@ def pypi_files(tag):
         if error.code == 404:
             return {}
         raise
-    return {item['filename']: item['digests']['sha256'] for item in payload['urls']}
+    sdist = f'tidekeeper-{version}.tar.gz'
+    return {item['filename']: item['hashes']['sha256'] for item in payload.get('files', [])
+            if item['filename'] == sdist or item['filename'].startswith(f'tidekeeper-{version}-')}
+
+
+def _transient(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 429 or error.code >= 500
+    return True
+
+
+def read_pypi(tag, attempts=PYPI_REQUEST_ATTEMPTS, interval=5):
+    """pypi_files, retried through brief network, server, or truncated-response errors."""
+    for attempt in range(attempts):
+        try:
+            return pypi_files(tag)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as error:
+            if not _transient(error) or attempt == attempts - 1:
+                raise
+            print(f'PyPI request failed ({error}); retrying')
+            time.sleep(interval)
 
 
 def wait_for_pypi(directory, tag, attempts=PYPI_VISIBILITY_ATTEMPTS, interval=PYPI_POLL_SECONDS):
-    """Wait until PyPI serves both validated files; its CDN can lag an upload by minutes."""
+    """Wait until PyPI's index lists both validated files with matching hashes."""
     for attempt in range(attempts):
-        if not missing_distributions(directory, tag, pypi_files(tag)):
+        if not missing_distributions(directory, tag, read_pypi(tag)):
             print('Both PyPI distribution hashes match the validated build')
             return
         if attempt < attempts - 1:
@@ -174,7 +203,7 @@ def main():
         content = ''.join(f'{digest(path)}  {path.name}\n' for path in sorted(args.directory.iterdir()))
         (args.directory / 'SHA256SUMS').write_text(content, encoding='utf-8')
     elif args.command == 'stage-pypi':
-        pending = missing_distributions(args.directory, args.tag, pypi_files(args.tag))
+        pending = missing_distributions(args.directory, args.tag, read_pypi(args.tag))
         args.staging.mkdir(exist_ok=True)
         if any(args.staging.iterdir()):
             raise ValueError('PyPI staging directory must be empty')

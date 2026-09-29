@@ -65,6 +65,17 @@ class LinkListTests(ProfileFixture, unittest.TestCase):
             self.assertTrue(events.start(f'{path}\n2'))
         self.assertEqual([call.args[1] for call in start_type.call_args_list], ['1', '2'])
 
+    def test_legacy_download_notice_is_shown_once_before_downloads(self):
+        previous = events._legacyNoticeShown
+        self.addCleanup(setattr, events, '_legacyNoticeShown', previous)
+        events._legacyNoticeShown = False
+        with mock.patch.object(events, 'legacyDownloadNotice', return_value='Move old downloads'), \
+                mock.patch.object(events.Printf, 'info') as info, \
+                mock.patch.object(events, 'start_track', return_value=True):
+            self.assertTrue(events.start_type(Type.Track, object()))
+            self.assertTrue(events.start_type(Type.Track, object()))
+        info.assert_called_once_with('Move old downloads')
+
 
 class InputLimitTests(ApiFixture, unittest.TestCase):
     def test_catalog_url_requires_exact_host_and_valid_identifier(self):

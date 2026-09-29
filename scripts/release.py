@@ -43,13 +43,11 @@ def next_version(tags, today):
 
 def release_worthy(paths):
     exact = {
-        'Dockerfile', 'build.sh', 'install.sh',
         'TIDALDL-PY/setup.py', 'TIDALDL-PY/requirements.txt',
         'TIDALDL-PY/pyproject.toml', 'TIDALDL-PY/MANIFEST.in',
-        '.github/workflows/build.yml', '.github/workflows/ci.yml', '.github/workflows/publish.yml',
     }
     return any(
-        path in exact or path.startswith(('.github/requirements/', 'scripts/'))
+        path in exact
         or (path.startswith('TIDALDL-PY/tidal_dl/') and not path.endswith('/supporters.json'))
         for path in paths
     )

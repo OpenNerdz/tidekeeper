@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -69,14 +70,25 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertNotIn('Merge pull', result)
         self.assertNotIn('refresh supporters', result)
 
-    def test_docs_tests_and_generated_supporters_do_not_trigger_a_release(self):
+    def test_only_installed_package_changes_trigger_a_release(self):
         self.assertFalse(release.release_worthy([
             'README.md', 'CHANGELOG.md', 'TIDALDL-PY/tests/test_sample.py',
             'TIDALDL-PY/tidal_dl/gui_app/supporters.json', '.github/workflows/supporters.yml',
+            'Dockerfile', 'build.sh', 'install.sh', '.github/workflows/build.yml',
+            '.github/requirements/build.txt', 'scripts/release.py',
         ]))
         for path in ('TIDALDL-PY/tidal_dl/download.py', 'TIDALDL-PY/requirements.txt',
-                     '.github/workflows/build.yml', 'scripts/release.py', 'build.sh'):
+                     'TIDALDL-PY/setup.py', 'TIDALDL-PY/pyproject.toml', 'TIDALDL-PY/MANIFEST.in'):
             self.assertTrue(release.release_worthy([path]))
+
+    def test_pushes_are_previews_and_supporter_snapshots_are_daily(self):
+        root = SCRIPTS.parent
+        build = (root / '.github/workflows/build.yml').read_text(encoding='utf-8')
+        supporters = (root / '.github/workflows/supporters.yml').read_text(encoding='utf-8')
+        self.assertIn('RELEASE_REQUESTED: ${{ inputs.publish }}', build)
+        self.assertNotIn("github.event_name == 'push' || inputs.publish", build)
+        self.assertNotIn('watch:', supporters)
+        self.assertIn('cron: "17 4 * * *"', supporters)
 
     def test_failed_release_notes_are_carried_into_the_next_release(self):
         original = ('## Unreleased\n\n<!-- release-title: Complete retry fixes -->\n\n- Fix publishing.\n\n'
@@ -272,6 +284,41 @@ class ReleasePublishTests(unittest.TestCase):
         complete = {p.name: publish.digest(p) for p in self.directory.iterdir()}
         self.assertEqual(publish.missing_distributions(self.directory, self.tag, complete), [])
 
+    def test_pypi_lookup_uses_the_simple_index_and_filters_one_version(self):
+        complete = {p.name: publish.digest(p) for p in self.directory.iterdir()}
+        payload = {'files': [
+            {'filename': name, 'hashes': {'sha256': value}} for name, value in complete.items()
+        ] + [
+            {'filename': 'tidekeeper-2026.9.28.10.tar.gz', 'hashes': {'sha256': 'wrong'}},
+        ]}
+
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        response.read.return_value = json.dumps(payload).encode()
+        with mock.patch.object(publish.urllib.request, 'urlopen', return_value=response) as urlopen:
+            self.assertEqual(publish.pypi_files(self.tag), complete)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, publish.PYPI_INDEX_URL)
+        self.assertEqual(request.get_header('Accept'), 'application/vnd.pypi.simple.v1+json')
+
+    def test_pypi_lookup_retries_transient_network_failures(self):
+        complete = {p.name: publish.digest(p) for p in self.directory.iterdir()}
+        with mock.patch.object(publish, 'pypi_files', side_effect=[
+            urllib.error.URLError('temporary failure'), complete,
+        ]) as listing, mock.patch.object(publish.time, 'sleep') as sleep:
+            self.assertEqual(publish.read_pypi(self.tag, interval=0), complete)
+        self.assertEqual(listing.call_count, 2)
+        sleep.assert_called_once_with(0)
+
+    def test_pypi_lookup_does_not_retry_permanent_http_errors(self):
+        error = urllib.error.HTTPError(publish.PYPI_INDEX_URL, 403, 'Forbidden', {}, None)
+        with mock.patch.object(publish, 'pypi_files', side_effect=error) as listing, \
+                mock.patch.object(publish.time, 'sleep') as sleep, self.assertRaises(urllib.error.HTTPError):
+            publish.read_pypi(self.tag, interval=0)
+        listing.assert_called_once_with(self.tag)
+        sleep.assert_not_called()
+
     def test_existing_pypi_file_with_different_bytes_stops_release(self):
         wheel = next(self.directory.glob('*.whl'))
         with self.assertRaisesRegex(ValueError, 'different bytes'):
@@ -289,14 +336,14 @@ class ReleasePublishTests(unittest.TestCase):
     def test_verification_waits_for_pypi_cache_to_list_the_upload(self):
         complete = {p.name: publish.digest(p) for p in self.directory.iterdir()}
         listings = [{}, {}, complete]
-        with mock.patch.object(publish, 'pypi_files', side_effect=listings), \
+        with mock.patch.object(publish, 'read_pypi', side_effect=listings), \
                 mock.patch.object(publish.time, 'sleep') as sleep, \
                 contextlib.redirect_stdout(io.StringIO()):
             publish.wait_for_pypi(self.directory, self.tag)
         self.assertEqual(sleep.call_count, 2)
 
     def test_verification_gives_up_after_the_visibility_window(self):
-        with mock.patch.object(publish, 'pypi_files', return_value={}) as listing, \
+        with mock.patch.object(publish, 'read_pypi', return_value={}) as listing, \
                 mock.patch.object(publish.time, 'sleep') as sleep, \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, 'rerun the failed publish job'):

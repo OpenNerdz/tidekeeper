@@ -191,15 +191,17 @@ def _item_quality(item, kind: Type | None = None) -> str:
     if quality in SOUND_QUALITIES:
         # Show the names used by Settings (Max, HiFi, ...) instead of API constants.
         quality = audio_quality_label(SOUND_QUALITIES[quality])
-    flag = ""
+    flags = []
     if kind in (Type.Album, Type.Track, Type.Video):
         try:
-            flag = TIDAL_API.getFlag(item, kind, short=False, separator=" · ")
+            flags = TIDAL_API.getFlag(item, kind, short=False, separator="\n").split("\n")
         except Exception:
-            flag = ""
-    if quality and flag:
-        return f"{quality} · {flag}"
-    return str(quality or flag or "")
+            flags = []
+    if "Dolby Atmos" in flags and quality == audio_quality_label(AudioQuality.Normal):
+        # The LOW rating on Atmos releases describes their stereo stream, not the Atmos mix.
+        quality = ""
+    # A quality such as Master can also appear as a flag; show each label once.
+    return " · ".join(dict.fromkeys(part for part in (str(quality), *flags) if part))
 
 
 def _item_identifier(item, kind: Type) -> str:

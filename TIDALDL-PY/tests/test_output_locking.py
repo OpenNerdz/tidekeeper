@@ -20,11 +20,21 @@ from tidal_dl.settings import SETTINGS
 from fixtures import ApiFixture, response
 
 
+def isolate_lock_directory(test, root):
+    """Point every platform's lock folder into ``root``, for this process and children."""
+    environment = mock.patch.dict(os.environ, {
+        'HOME': str(root / 'home'), 'XDG_STATE_HOME': str(root / 'state'), 'LOCALAPPDATA': str(root / 'local'),
+    })
+    environment.start()
+    test.addCleanup(environment.stop)
+
+
 class DestinationLockIntegrationTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        isolate_lock_directory(self, self.root / 'private')
         self.saved_settings = copy.deepcopy(SETTINGS.__dict__)
         def restore():
             SETTINGS.__dict__.clear()
@@ -155,35 +165,40 @@ with output_lock(sys.argv[1]):
             self.assertTrue(runtime._output_locks)
         self.assertFalse(runtime._output_locks)
 
-    def test_distinct_directories_keep_distinct_os_locks(self):
+    def test_distinct_directories_keep_distinct_locks_outside_download_folders(self):
         first, second = self.root / 'Folder', self.root / 'folder'
         first.mkdir()
         second.mkdir(exist_ok=True)
         if os.path.samefile(first, second):
             self.skipTest('Filesystem does not distinguish directory case')
-        with mock.patch.object(runtime, 'isTermux', return_value=False), \
-                runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
+        with runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
             self.assertEqual(len(runtime._output_locks), 2)
-            self.assertEqual(len(list(first.rglob('*.lock'))), 1)
-            self.assertEqual(len(list(second.rglob('*.lock'))), 1)
+            self.assertEqual(len(list(Path(runtime.lock_directory()).glob('*.lock'))), 2)
+            self.assertFalse(list(first.rglob('*.lock')) + list(second.rglob('*.lock')))
         self.assertFalse(runtime._output_locks)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Termux runs on Linux')
     def test_termux_locks_live_in_private_home_and_distinguish_destinations(self):
         private_home = self.root / 'private-home'
         private_home.mkdir()
         first, second = self.root / 'shared' / 'album-1', self.root / 'shared' / 'album-2'
         first.mkdir(parents=True)
         second.mkdir(parents=True)
-        with mock.patch.dict(os.environ, {'TERMUX_VERSION': 'test', 'HOME': str(private_home)}), \
-                runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
-            locks = list((private_home / '.local' / 'state' / 'tidekeeper' / 'locks').glob('*.lock'))
-            self.assertEqual(len(locks), 2)
-            self.assertEqual(len(runtime._output_locks), 2)
-            self.assertFalse(list((self.root / 'shared').rglob('*.lock')))
+        with mock.patch.dict(os.environ, {'TERMUX_VERSION': 'test', 'HOME': str(private_home)}):
+            os.environ.pop('XDG_STATE_HOME', None)
+            with runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
+                locks = list((private_home / '.local' / 'state' / 'tidekeeper' / 'locks').glob('*.lock'))
+                self.assertEqual(len(locks), 2)
+                self.assertEqual(len(runtime._output_locks), 2)
+                self.assertFalse(list((self.root / 'shared').rglob('*.lock')))
         self.assertFalse(runtime._output_locks)
 
 
 class OutputLockTests(ApiFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        isolate_lock_directory(self, self.root / 'private')
+
     def test_output_lock_wait_is_cancellable_and_cleans_up(self):
         cancel = threading.Event()
         finished = threading.Event()
@@ -211,6 +226,24 @@ class OutputLockTests(ApiFixture, unittest.TestCase):
                 thread.join(timeout=2)
         self.assertEqual(outcomes, ['cancelled'])
         self.assertFalse(runtime._output_locks)
+
+    def test_waiting_for_another_writer_is_announced_once(self):
+        target = str(self.root / 'Artist - Song')
+        messages, acquired = [], threading.Event()
+
+        def writer():
+            with runtime.job_context(output=messages.append), runtime.output_lock(target):
+                acquired.set()
+
+        with mock.patch.object(runtime, 'LOCK_NOTICE_SECONDS', 0.05):
+            with runtime.output_lock(target):
+                thread = threading.Thread(target=writer)
+                thread.start()
+                self.assertFalse(acquired.wait(0.4))
+            self.assertTrue(acquired.wait(2))
+            thread.join(timeout=2)
+        self.assertEqual(len(messages), 1)
+        self.assertIn('Waiting for another download to finish writing "Artist - Song"', messages[0])
 
 
 if __name__ == "__main__":

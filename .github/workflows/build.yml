@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ (github.event_name == 'push' || inputs.publish || startsWith(github.ref, 'refs/tags/')) && 'production' || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && !startsWith(github.ref, 'refs/tags/') }}
+  group: build-${{ (inputs.publish || startsWith(github.ref, 'refs/tags/')) && 'production' || github.ref }}
+  cancel-in-progress: ${{ !inputs.publish && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: '1'
@@ -44,7 +44,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-          RELEASE_REQUESTED: ${{ github.event_name == 'push' || inputs.publish }}
+          RELEASE_REQUESTED: ${{ inputs.publish }}
         run: |
           mode=preview
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then

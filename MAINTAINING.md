@@ -40,8 +40,9 @@ sudo apt-get install libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 \
 
 ## Releases
 
-Keep `main` as the only branch. Pushing application or build changes to `main`
-releases them automatically; don't edit the version or create tags by hand.
+Keep `main` as the only branch. Every push runs CI and all five platform builds,
+but does not publish. When `main` is green and ready, run the **Build** workflow
+with **publish** checked. Don't edit the version or create tags by hand.
 
 1. The Build workflow picks the next `YYYY.M.D.N` version (UTC date, then a daily
    counter that never reuses a number), moves `CHANGELOG.md → Unreleased` into a
@@ -51,9 +52,11 @@ releases them automatically; don't edit the version or create tags by hand.
    checksums and provenance attestations, publish to PyPI, verify the PyPI
    hashes, and make the release public.
 
-Changes to docs or tests alone run CI without releasing, unless earlier
-application changes are still unpublished. Pull requests run CI only. Pull the
-bot's release commit before your next push.
+Only installed package or dependency changes make a release eligible. Docs,
+tests, workflows, release scripts, installers, Docker, and build tooling wait for
+the next package release, so they never create an update prompt by themselves.
+Pull requests run checks only; normal pushes also build platform previews. Pull
+the bot's release commit after publishing and before your next push.
 
 ### Release notes
 
@@ -81,8 +84,8 @@ Notes from unpublished attempts carry forward to the next release.
 
 ### Previews and recovery
 
-- **Preview build:** run Build manually with `publish` unchecked. Check `publish`
-  to release unpublished changes from `main`.
+- **Preview build:** push to `main`, or run Build manually with `publish`
+  unchecked. Check `publish` to release unpublished package changes from `main`.
 - **Failed build or upload:** use **Re-run failed jobs**. Artifacts are kept for
   30 days. PyPI uploads resume missing files and never replace a file whose hash
   differs. Published releases are never changed.
@@ -98,7 +101,8 @@ last public release.
 ## Supporter list
 
 The desktop app's Supporters list shows the repository's stargazers.
-`.github/workflows/supporters.yml` refreshes `supporters.json` on new stars, every
-six hours, and on manual runs. It validates the full response, keeps the old list
-if the API fails, and commits only real changes. The app shows the bundled list
-immediately and refreshes it in the background without a GitHub token.
+`.github/workflows/supporters.yml` refreshes `supporters.json` once daily and on
+manual runs. It validates the full response, keeps the old list if the API fails,
+and commits only real changes. The app shows the bundled list immediately and
+refreshes it in the background without a GitHub token, so new stars do not need
+an immediate repository commit.

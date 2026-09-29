@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+<!-- release-title: Cleaner downloads and controlled releases -->
+
+- Keep destination locks in a private per-user state folder rather than hidden
+  folders inside download libraries, including network shares. Explain waits for
+  another writer after two seconds and keep cancellation responsive.
+- Remove repeated desktop quality labels such as "Master · Master" and avoid
+  describing an Atmos result as Normal quality.
+- Detect downloads saved in a literal `~` folder by older releases and tell the
+  user where to move them before Tidekeeper downloads the same media again.
+- Document `TIDEKEEPER_DOWNLOAD_PATH` and the new lock locations.
+- Make normal pushes full CI/platform-build previews. Publishing now requires the
+  Build workflow's manual **publish** switch, and docs, tests, workflows,
+  installers, Docker, and release tooling no longer create update prompts alone.
+- Read PyPI's package index instead of its cached per-version endpoint when
+  verifying uploads, and retry brief network or server failures.
+- Refresh the bundled supporter snapshot once daily instead of committing once
+  for every new star.
+
 ## 2026.9.29.2 - 2026-09-29
 
 <!-- release-title: More reliable publishing -->
@@ -78,6 +96,8 @@
 ## 2026.9.28.1 - 2026-09-28
 
 <!-- release-title: Automated releases and faster builds -->
+
+> This version was never published. Its changes shipped in 2026.9.28.2.
 
 - Automatically prepare dated releases from application changes on main, retaining
   the existing daily version counter, tag format, and concise release-note style.

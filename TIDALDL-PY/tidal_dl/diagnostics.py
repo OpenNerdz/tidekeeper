@@ -8,7 +8,7 @@ import tempfile
 import aigpy
 
 from . import apiKey
-from .paths import downloadRoot
+from .paths import downloadRoot, legacyDownloadNotice
 from .printf import Printf
 from .settings import SETTINGS, TOKEN
 from .runtime import print
@@ -40,6 +40,11 @@ def _checkDownloadPath():
         return "OK", "Download path", os.path.abspath(path)
     except Exception as e:
         return "ERR", "Download path", str(e)
+
+
+def _checkLegacyDownloads():
+    notice = legacyDownloadNotice()
+    return ("WARN", "Earlier downloads", notice) if notice else None
 
 
 def _checkApiKey():
@@ -83,10 +88,12 @@ def runDoctor():
         )
     checks = [
         _checkDownloadPath(),
+        _checkLegacyDownloads(),
         _checkApiKey(),
         _checkFfmpeg(),
         _checkToken(),
     ]
+    checks = [check for check in checks if check is not None]
 
     hasError = False
     for status, name, detail in checks:

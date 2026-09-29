@@ -21,6 +21,7 @@ from .enums import AUDIO_QUALITY_ORDER, AudioQuality, Type, VideoQuality
 from .inputs import parse_direct_inputs
 from .lang.language import LANG
 from .model import Album, Artist, Mix, Playlist, Track, Video
+from .paths import legacyDownloadNotice
 from .printf import Printf
 from .settings import SETTINGS, TOKEN, syncPlaybackRateLimiter
 from .tidal import TIDAL_API
@@ -155,7 +156,22 @@ def start_mix(obj: Mix, videoOnly=False, progress=None):
     return success
 
 
+_legacyNoticeShown = False
+
+
+def _showLegacyDownloadNotice():
+    """Point once per run to downloads saved in a literal '~' folder by older versions."""
+    global _legacyNoticeShown
+    if _legacyNoticeShown:
+        return
+    _legacyNoticeShown = True
+    notice = legacyDownloadNotice()
+    if notice:
+        Printf.info(notice)
+
+
 def start_type(etype: Type, obj, videoOnly=False, progress=None):
+    _showLegacyDownloadNotice()
     if etype == Type.Album:
         return start_album(obj, videoOnly, progress=progress)
     if etype == Type.Track:

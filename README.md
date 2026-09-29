@@ -71,7 +71,9 @@ Videos need it, and it saves lossless audio as `.flac` instead of `.m4a`.
 
 Downloads go to a `download` folder inside the directory you start Tidekeeper
 from (`Download/Tidekeeper` on Android, `/downloads` in Docker). To choose a
-permanent folder, use **Settings** or run `tidekeeper -o ~/Music` once.
+permanent folder, use **Settings** or run `tidekeeper -o ~/Music` once. To set
+the folder before Tidekeeper saves its first settings, for example in a script
+or container, set the `TIDEKEEPER_DOWNLOAD_PATH` environment variable.
 
 ## Terminal
 
@@ -171,6 +173,11 @@ Standalone apps can't update themselves. Download the new version from the
 
 Start with `tidekeeper --doctor`. It checks your login, download folder, and
 ffmpeg, and tells you what to fix.
+
+If another Tidekeeper process on the same computer is already writing the same
+file, the download waits and tells you why. Lock files live in your private
+app-state folder, not inside the music library, so downloads on shared or
+network storage do not need to support file locking themselves.
 
 <details>
 <summary><b>I was signed out after updating or changing the TIDAL client</b></summary>

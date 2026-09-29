@@ -221,6 +221,21 @@ class DownloadRootTests(unittest.TestCase):
                     self.assertTrue(path.startswith(expected), path)
                     self.assertNotIn('~', path)
 
+    def test_literal_tilde_folder_from_older_versions_is_reported(self):
+        with tempfile.TemporaryDirectory() as working, tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict(os.environ, {'HOME': home}), mock.patch.object(SETTINGS, 'downloadPath', '~/Music'), \
+                mock.patch('os.getcwd', return_value=working):
+            literal = Path(working) / '~' / 'Music'
+            literal.mkdir(parents=True)
+            self.assertEqual(paths.legacyDownloadFolder(), str(literal))
+            notice = paths.legacyDownloadNotice()
+            self.assertIn(str(literal), notice)
+            self.assertIn(str(Path(home) / 'Music'), notice)
+
+            literal.rmdir()
+            literal.parent.rmdir()
+            self.assertIsNone(paths.legacyDownloadFolder())
+
 
 class PathSafetyTests(ApiFixture, unittest.TestCase):
     def test_root_download_folder_is_preserved(self):

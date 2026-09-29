@@ -8,18 +8,19 @@ import logging.handlers
 import os
 import re
 import subprocess
+import sys
 import time
 from threading import Lock, RLock
 
 from filelock import FileLock, Timeout as FileLockTimeout
-
-from .environment import isTermux
 
 _output = contextvars.ContextVar('tidekeeper_output', default=None)
 _cancel = contextvars.ContextVar('tidekeeper_cancel', default=None)
 _warning = contextvars.ContextVar('tidekeeper_warning', default=None)
 _output_locks = {}
 _output_locks_guard = Lock()
+# Tell the user why a download pauses when another one is writing the same file.
+LOCK_NOTICE_SECONDS = 2.0
 
 
 class DownloadCancelled(Exception):
@@ -45,36 +46,53 @@ def check_cancelled():
         raise DownloadCancelled('Download cancelled; partial transfers kept for retry.')
 
 
+def lock_directory():
+    """Private per-user folder for destination locks.
+
+    Locks never go in download folders: they would clutter music libraries, and
+    shared, network, and Android storage often lack the OS locks filelock needs.
+    """
+    if sys.platform == 'win32':
+        base = os.environ.get('LOCALAPPDATA') or os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
+        return os.path.join(base, 'Tidekeeper', 'locks')
+    if sys.platform == 'darwin':
+        return os.path.join(os.path.expanduser('~'), 'Library', 'Caches', 'Tidekeeper', 'locks')
+    home = os.environ.get('HOME') or os.path.expanduser('~')
+    state = os.environ.get('XDG_STATE_HOME') or os.path.join(home, '.local', 'state')
+    return os.path.join(state, 'tidekeeper', 'locks')
+
+
 @contextlib.contextmanager
 def output_lock(path):
     """Serialize destination writers across threads and cooperating processes."""
     key = os.path.normcase(os.path.realpath(path))
     # Conservatively serialize filename case aliases, but keep distinct output
     # directories distinct on case-sensitive filesystems.
-    name = os.path.basename(key).casefold()
-    key = os.path.join(os.path.dirname(key), name)
-    if isTermux():
-        # Android shared storage does not implement the OS file locks used by
-        # filelock. Keep the lock on Termux's private filesystem, keyed by the
-        # full destination so separate album folders never block each other.
-        home = os.environ.get('HOME') or os.path.expanduser('~')
-        directory = os.path.join(home, '.local', 'state', 'tidekeeper', 'locks')
-        lock_name = key
-    else:
-        directory = os.path.join(os.path.dirname(key), '.tidekeeper-locks')
-        lock_name = name
-    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(lock_name)).hexdigest() + '.lock')
+    key = os.path.join(os.path.dirname(key), os.path.basename(key).casefold())
+    directory = lock_directory()
+    # One lock file per full destination, so separate folders never block each other.
+    lock_path = os.path.join(directory, hashlib.sha256(os.fsencode(key)).hexdigest() + '.lock')
     with _output_locks_guard:
         if key not in _output_locks:
             _output_locks[key] = (RLock(), FileLock(lock_path, mode=0o600,
                                                   preserve_lock_file=True, fallback_to_soft=False), 0)
         lock, file_lock, users = _output_locks[key]
         _output_locks[key] = lock, file_lock, users + 1
-    acquired = file_acquired = False
+    acquired = file_acquired = announced = False
+    started = time.monotonic()
+
+    def announce_wait():
+        nonlocal announced
+        if not announced and time.monotonic() - started >= LOCK_NOTICE_SECONDS:
+            announced = True
+            print(f'Waiting for another download to finish writing "{os.path.basename(path)}"...')
+
     try:
         while not acquired:
             check_cancelled()
             acquired = lock.acquire(timeout=0.1)
+            if not acquired:
+                announce_wait()
         check_cancelled()
         os.makedirs(directory, mode=0o700, exist_ok=True)
         while not file_acquired:
@@ -83,6 +101,7 @@ def output_lock(path):
                 file_lock.acquire(timeout=0)
                 file_acquired = True
             except FileLockTimeout:
+                announce_wait()
                 sleep(0.1)
         check_cancelled()
         yield

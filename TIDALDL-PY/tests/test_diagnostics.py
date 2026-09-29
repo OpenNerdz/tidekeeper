@@ -20,6 +20,15 @@ class DoctorWriteCheckTests(ProfileFixture, unittest.TestCase):
         self.assertEqual(sentinel.read_text(), 'keep this file')
         self.assertEqual(list(self.root.iterdir()), [sentinel])
 
+    def test_doctor_warns_about_downloads_in_an_old_literal_tilde_folder(self):
+        with mock.patch.object(diagnostics, 'legacyDownloadNotice', return_value='Move old downloads'):
+            self.assertEqual(
+                diagnostics._checkLegacyDownloads(),
+                ('WARN', 'Earlier downloads', 'Move old downloads'),
+            )
+        with mock.patch.object(diagnostics, 'legacyDownloadNotice', return_value=None):
+            self.assertIsNone(diagnostics._checkLegacyDownloads())
+
 
 class DoctorCommandTests(CatalogFixtures, unittest.TestCase):
     def test_doctor_command_runs_without_login_or_download(self):
