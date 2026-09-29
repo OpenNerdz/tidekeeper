@@ -9,13 +9,13 @@ MAX_LIST_FILES = 4096
 MAX_INPUTS = 50000
 
 
-def parse_direct_inputs(text, _seen_files=None):
+def parse_direct_inputs(text):
     """Expand text lists without recursion; retain input order and deduplicate.
 
     Nested filenames are relative to the containing list. Real paths identify
     files so symlinks and lists that include themselves are read only once.
     """
-    seen_files = set() if _seen_files is None else _seen_files
+    seen_files = set()
     seen = set()
     tokens = []
     pending = [(str(text or '').strip(), Path.cwd())]
@@ -56,9 +56,9 @@ def parse_direct_inputs(text, _seen_files=None):
             continue
         if value[0] in '#[{':
             continue
-        parts = [part.strip() for line in value.splitlines() for part in line.split(',') if part.strip()]
-        if len(parts) != 1 or (parts and parts[0] != value):
-            pending.extend((part, directory) for part in reversed(parts))
+        if ',' in value:
+            # Empty pieces are skipped when popped.
+            pending.extend((part.strip(), directory) for part in reversed(value.split(',')))
             continue
         words = value.split()
         if len(words) > 1:

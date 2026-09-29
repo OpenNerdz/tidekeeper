@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import re
 import time
@@ -13,14 +14,13 @@ from typing import Callable, Iterable, List, Optional
 
 import aigpy
 
-from ..inputs import parse_direct_inputs as parse_direct_inputs
 from .. import apiKey
 from ..diagnostics import runDoctor
-from ..enums import AudioQuality, Type, VideoQuality
+from ..enums import SOUND_QUALITIES, AudioQuality, Type, VideoQuality, audio_quality_label
 from ..events import loginByConfig, logout, start, start_type
 from ..download import FAILED_TRACKS_FILE, downloadTrack, downloadVideo
 from ..lang.language import LANG
-from ..paths import PATHS, openPath
+from ..paths import PATHS, downloadRoot, openPath
 from ..printf import VERSION
 from ..settings import SETTINGS, TOKEN, syncPlaybackRateLimiter, _atomicWrite
 from ..runtime import DownloadCancelled, check_cancelled, job_context, configure_logging, redact
@@ -63,6 +63,15 @@ class AuthStatus:
         if hours:
             return f"{hours}h {minutes}m"
         return f"{minutes}m"
+
+    @property
+    def expiry_summary(self) -> str:
+        label = self.expires_label
+        if label == "Unknown":
+            return "expiry unknown"
+        if label == "Expired":
+            return "session expired"
+        return f"expires in {label}"
 
 
 @dataclass
@@ -179,6 +188,9 @@ def _item_quality(item, kind: Type | None = None) -> str:
     IDs that can download Dolby Atmos.
     """
     quality = getattr(item, "audioQuality", None) or getattr(item, "quality", None) or ""
+    if quality in SOUND_QUALITIES:
+        # Show the names used by Settings (Max, HiFi, ...) instead of API constants.
+        quality = audio_quality_label(SOUND_QUALITIES[quality])
     flag = ""
     if kind in (Type.Album, Type.Track, Type.Video):
         try:
@@ -437,7 +449,8 @@ class TidekeeperBackend:
         if not text:
             return []
 
-        if os.path.exists(text):
+        # Only a list file is a direct input; a folder or bare word is a search.
+        if os.path.isfile(text):
             return [self.direct_item(text)]
 
         self._ensure_catalog_session()
@@ -512,7 +525,7 @@ class TidekeeperBackend:
         return videos
 
     def direct_item(self, text: str) -> SearchItem:
-        label = os.path.basename(text) if os.path.exists(text) else text
+        label = os.path.basename(text) if os.path.isfile(text) else text
         return SearchItem(Type.Null, label, "", "Direct", text, "", text)
 
     def download(self, item: SearchItem, log: LogCallback = None, progress=None):
@@ -526,7 +539,7 @@ class TidekeeperBackend:
         ):
             # Older queues did not retain which albums contained each failed video.
             retry_only = False
-        failed_log = Path(SETTINGS.downloadPath or '.') / FAILED_TRACKS_FILE
+        failed_log = Path(downloadRoot()) / FAILED_TRACKS_FILE
         try:
             log_offset = failed_log.stat().st_size
         except OSError:
@@ -650,7 +663,8 @@ class TidekeeperBackend:
         SETTINGS.concurrentTracks = min(8, max(1, int(values.get("concurrentTracks", 3))))
         SETTINGS.segmentsPerTrack = min(8, max(1, int(values.get("segmentsPerTrack", 4))))
         SETTINGS.downloadDelay = values["downloadDelay"]
-        SETTINGS.requestIntervalSeconds = max(0.0, float(values.get("requestIntervalSeconds", 1.0) or 0.0))
+        interval = float(values.get("requestIntervalSeconds", 1.0) or 0.0)
+        SETTINGS.requestIntervalSeconds = min(300.0, max(0.0, interval)) if math.isfinite(interval) else 0.0
         SETTINGS.adaptiveRateLimit = values.get("adaptiveRateLimit", True)
         SETTINGS.saveAsFlac = values.get("saveAsFlac", False)
         SETTINGS.usePlaylistFolder = values["usePlaylistFolder"]
@@ -715,15 +729,7 @@ class TidekeeperBackend:
         ]
 
     def language_choices(self):
-        choices = []
-        index = 0
-        while True:
-            name = LANG.getLangName(index)
-            if name == "":
-                break
-            choices.append((index, name))
-            index += 1
-        return choices
+        return LANG.choices()
 
     def login_by_access_token(self, access_token: str, refresh_token: str = "") -> AuthStatus:
         access_token = access_token.strip()

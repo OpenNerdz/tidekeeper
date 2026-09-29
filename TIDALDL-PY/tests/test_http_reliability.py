@@ -235,5 +235,35 @@ class HttpReliabilityTests(unittest.TestCase):
         redirect.close.assert_called_once()
 
 
+class ErrorReportingTests(unittest.TestCase):
+    def setUp(self):
+        self.api = TidalAPI()
+        self.addCleanup(self.api.session.close)
+        patcher = mock.patch.object(SETTINGS, 'downloadDelay', False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_catalog_error_message_is_readable(self):
+        body = response(payload={'status': 404, 'userMessage': 'Album not found'})
+        with mock.patch.object(self.api.session, 'get', return_value=body):
+            with self.assertRaisesRegex(Exception, '^Get operation failed: Album not found$'):
+                self.api._getOnce('albums/1')
+
+    def test_connection_failure_reports_the_error_not_a_stale_response(self):
+        failed = response(503, content=b'<html>stale gateway page</html>')
+        errors = [failed, requests.ConnectionError('network down'), requests.ConnectionError('network down')]
+        with mock.patch.object(self.api.session, 'get', side_effect=errors), \
+                mock.patch('tidal_dl.tidal.cancellable_sleep'):
+            with self.assertRaises(Exception) as error:
+                self.api._getOnce('albums/1')
+        self.assertEqual(str(error.exception), 'Get operation failed: network down')
+
+    def test_disk_space_hint_needs_a_space_error_not_a_disk_path(self):
+        hint = download._downloadErrorHint
+        self.assertIn('disk space', hint('[Errno 28] No space left on device'))
+        self.assertNotIn('disk space', hint('Invalid data found in /mnt/disk1/Music/song.flac'))
+        self.assertNotIn('disk space', hint('Unexpected character in namespace'))
+
+
 if __name__ == '__main__':
     unittest.main()

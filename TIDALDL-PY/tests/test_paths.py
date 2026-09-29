@@ -196,5 +196,28 @@ class PathTests(unittest.TestCase):
             self.assertNotIn(illegal, name)
 
 
+class DownloadRootTests(unittest.TestCase):
+    def test_home_relative_download_folder_is_expanded_for_every_output(self):
+        album = Album()
+        album.id, album.title, album.releaseDate = 1, 'Album', '2020-01-01'
+        album.artist = Artist()
+        album.artist.id, album.artist.name = 2, 'Artist'
+        album.artists = [album.artist]
+        video = Video()
+        video.id, video.title, video.trackNumber = 3, 'Clip', 1
+        stream = StreamUrl()
+        stream.url, stream.soundQuality = 'https://example.invalid/a.flac', 'LOSSLESS'
+        track = Track()
+        track.id, track.title, track.trackNumber = 4, 'Song', 1
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {'HOME': home}), \
+                mock.patch.object(SETTINGS, 'downloadPath', '~/Music'):
+            expected = os.path.join(home, 'Music')
+            for path in (getAlbumPath(album), getTrackPath(track, stream), getTrackPath(track, stream, album),
+                         getVideoPath(video)):
+                with self.subTest(path=path):
+                    self.assertTrue(path.startswith(expected), path)
+                    self.assertNotIn('~', path)
+
+
 if __name__ == "__main__":
     unittest.main()

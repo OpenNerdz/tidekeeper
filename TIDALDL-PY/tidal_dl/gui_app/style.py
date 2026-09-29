@@ -35,12 +35,10 @@ TOKENS = {
     "on_accent": "#06201b",
     # Semantic
     "success": "#4ccb8f",
-    "success_soft": "#143327",
     "warning": "#f2b544",
     "warning_soft": "#3a2d12",
     "danger": "#f26d66",
     "danger_soft": "#3c1d1e",
-    "info": "#7db2ff",
 }
 
 FONT_UI = '"Segoe UI", "Inter", "SF Pro Text", "Noto Sans", "Ubuntu", "Cantarell", sans-serif'
@@ -162,17 +160,7 @@ QLabel#Meta, QLabel#Hint {
     font-size: 12px;
 }
 
-QLabel#Muted {
-    color: %(muted)s;
-}
-
 QLabel#FieldLabel {
-    color: %(text_secondary)s;
-}
-
-QLabel#Mono {
-    font-family: %(font_mono)s;
-    font-size: 12px;
     color: %(text_secondary)s;
 }
 

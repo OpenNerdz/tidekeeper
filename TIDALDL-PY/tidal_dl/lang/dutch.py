@@ -9,7 +9,10 @@
 @Desc    :   
 '''
 
-class LangDutch(object):
+from .english import LangEnglish
+
+
+class LangDutch(LangEnglish):
     SETTING = "INSTELLINGEN"
     VALUE = "WAARDE"
     SETTING_DOWNLOAD_PATH = "Download pad"

@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangArabic(object):
+from .english import LangEnglish
+
+
+class LangArabic(LangEnglish):
     SETTING = "الاعدادت"
     VALUE = "القيمة"
     SETTING_DOWNLOAD_PATH = "مجلد التحميل"

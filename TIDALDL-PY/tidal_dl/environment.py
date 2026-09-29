@@ -24,16 +24,12 @@ def getTermuxDownloadPath(environ=None):
     if environ.get("TIDEKEEPER_DOWNLOAD_PATH"):
         return environ["TIDEKEEPER_DOWNLOAD_PATH"]
 
-    candidates = []
-    home = environ.get("HOME")
+    # Shared storage is only usable after termux-setup-storage has run.
     external_storage = environ.get("EXTERNAL_STORAGE")
-    if external_storage:
-        candidates.append(os.path.join(external_storage, "Download", "Tidekeeper"))
+    if external_storage and os.path.isdir(os.path.join(external_storage, "Download")):
+        return os.path.join(external_storage, "Download", "Tidekeeper")
 
-    for candidate in candidates:
-        if os.path.isdir(os.path.dirname(candidate)):
-            return candidate
-
+    home = environ.get("HOME")
     if home:
         return os.path.join(home, "downloads", "Tidekeeper")
     return "./download/"

@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangJapanese(object):
+from .english import LangEnglish
+
+
+class LangJapanese(LangEnglish):
     SETTING = "設定"
     VALUE = "値"
     SETTING_DOWNLOAD_PATH = "ダウンロードパス"

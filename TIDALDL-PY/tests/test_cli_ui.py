@@ -92,7 +92,7 @@ class CliUiTests(unittest.TestCase):
                 Printf.apikeys(apiKey.getItems())
 
         text = output.getvalue()
-        self.assertIn("Tidal clients", text)
+        self.assertIn("TIDAL clients", text)
         self.assertIn("1 - Fire TV (legacy)", text)
         self.assertIn("4 - Tidal TV", text)
         self.assertIn("5 - Tidal HiRes", text)
@@ -288,6 +288,31 @@ class CliUiTests(unittest.TestCase):
         choices.assert_called()
         self.assertEqual(PATHS._getHomePath(), config_home)
         self.assertTrue(Path(PATHS.getLogPath()).is_file())
+
+
+class CliOutputTests(unittest.TestCase):
+    def test_collection_summaries_accept_missing_titles(self):
+        album = SimpleNamespace(id=1, title=None, numberOfTracks=2, numberOfVideos=0, releaseDate=None,
+                                version=None, explicit=False, audioQuality=None, audioModes=None)
+        playlist = SimpleNamespace(uuid='abc', title=None, numberOfTracks=1, numberOfVideos=0)
+        artist = SimpleNamespace(id=2, name=None, type=None)
+        with redirect_stdout(io.StringIO()), mock.patch.object(printf.TIDAL_API, 'getFlag', return_value=''):
+            Printf.album(album)
+            Printf.playlist(playlist)
+            Printf.artist(artist, 0)
+
+    def test_every_language_provides_every_english_label(self):
+        from tidal_dl.lang.english import LangEnglish
+        from tidal_dl.lang.language import LANG
+
+        keys = [name for name in vars(LangEnglish) if name.isupper()]
+        original = SETTINGS.language
+        self.addCleanup(LANG.setLang, original)
+        for index, name in LANG.choices():
+            with self.subTest(language=name):
+                LANG.setLang(index)
+                for key in keys:
+                    self.assertTrue(getattr(LANG.select, key))
 
 
 if __name__ == "__main__":

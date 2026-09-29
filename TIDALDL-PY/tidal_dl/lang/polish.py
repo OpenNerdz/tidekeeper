@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangPolish(object):
+from .english import LangEnglish
+
+
+class LangPolish(LangEnglish):
     SETTING = "USTAWIENIA"
     VALUE = "WARTOŚĆ"
     SETTING_DOWNLOAD_PATH = "Ścieżka pobierania"

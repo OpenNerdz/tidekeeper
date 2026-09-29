@@ -23,7 +23,7 @@ from .lang.language import LANG
 from .settings import SETTINGS, TOKEN
 from .tidal import TIDAL_API
 from .diagnostics import runDoctor
-from .paths import PATHS, openPath
+from .paths import PATHS, downloadRoot, openPath
 from .printf import Printf
 from .updater import run_update
 
@@ -37,6 +37,7 @@ def startGui():
         Printf.err("GUI is not bundled with this executable. Run tidekeeper-gui or install tidekeeper[gui].")
         return 1
     return gui_module.main()
+
 
 SHORT_OPTIONS = "hvgl:o:q:r:c:"
 LONG_OPTIONS = [
@@ -53,8 +54,8 @@ def _command_options():
     return opts
 
 
-def preMainCommand():
-    for opt, val in _command_options():
+def preMainCommand(opts=None):
+    for opt, val in (_command_options() if opts is None else opts):
         if opt in ('-c', '--configPathOverride'):
             val = os.path.expanduser(val)
             if not os.path.isdir(val):
@@ -90,10 +91,10 @@ def _command_settings(opts):
     return values
 
 
-def mainCommand():
+def mainCommand(opts=None):
     """Return an exit code for a command, or None to open the menu."""
     try:
-        opts = _command_options()
+        opts = _command_options() if opts is None else opts
         if any(opt in ('-h', '--help') for opt, _ in opts):
             Printf.usage()
             return 0
@@ -114,73 +115,42 @@ def mainCommand():
         Printf.err(str(error) + ". Use 'tidekeeper -h' for usage.")
         return 1
 
-    link = None
-    showGui = False
-    showDoctor = False
-    updateInstall = False
-    updateGuiInstall = False
-    showPaths = False
-    openOutput = False
-    videoOnly = False
+    flags = {opt for opt, _ in opts}
+    links = [val for opt, val in opts if opt in ('-l', '--link')]
+    link = links[-1] if links else None
+    videoOnly = bool(flags & {'--video-only', '--videos-only'})
 
-    for opt, val in opts:
-        if opt in ('-g', '--gui'):
-            showGui = True
-            continue
-        if opt == '--doctor':
-            showDoctor = True
-            continue
-        if opt == '--paths':
-            showPaths = True
-            continue
-        if opt == '--open-output':
-            openOutput = True
-            continue
-        if opt in ('--video-only', '--videos-only'):
-            videoOnly = True
-            continue
-        if opt == '--update':
-            updateInstall = True
-            continue
-        if opt == '--update-gui':
-            updateInstall = True
-            updateGuiInstall = True
-            continue
-        if opt in ('-l', '--link'):
-            link = val
-            continue
-
-    if showDoctor:
+    if '--doctor' in flags:
         return 0 if runDoctor() else 1
 
-    if showPaths:
+    if '--paths' in flags:
         Printf.paths()
         return 0
 
-    if openOutput:
+    if '--open-output' in flags:
         try:
-            opened = openPath(SETTINGS.downloadPath)
+            opened = openPath(downloadRoot())
             Printf.success("Opened download folder: " + opened)
             return 0
         except OSError as exc:
             Printf.err("Could not open download folder: " + str(exc))
             return 1
 
-    if updateInstall:
-        return 0 if updateTidekeeper(updateGuiInstall) else 1
+    if flags & {'--update', '--update-gui'}:
+        return 0 if updateTidekeeper('--update-gui' in flags) else 1
 
-    if not aigpy.path.mkdirs(SETTINGS.downloadPath):
+    if not aigpy.path.mkdirs(downloadRoot()):
         Printf.err(LANG.select.MSG_PATH_ERR + SETTINGS.downloadPath)
         return 1
 
-    if showGui:
+    if flags & {'-g', '--gui'}:
         result = startGui()
         return result if isinstance(result, int) else 0
 
     if link is not None:
         if not loginByConfig() and not loginByWeb():
             return 1
-        Printf.info(LANG.select.SETTING_DOWNLOAD_PATH + ':' + SETTINGS.downloadPath)
+        Printf.info(f'{LANG.select.SETTING_DOWNLOAD_PATH}: {SETTINGS.downloadPath}')
         return 0 if start(link, videoOnly) else 1
     return None
 
@@ -252,13 +222,15 @@ def main():
 
 
 def _main():
+    opts = None
     if len(sys.argv) > 1:
         try:
             opts = _command_options()
             if any(opt in ('-h', '--help', '-v', '--version') for opt, _ in opts):
-                return mainCommand()
+                return mainCommand(opts)
+            # Reject invalid values before reading or changing the profile.
             _command_settings(opts)
-            preMainCommand()
+            preMainCommand(opts)
         except (getopt.GetoptError, ValueError) as exc:
             Printf.err(str(exc) + ". Use 'tidekeeper -h' for usage.")
             return 1
@@ -272,8 +244,8 @@ def _main():
     TIDAL_API.apiKey = apiKey.getItem(SETTINGS.apiKeyIndex)
     TIDAL_API.clearSavedSessionIfClientChanged()
 
-    if len(sys.argv) > 1:
-        exit_code = mainCommand()
+    if opts is not None:
+        exit_code = mainCommand(opts)
         if exit_code is not None:
             return exit_code
 
@@ -314,7 +286,3 @@ def _main():
             updateTidekeeper(False)
         else:
             start(choice)
-
-
-if __name__ == '__main__':
-    main()

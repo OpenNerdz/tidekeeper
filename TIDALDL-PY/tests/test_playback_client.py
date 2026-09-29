@@ -310,7 +310,7 @@ class PlaybackClientTests(unittest.TestCase):
                 ElementTree.SubElement(parent, '{urn:mpeg:dash:schema:mpd:2011}ContentProtection',
                                        {'schemeIdUri': 'urn:mpeg:dash:mp4protection:2011', 'value': 'cenc'})
                 with self.assertRaisesRegex(TidalStreamUnavailable, 'DRM-protected'):
-                    self.api.parse_mpd(ElementTree.tostring(root))
+                    self.api._dashStreamUrl(1, 'LOSSLESS', ElementTree.tostring(root))
 
     def test_real_http_login_fallback_download_tagging_and_retry(self):
         # A tiny FLAC of generated silence, not a copyrighted track. The server

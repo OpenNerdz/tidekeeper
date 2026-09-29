@@ -531,7 +531,6 @@ class GuiDownloadStatusTests(unittest.TestCase):
                      mock.patch.object(download, "getTrackPath", return_value=path), \
                      mock.patch.object(download, "_existingMediaState", return_value=(None, False)), \
                      mock.patch.object(download, "_remoteSize") as probe, \
-                     mock.patch.object(download, "_isReusableAssembledFile", return_value=False), \
                      mock.patch.object(download, "_localFileSize", return_value=0), \
                      mock.patch.object(download, "_downloadUrls", return_value=(True, "")) as downloaded, \
                      mock.patch.object(download, "_encrypted", side_effect=lambda _stream, _src, out: Path(out).write_bytes(b"media")), \
@@ -628,7 +627,7 @@ class GuiDownloadStatusTests(unittest.TestCase):
 
 class DirectInputAndProgressTests(unittest.TestCase):
     def test_parse_direct_inputs_splits_lines_and_commas(self):
-        from tidal_dl.gui_app.backend import parse_direct_inputs
+        from tidal_dl.inputs import parse_direct_inputs
 
         tokens = parse_direct_inputs(
             "https://tidal.com/browse/track/1\n"
@@ -645,7 +644,7 @@ class DirectInputAndProgressTests(unittest.TestCase):
         ])
 
     def test_parse_direct_inputs_expands_text_file(self):
-        from tidal_dl.gui_app.backend import parse_direct_inputs
+        from tidal_dl.inputs import parse_direct_inputs
 
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "urls.txt"

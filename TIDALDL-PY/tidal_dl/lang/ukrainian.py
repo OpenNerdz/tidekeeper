@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangUkrainian(object):
+from .english import LangEnglish
+
+
+class LangUkrainian(LangEnglish):
     SETTING = "НАЛАШТУВАННЯ"
     VALUE = "ЗНАЧЕННЯ"
     SETTING_DOWNLOAD_PATH = "Шлях завантаження"

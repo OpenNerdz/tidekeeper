@@ -26,8 +26,6 @@ from html import escape
 from typing import List, Tuple
 from urllib.parse import quote
 
-from .supporters import bundled_supporters
-
 from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPalette, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
@@ -58,19 +56,20 @@ from ..enums import (
     AUDIO_QUALITY_ORDER, AudioQuality, Type, VideoQuality,
     audio_quality_fallbacks, playback_quality_priority,
 )
+from ..inputs import parse_direct_inputs
 from ..settings import SETTINGS
 from ..runtime import redact
 from .backend import (
     SearchItem,
     TidekeeperBackend,
     format_queue_progress,
-    parse_direct_inputs,
     queue_progress_percent,
     queue_item,
     queue_identity,
     with_video_only,
 )
 from .style import APP_STYLESHEET, FONT_MONO, TOKENS
+from .supporters import bundled_supporters
 from .widgets import (
     PROGRESS_PERCENT_ROLE,
     PROGRESS_STATE_ROLE,
@@ -81,6 +80,7 @@ from .widgets import (
     QueueProgressDelegate,
     SegmentedControl,
     StatusDelegate,
+    brand_icon,
     button,
     configure_table,
     dot_icon,
@@ -645,7 +645,8 @@ class MainWindow(QMainWindow):
         ):
             widget.setObjectName("Mono")
             widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-            widget.setToolTip("Use naming tokens such as {ArtistName}, {TrackTitle}, {AlbumTitle}, {TrackNumber}. See README for all tokens.")
+            widget.setToolTip("Use naming tokens such as {ArtistName}, {TrackTitle}, {AlbumTitle} and "
+                              "{TrackNumber}. See docs/filename-templates.md for every token.")
             fix_height(widget)
             naming.add_stacked(text, widget)
         naming.add_widget(hint(NAMING_HINT))
@@ -1540,17 +1541,14 @@ class MainWindow(QMainWindow):
         self.api_client.setCurrentIndex(client_index if client_index >= 0 else 0)
         for key, checkbox in self.checks.items():
             checkbox.setChecked(bool(getattr(SETTINGS, key)))
-        self.request_interval.setValue(
-            max(0.0, float(getattr(SETTINGS, "requestIntervalSeconds", 1.0) or 0.0))
-        )
-        self.concurrent_tracks.setValue(getattr(SETTINGS, "concurrentTracks", 3))
-        self.segment_workers.setValue(getattr(SETTINGS, "segmentsPerTrack", 4))
+        self.request_interval.setValue(max(0.0, float(SETTINGS.requestIntervalSeconds or 0.0)))
+        self.concurrent_tracks.setValue(SETTINGS.concurrentTracks)
+        self.segment_workers.setValue(SETTINGS.segmentsPerTrack)
         self._update_request_interval_enabled(self.checks["downloadDelay"].isChecked())
         self.album_format.setText(SETTINGS.albumFolderFormat)
         self.playlist_format.setText(SETTINGS.playlistFolderFormat)
         self.track_format.setText(SETTINGS.trackFileFormat)
         self.video_format.setText(SETTINGS.videoFileFormat)
-        self.settings_status.setText("Loaded from disk")
         self._saved_settings_values = self.collect_settings_values()
         self._loading_settings = False
         self._update_settings_dirty()
@@ -1689,6 +1687,8 @@ class MainWindow(QMainWindow):
         self.refresh_auth_status()
         if result.get("reauth_required"):
             self.settings_status.setText("Reloaded. Sign in again: the client changed.")
+        else:
+            self.settings_status.setText("Reloaded from disk")
 
     # ---------------------------------------------------------------- account
 
@@ -1698,7 +1698,7 @@ class MainWindow(QMainWindow):
         color = TOKENS["success"] if signed_in else TOKENS["muted"]
         self.auth_dot.setPixmap(dot_icon(color, 10).pixmap(10, 10))
         self.auth_label.setText(status.label)
-        meta = f"{status.country_code or 'Unknown region'} · expires in {status.expires_label}" if signed_in else ""
+        meta = f"{status.country_code or 'Unknown region'} · {status.expiry_summary}" if signed_in else ""
         self.session_meta.setText(meta)
         self.session_meta.setVisible(bool(meta))
         self.session_toggle.setIcon(dot_icon(color))
@@ -2001,13 +2001,15 @@ def run_app(backend: TidekeeperBackend):
     app.setApplicationName("Tidekeeper")
     app.setApplicationDisplayName("Tidekeeper")
     app.setDesktopFileName("tidekeeper")
+    # Prefer an installed theme icon; otherwise draw the brand mark so Windows
+    # and macOS show a recognizable window and taskbar icon.
     icon = QIcon.fromTheme("tidekeeper")
-    if not icon.isNull():
-        app.setWindowIcon(icon)
+    if icon.isNull():
+        icon = brand_icon()
+    app.setWindowIcon(icon)
     configure_application_theme(app)
     backend.initialize()
     window = MainWindow(backend)
-    if not icon.isNull():
-        window.setWindowIcon(icon)
+    window.setWindowIcon(icon)
     window.show()
     return app.exec()

@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangCroatian(object):
+from .english import LangEnglish
+
+
+class LangCroatian(LangEnglish):
     SETTING = "POSTAVKE"
     VALUE = "VRIJEDNOST"
     SETTING_DOWNLOAD_PATH = "putanja preuzimanja"

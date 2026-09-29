@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangKorean(object):
+from .english import LangEnglish
+
+
+class LangKorean(LangEnglish):
     SETTING = "설정"
     VALUE = "값"
     SETTING_DOWNLOAD_PATH = "다운로드 경로"

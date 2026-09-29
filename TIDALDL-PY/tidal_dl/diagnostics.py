@@ -2,15 +2,16 @@
 # -*- encoding: utf-8 -*-
 import os
 import shutil
-import tempfile
-from .runtime import print
 import sys
+import tempfile
 
 import aigpy
 
 from . import apiKey
+from .paths import downloadRoot
 from .printf import Printf
 from .settings import SETTINGS, TOKEN
+from .runtime import print
 from .tidal import TIDAL_API
 
 
@@ -30,7 +31,7 @@ def _printStatus(status, name, detail=""):
 
 
 def _checkDownloadPath():
-    path = SETTINGS.downloadPath or "."
+    path = downloadRoot()
     try:
         os.makedirs(path, exist_ok=True)
         with tempfile.TemporaryFile(mode="w", encoding="utf-8", dir=path) as output:

@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangChinese(object):
+from .english import LangEnglish
+
+
+class LangChinese(LangEnglish):
     SETTING = "设置"
     VALUE = "值"
     SETTING_DOWNLOAD_PATH = "下载目录"

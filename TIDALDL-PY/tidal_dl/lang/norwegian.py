@@ -9,7 +9,10 @@
 @Desc    :   
 '''
 
-class LangNorwegian(object):
+from .english import LangEnglish
+
+
+class LangNorwegian(LangEnglish):
     SETTING = "INNSTILLINGER"
     VALUE = "Verdi"
     SETTING_DOWNLOAD_PATH = "Nedlastingssti"

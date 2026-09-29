@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangVietnamese(object):
+from .english import LangEnglish
+
+
+class LangVietnamese(LangEnglish):
     SETTING = "THIẾT LẬP"
     VALUE = "GIÁ TRỊ"
     SETTING_DOWNLOAD_PATH = "Đường dẫn tải về"

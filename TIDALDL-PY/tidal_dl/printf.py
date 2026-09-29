@@ -17,7 +17,7 @@ import prettytable
 import shutil
 import getpass
 
-from . import apiKey as apiKey
+from . import apiKey
 
 from .enums import AUDIO_QUALITY_ORDER, Type, VideoQuality
 from .model import Album, Artist, StreamUrl, Track, Video, VideoStreamUrl
@@ -133,12 +133,8 @@ class Printf(object):
             item.name for item in (data.getDownloadAudioQualityPriority() if configuredPriority else [])
         ) or "off"
 
-        def label(key, fallback):
-            # Newer settings may not be translated in every language pack yet.
-            return getattr(LANG.select, key, fallback)
-
         tb = Printf._gettable([LANG.select.SETTING, LANG.select.VALUE], [
-            #settings - path and format
+            # Paths and naming
             [LANG.select.SETTING_PATH, PATHS.getProfilePath()],
             [LANG.select.SETTING_DOWNLOAD_PATH, data.downloadPath],
             [LANG.select.SETTING_ALBUM_FOLDER_FORMAT, data.albumFolderFormat],
@@ -146,12 +142,12 @@ class Printf(object):
             [LANG.select.SETTING_TRACK_FILE_FORMAT, data.trackFileFormat],
             [LANG.select.SETTING_VIDEO_FILE_FORMAT, data.videoFileFormat],
 
-            #settings - quality
+            # Quality
             [LANG.select.SETTING_AUDIO_QUALITY, data.audioQuality],
             ["Audio quality priority", qualityPriority],
             [LANG.select.SETTING_VIDEO_QUALITY, data.videoQuality],
 
-            #settings - else
+            # Options
             [LANG.select.SETTING_USE_PLAYLIST_FOLDER, data.usePlaylistFolder],
             [LANG.select.SETTING_CHECK_EXIST, data.checkExist],
             [LANG.select.SETTING_SHOW_PROGRESS, data.showProgress],
@@ -163,16 +159,13 @@ class Printf(object):
             [LANG.select.SETTING_LANGUAGE, LANG.getLangName(data.language)],
             [LANG.select.SETTING_ADD_LRC_FILE, data.lyricFile],
             [LANG.select.SETTING_MULITHREAD_DOWNLOAD, data.multiThread],
-            ["Concurrent tracks", getattr(data, "concurrentTracks", 3)],
-            ["Segments per track", getattr(data, "segmentsPerTrack", 4)],
+            ["Concurrent tracks", data.concurrentTracks],
+            ["Segments per track", data.segmentsPerTrack],
             [LANG.select.SETTING_APIKEY, f"[{data.apiKeyIndex}]" + apiKey.getItem(data.apiKeyIndex)['formats']],
             [LANG.select.SETTING_DOWNLOAD_DELAY, data.downloadDelay],
-            [label("SETTING_REQUEST_INTERVAL_SECONDS", "Request delay seconds"), data.requestIntervalSeconds],
-            [
-                label("SETTING_ADAPTIVE_RATE_LIMIT", "Automatically adapt request delay"),
-                getattr(data, "adaptiveRateLimit", True),
-            ],
-            [label("SETTING_SAVE_AS_FLAC", "Save FLAC streams as .flac files"), data.saveAsFlac],
+            [LANG.select.SETTING_REQUEST_INTERVAL_SECONDS, data.requestIntervalSeconds],
+            [LANG.select.SETTING_ADAPTIVE_RATE_LIMIT, data.adaptiveRateLimit],
+            [LANG.select.SETTING_SAVE_AS_FLAC, data.saveAsFlac],
         ])
         print(tb)
 
@@ -196,7 +189,7 @@ class Printf(object):
         print(f"Quality: audio {audio}, video {video}")
         print(f"Save to: {path}")
         print("")
-        print(aigpy.cmd.green("Download: paste a Tidal URL, ID, or .txt file and press Enter."))
+        print(aigpy.cmd.green("Download: paste a TIDAL URL, ID, or .txt file and press Enter."))
         print("")
         if compact:
             print("1 Login / refresh")
@@ -225,8 +218,7 @@ class Printf(object):
     @staticmethod
     def enter(string):
         aigpy.cmd.colorPrint(string, aigpy.cmd.TextColor.Yellow, None)
-        ret = input("")
-        return ret
+        return input("")
 
     @staticmethod
     def enterSecret(string):
@@ -234,9 +226,7 @@ class Printf(object):
 
     @staticmethod
     def enterBool(string):
-        aigpy.cmd.colorPrint(string, aigpy.cmd.TextColor.Yellow, None)
-        ret = input("")
-        return ret == '1'
+        return Printf.enter(string) == '1'
 
     @staticmethod
     def enterPath(string, errmsg, retWord='0', default=""):
@@ -307,11 +297,8 @@ class Printf(object):
             ["Flags", flag or None],
         ])
         print(tb)
-        logging.info("====album " + str(data.id) + "====\n" +
-                     "title:" + data.title + "\n" +
-                     "track num:" + str(data.numberOfTracks) + "\n" +
-                     "video num:" + str(data.numberOfVideos) + "\n" +
-                     "==================================")
+        logging.info("Album %s: title=%s tracks=%s videos=%s",
+                     data.id, data.title, data.numberOfTracks, data.numberOfVideos)
 
     @staticmethod
     def track(data: Track, stream: StreamUrl = None):
@@ -336,12 +323,9 @@ class Printf(object):
                 tb.add_row(["Requested-Q", str(stream.requestedQuality)])
                 tb.add_row(["Fallback", f"{stream.fallbackQuality} ({stream.fallbackReason})"])
         print(tb)
-        logging.info("====track " + str(data.id) + "====\n" + \
-                     "title:" + data.title + "\n" + \
-                     "version:" + str(data.version) + "\n" + \
-                     "quality:" + str(getattr(stream, 'soundQuality', '')) + "\n" + \
-                     "fallback:" + str(getattr(stream, 'fallbackError', '')) + "\n" + \
-                     "==================================")
+        logging.info("Track %s: title=%s version=%s quality=%s fallback=%s",
+                     data.id, data.title, data.version,
+                     getattr(stream, 'soundQuality', ''), getattr(stream, 'fallbackError', ''))
 
     @staticmethod
     def video(data: Video, stream: VideoStreamUrl = None):
@@ -356,10 +340,7 @@ class Printf(object):
             tb.add_row(["Get-Q", str(stream.resolution)])
             tb.add_row(["Get-Codec", str(stream.codec)])
         print(tb)
-        logging.info("====video " + str(data.id) + "====\n" +
-                     "title:" + data.title + "\n" +
-                     "version:" + str(data.version) + "\n" +
-                     "==================================")
+        logging.info("Video %s: title=%s version=%s", data.id, data.title, data.version)
 
     @staticmethod
     def artist(data: Artist, num, countLabel="Number of albums"):
@@ -370,10 +351,7 @@ class Printf(object):
             [LANG.select.MODEL_TYPE, str(data.type)],
         ])
         print(tb)
-        logging.info("====artist " + str(data.id) + "====\n" +
-                     "name:" + data.name + "\n" +
-                     countLabel.lower() + ":" + str(num) + "\n" +
-                     "==================================")
+        logging.info("Artist %s: name=%s %s=%s", data.id, data.name, countLabel.lower(), num)
 
     @staticmethod
     def playlist(data):
@@ -383,11 +361,8 @@ class Printf(object):
             [LANG.select.MODEL_VIDEO_NUMBER, data.numberOfVideos],
         ])
         print(tb)
-        logging.info("====playlist " + str(data.uuid) + "====\n" +
-                     "title:" + data.title + "\n" +
-                     "track num:" + str(data.numberOfTracks) + "\n" +
-                     "video num:" + str(data.numberOfVideos) + "\n" +
-                     "==================================")
+        logging.info("Playlist %s: title=%s tracks=%s videos=%s",
+                     data.uuid, data.title, data.numberOfTracks, data.numberOfVideos)
 
     @staticmethod
     def mix(data):
@@ -397,14 +372,11 @@ class Printf(object):
             [LANG.select.MODEL_VIDEO_NUMBER, len(data.videos)],
         ])
         print(tb)
-        logging.info("====Mix " + str(data.id) + "====\n" +
-                     "track num:" + str(len(data.tracks)) + "\n" +
-                     "video num:" + str(len(data.videos)) + "\n" +
-                     "==================================")
+        logging.info("Mix %s: tracks=%s videos=%s", data.id, len(data.tracks), len(data.videos))
 
     @staticmethod
     def apikeys(items):
-        print("Tidal clients")
+        print("TIDAL clients")
         if Printf._isCompact():
             for item in items:
                 print(f"{item['index']} - {item['platform']}")

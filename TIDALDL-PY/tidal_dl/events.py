@@ -29,11 +29,7 @@ from .download import (
     downloadTracks, downloadVideo, downloadVideos,
 )
 
-'''
-=================================
-START DOWNLOAD
-=================================
-'''
+# --------------------------------------------------------------- downloads
 
 
 def _resolveAlbumForDownload(obj: Album) -> Album:
@@ -213,11 +209,7 @@ def start(string, videoOnly=False, progress=None):
     return success if sawItem else False
 
 
-'''
-=================================
-CHANGE SETTINGS
-=================================
-'''
+# ---------------------------------------------------------------- settings
 
 
 def changePathSettings():
@@ -283,18 +275,14 @@ def changeSettings():
     SETTINGS.multiThread = Printf.enterBool(LANG.select.CHANGE_MULITHREAD_DOWNLOAD)
     if SETTINGS.multiThread:
         try:
-            SETTINGS.concurrentTracks = min(8, max(1, int(Printf.enter("Concurrent tracks (1-8):"))))
-            SETTINGS.segmentsPerTrack = min(8, max(1, int(Printf.enter("Segments per track (1-8):"))))
+            tracks = min(8, max(1, int(Printf.enter("Concurrent tracks (1-8):"))))
+            segments = min(8, max(1, int(Printf.enter("Segments per track (1-8):"))))
+            SETTINGS.concurrentTracks, SETTINGS.segmentsPerTrack = tracks, segments
         except (TypeError, ValueError):
             Printf.info("Keeping existing concurrency limits.")
     SETTINGS.usePlaylistFolder = Printf.enterBool(LANG.select.SETTING_USE_PLAYLIST_FOLDER + "('0'-No,'1'-Yes):")
     SETTINGS.downloadDelay = Printf.enterBool(LANG.select.CHANGE_USE_DOWNLOAD_DELAY)
-    interval_prompt = getattr(
-        LANG.select,
-        "CHANGE_REQUEST_INTERVAL_SECONDS",
-        "Request delay seconds (0=off, 30 or 60 can help rate limits):",
-    )
-    interval = Printf.enter(interval_prompt)
+    interval = Printf.enter(LANG.select.CHANGE_REQUEST_INTERVAL_SECONDS)
     try:
         seconds = float(interval)
         if not math.isfinite(seconds) or not 0 <= seconds <= 300:
@@ -302,17 +290,8 @@ def changeSettings():
         SETTINGS.requestIntervalSeconds = seconds
     except (TypeError, ValueError):
         Printf.info("Keeping existing request delay seconds.")
-    SETTINGS.adaptiveRateLimit = Printf.enterBool(getattr(
-        LANG.select,
-        "CHANGE_ADAPTIVE_RATE_LIMIT",
-        "Automatically adapt request delay after HTTP 429 rate limits('0'-No,'1'-Yes):",
-    ))
-    SETTINGS.saveAsFlac = Printf.enterBool(getattr(
-        LANG.select,
-        "CHANGE_SAVE_AS_FLAC",
-        "Save FLAC streams as .flac files when the stream is FLAC and ffmpeg can remux it "
-        "(High quality remains M4A)('0'-No,'1'-Yes):",
-    ))
+    SETTINGS.adaptiveRateLimit = Printf.enterBool(LANG.select.CHANGE_ADAPTIVE_RATE_LIMIT)
+    SETTINGS.saveAsFlac = Printf.enterBool(LANG.select.CHANGE_SAVE_AS_FLAC)
     language = Printf.enter(LANG.select.CHANGE_LANGUAGE + "(" + LANG.getLangChoicePrint() + "):")
     # Store the numeric index like the GUI does; invalid input keeps the current language.
     if LANG.getLangName(language) and str(language).strip().isdigit():
@@ -327,9 +306,9 @@ def changeSettings():
 def changeApiKey():
     item = apiKey.getItem(SETTINGS.apiKeyIndex)
 
-    Printf.info(f'Current APIKeys: {str(SETTINGS.apiKeyIndex)} {item["platform"]}-{item["formats"]}')
+    Printf.info(f'Current client: {SETTINGS.apiKeyIndex} {item["platform"]} ({item["formats"]})')
     Printf.apikeys(apiKey.getItems())
-    index = int(Printf.enterLimit("APIKEY index:", LANG.select.MSG_INPUT_ERR, apiKey.getLimitIndexs()))
+    index = int(Printf.enterLimit("Client index:", LANG.select.MSG_INPUT_ERR, apiKey.getLimitIndexs()))
 
     if index != SETTINGS.apiKeyIndex:
         SETTINGS.apiKeyIndex = index
@@ -340,11 +319,7 @@ def changeApiKey():
     return False
 
 
-'''
-=================================
-LOGIN
-=================================
-'''
+# ------------------------------------------------------------------- login
 
 
 def _displayTime(seconds, granularity=2):
@@ -398,7 +373,7 @@ def loginByWeb():
     except DownloadCancelled:
         raise
     except Exception as e:
-        Printf.err(f"Login failed.{str(e)}")
+        Printf.err(f"Login failed: {e}")
         return False
 
 

@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangFilipino(object):
+from .english import LangEnglish
+
+
+class LangFilipino(LangEnglish):
     SETTING = "SETTINGS"
     VALUE = "VALUE"
     SETTING_DOWNLOAD_PATH = "Paroroonan ng Download"

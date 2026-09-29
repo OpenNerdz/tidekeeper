@@ -67,6 +67,31 @@ def getDefaultAudioQualityPriority():
     return audio_quality_fallbacks(AudioQuality.Max)
 
 
+_PATH_FORMAT_SETTINGS = {
+    Type.Album: 'albumFolderFormat',
+    Type.Playlist: 'playlistFolderFormat',
+    Type.Track: 'trackFileFormat',
+    Type.Video: 'videoFileFormat',
+}
+
+# Common names and TIDAL API labels accepted wherever a quality is typed.
+_AUDIO_QUALITY_ALIASES = {
+    "aac96": AudioQuality.Normal,
+    "low": AudioQuality.Normal,
+    "lowest": AudioQuality.Normal,
+    "normal": AudioQuality.Normal,
+    "aac320": AudioQuality.High,
+    "high": AudioQuality.High,
+    "flac": AudioQuality.HiFi,
+    "hifi": AudioQuality.HiFi,
+    "lossless": AudioQuality.HiFi,
+    "hires": AudioQuality.Master,
+    "hireslossless": AudioQuality.Max,
+    "dolbyatmos": AudioQuality.Atmos,
+    "atmos": AudioQuality.Atmos,
+}
+
+
 class Settings(aigpy.model.ModelBase):
     checkExist = True
     includeEP = True
@@ -101,41 +126,17 @@ class Settings(aigpy.model.ModelBase):
         self.audioQualityPriority = list(type(self).audioQualityPriority)
 
     def getDefaultPathFormat(self, type: Type):
-        if type == Type.Album:
-            return R"{ArtistName}/{Flag} {AlbumTitle} [{AlbumID}] [{AlbumYear}]"
-        elif type == Type.Playlist:
-            return R"Playlist/{PlaylistName} [{PlaylistUUID}]"
-        elif type == Type.Track:
-            return R"{TrackNumber} - {ArtistName} - {TrackTitle}{ExplicitFlag}"
-        elif type == Type.Video:
-            return R"{VideoNumber} - {ArtistName} - {VideoTitle}{ExplicitFlag}"
-        return ""
+        attribute = _PATH_FORMAT_SETTINGS.get(type)
+        return getattr(Settings, attribute) if attribute else ""
 
     def getAudioQualityOrNone(self, value):
+        if isinstance(value, AudioQuality):
+            return value
         normalized = str(value).split("(", 1)[0].strip()
         alias = ''.join(ch for ch in normalized.lower() if ch.isalnum())
-        aliases = {
-            "aac96": AudioQuality.Normal,
-            "low": AudioQuality.Normal,
-            "lowest": AudioQuality.Normal,
-            "normal": AudioQuality.Normal,
-            "aac320": AudioQuality.High,
-            "high": AudioQuality.High,
-            "flac": AudioQuality.HiFi,
-            "hifi": AudioQuality.HiFi,
-            "lossless": AudioQuality.HiFi,
-            "hires": AudioQuality.Master,
-            "hireslossless": AudioQuality.Max,
-            "dolbyatmos": AudioQuality.Atmos,
-            "atmos": AudioQuality.Atmos,
-        }
-        if alias in aliases:
-            return aliases[alias]
+        if alias in _AUDIO_QUALITY_ALIASES:
+            return _AUDIO_QUALITY_ALIASES[alias]
         for item in AudioQuality:
-            if item == value:
-                return item
-            if item.name == normalized:
-                return item
             if normalized.lower() == item.name.lower():
                 return item
         return None
@@ -314,7 +315,7 @@ def syncPlaybackRateLimiter():
     if SETTINGS.downloadDelay is False:
         PLAYBACK_RATE_LIMITER.minInterval = 0.0
         return
-    PLAYBACK_RATE_LIMITER.minInterval = max(0.0, float(getattr(SETTINGS, 'requestIntervalSeconds', 1.0) or 0.0))
+    PLAYBACK_RATE_LIMITER.minInterval = max(0.0, float(SETTINGS.requestIntervalSeconds or 0.0))
 
 
 # Singleton

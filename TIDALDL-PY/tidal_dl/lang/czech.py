@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangCzech(object):
+from .english import LangEnglish
+
+
+class LangCzech(LangEnglish):
     SETTING = "Nastavení"
     VALUE = "Hodnota"
     SETTING_DOWNLOAD_PATH = "Umístění staženého souboru"

@@ -17,7 +17,7 @@ import hashlib
 import re
 import unicodedata
 
-from .enums import AudioQuality, Type
+from .enums import SOUND_QUALITIES, AudioQuality, Type, audio_quality_label
 from .model import StreamUrl
 from .tidal import TIDAL_API
 from .settings import SETTINGS
@@ -32,6 +32,11 @@ MAX_COMPONENT_BYTES = 240
 # Leave room for extensions, receipts, and nested processing/remux suffixes
 # (including two process IDs) on filesystems with a 255-byte component limit.
 MAX_MEDIA_STEM_BYTES = 200
+
+
+def downloadRoot():
+    """The configured download folder with ``~`` expanded, as used for every write."""
+    return os.path.expanduser(SETTINGS.downloadPath or '.')
 
 
 def _truncateComponent(value, original, max_bytes=MAX_COMPONENT_BYTES):
@@ -63,7 +68,6 @@ def _fixPath(name: str):
     if stem in WINDOWS_RESERVED_NAMES:
         value = '_' + value
     return _truncateComponent(value, original)
-
 
 
 def _safeTemplatePath(path):
@@ -112,16 +116,8 @@ def _getExtension(stream: StreamUrl):
 
 def _getStreamQuality(stream: StreamUrl):
     quality = (getattr(stream, 'soundQuality', None) or '').strip()
-    labels = {
-        'DOLBY_ATMOS': 'Dolby Atmos',
-        'HI_RES_LOSSLESS': 'Max',
-        'HI_RES': 'Master',
-        'LOSSLESS': 'HiFi',
-        'HIGH': 'High',
-        'LOW': 'Normal',
-    }
-    if quality in labels:
-        return labels[quality]
+    if quality in SOUND_QUALITIES:
+        return audio_quality_label(SOUND_QUALITIES[quality])
     return quality.replace('_', ' ').title() if quality else ''
 
 
@@ -178,7 +174,8 @@ def getAlbumPath(album):
     retpath = retpath.replace(R"{ReleaseDate}", _fixPath(_tokenValue(album.releaseDate)))
     retpath = retpath.replace(R"{RecordType}", _tokenValue(album.type))
     retpath = retpath.replace(R"{None}", "")
-    return f"{SETTINGS.downloadPath}/{_safeTemplatePath(retpath.strip())}"
+    return f"{downloadRoot()}/{_safeTemplatePath(retpath.strip())}"
+
 
 def getPlaylistPath(playlist):
     playlistName = _fixPath(playlist.title)
@@ -189,11 +186,11 @@ def getPlaylistPath(playlist):
         retpath = SETTINGS.getDefaultPathFormat(Type.Playlist)
     retpath = retpath.replace(R"{PlaylistUUID}", str(playlist.uuid))
     retpath = retpath.replace(R"{PlaylistName}", playlistName)
-    return f"{SETTINGS.downloadPath}/{_safeTemplatePath(retpath)}"
+    return f"{downloadRoot()}/{_safeTemplatePath(retpath)}"
 
 
 def getTrackPath(track, stream, album=None, playlist=None):
-    base = os.path.normpath(os.path.expanduser(SETTINGS.downloadPath or '.'))
+    base = os.path.normpath(downloadRoot())
     number = str(track.trackNumber).rjust(2, '0')
     if album is not None:
         base = getAlbumPath(album)
@@ -253,7 +250,7 @@ def getTrackPath(track, stream, album=None, playlist=None):
 
 
 def getVideoPath(video, album=None, playlist=None):
-    base = SETTINGS.downloadPath + '/Video/'
+    base = os.path.join(downloadRoot(), 'Video')
     if album is not None and album.title is not None:
         base = getAlbumPath(album)
     elif playlist is not None and SETTINGS.usePlaylistFolder:
@@ -292,8 +289,9 @@ def getVideoPath(video, album=None, playlist=None):
     retpath = retpath.replace(R"{VideoID}", str(video.id))
     return os.path.join(base, _safeMediaPath(retpath.strip(), extension))
 
+
 def openPath(path):
-    target = os.path.abspath(os.path.expanduser(path or SETTINGS.downloadPath))
+    target = os.path.abspath(os.path.expanduser(path or downloadRoot()))
     if os.path.isfile(target):
         target = os.path.dirname(target)
     os.makedirs(target, exist_ok=True)
@@ -305,6 +303,7 @@ def openPath(path):
     else:
         subprocess.Popen(["xdg-open", target])
     return target
+
 
 class Paths(aigpy.model.ModelBase):
     homePathOverride = None
@@ -334,10 +333,8 @@ class Paths(aigpy.model.ModelBase):
     def getProfilePath(self):
         return self._getHomePath() + '/.tidal-dl.json'
 
-
     def getConfigDirectory(self):
         return os.path.dirname(self.getProfilePath()) or os.path.abspath("./")
-
 
     def getPathSummary(self):
         return [
@@ -347,6 +344,7 @@ class Paths(aigpy.model.ModelBase):
             ("Token file", self.getTokenPath()),
             ("Log file", self.getLogPath()),
         ]
+
 
 # Singleton
 PATHS = Paths()

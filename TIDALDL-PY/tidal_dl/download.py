@@ -30,7 +30,7 @@ import requests
 from .decryption import decrypt_file, decrypt_security_token
 from .enums import AudioQuality, Type
 from .model import Album, Lyrics, Playlist, Track, Video
-from .paths import getAlbumPath, getTrackPath, getVideoPath
+from .paths import downloadRoot, getAlbumPath, getTrackPath, getVideoPath
 from .printf import Printf
 from .settings import SETTINGS
 from .tidal import TIDAL_API
@@ -116,7 +116,7 @@ def _removeDir(path):
 
 
 def _failedTrackLogPath():
-    return os.path.join(SETTINGS.downloadPath or ".", FAILED_TRACKS_FILE)
+    return os.path.join(downloadRoot(), FAILED_TRACKS_FILE)
 
 
 def _tidalTrackUrl(track):
@@ -189,7 +189,7 @@ def _httpRequest(method, url, attempts=DOWNLOAD_RETRIES, **kwargs):
         response = None
         try:
             current_url = url
-            for redirect_count in range(6):
+            for _ in range(6):
                 validate_media_url(current_url)
                 response = _httpSession().request(
                     method, current_url, timeout=DOWNLOAD_TIMEOUT, allow_redirects=False, **kwargs
@@ -354,11 +354,6 @@ def _isCompleteLocalFile(path, expectedSize=-1):
     if expectedSize > 0:
         return size == expectedSize
     return True
-
-
-def _isReusableAssembledFile(path, expectedSize=-1):
-    """Validate an output whose completed transfer marker matched its source."""
-    return _isCompleteLocalFile(path, expectedSize)
 
 
 def _verifyLocalSize(path, expectedSize, label="download"):
@@ -646,7 +641,7 @@ def _downloadUrls(
     # Already-complete assembled file (e.g. decrypt failed after CDN success).
     # Only reuse when the remote size is known and matches — never skip a
     # download solely because a local file happens to exist.
-    if source_matches and _isReusableAssembledFile(outputPath, totalSize):
+    if source_matches and _isCompleteLocalFile(outputPath, totalSize):
         _noteProgress(progress, userProgress, _localFileSize(outputPath))
         _removeDir(_partsDirectory(outputPath))
         return True, ''
@@ -746,7 +741,7 @@ def _downloadErrorHint(err):
         return " (hint: check network/VPN/proxy/firewall, or run tidekeeper --doctor)"
     if any(item in text for item in ("permission", "denied", "access is denied", "readonly")):
         return " (hint: choose a writable download folder outside protected system directories)"
-    if "disk" in text or "space" in text or "no space" in text:
+    if any(item in text for item in ("no space left", "disk full", "not enough space", "quota exceeded")):
         return " (hint: check available disk space)"
     if any(item in text for item in ("not ready for streaming", "not ready for playback", "asset is not ready")):
         return " (hint: retry later, raise the request interval in settings, or try a lower quality)"
@@ -1223,7 +1218,7 @@ def downloadCover(album):
     check, err = _downloadUrls([url], path, SETTINGS.showProgress, threadNum=1)
     if not check:
         msg = str(err)
-        Printf.err(f"DL Cover[{album.title}] failed: {msg}")
+        Printf.err(f"DL Cover '{album.title}' failed: {msg}")
         return False, msg
     return True, ''
 
@@ -1271,7 +1266,7 @@ def downloadAlbumInfo(album, tracks):
     except DownloadCancelled:
         raise
     except Exception as e:
-        Printf.err(f"Save AlbumInfo.txt [{getattr(album, 'title', '')}] failed: {str(e)}")
+        Printf.err(f"Save AlbumInfo.txt '{getattr(album, 'title', '')}' failed: {e}")
         return False
 
 
@@ -1317,7 +1312,7 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
         if userProgress is not None:
             userProgress.updateStream(stream)
         Printf.video(video, stream)
-        logging.info("[DL Video] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.m3u8Url)
+        logging.info("[DL Video] name=%s url=%s", aigpy.path.getFileName(path), stream.m3u8Url)
 
         _ensureParentDir(path)
 
@@ -1326,15 +1321,15 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
             m3u8content = response_bytes(response, MAX_MANIFEST_BYTES, 'HLS manifest')
             manifest_url = response.url or stream.m3u8Url
             if not m3u8content:
-                Printf.err(f"DL Video[{title}] getM3u8 failed.")
-                return False, "GetM3u8 failed."
+                Printf.err(f"DL Video '{title}' failed: the video playlist was empty.")
+                return False, "Video playlist was empty."
         finally:
             response.close()
 
         urls = hls_segments(m3u8content, manifest_url)
         if len(urls) <= 0:
-            Printf.err(f"DL Video[{title}] getTsUrls failed.")
-            return False, "GetTsUrls failed."
+            Printf.err(f"DL Video '{title}' failed: the video playlist has no segments.")
+            return False, "Video playlist has no segments."
 
         check, msg = _downloadUrls(
             urls,
@@ -1352,12 +1347,12 @@ def downloadVideo(video: Video, album: Album = None, playlist: Playlist = None, 
             Printf.success(title)
             return True, ''
         else:
-            Printf.err(f"DL Video[{title}] failed.{msg}")
+            Printf.err(f"DL Video '{title}' failed: {msg}")
             return False, msg
     except DownloadCancelled:
         raise
     except Exception as e:
-        Printf.err(f"DL Video[{title}] failed.{str(e)}")
+        Printf.err(f"DL Video '{title}' failed: {e}")
         return False, str(e)
     finally:
         destination.close()
@@ -1485,7 +1480,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             return True, ''
 
         # download
-        logging.info("[DL Track] name=" + aigpy.path.getFileName(path) + "\nurl=" + stream.url)
+        logging.info("[DL Track] name=%s url=%s", aigpy.path.getFileName(path), stream.url)
 
         _ensureParentDir(path)
 

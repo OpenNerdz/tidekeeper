@@ -14,7 +14,7 @@ import tidal_dl
 from tidal_dl import download
 from tidal_dl.enums import Type, VideoQuality
 from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend, queue_item
-from tidal_dl.manifests import best_dash_representation, dash_segments, hls_segments, hls_variants
+from tidal_dl.manifests import best_dash_representation, dash_representations, hls_segments, hls_variants
 from tidal_dl.paths import PATHS
 from tidal_dl.runtime import DownloadCancelled, job_context, redact, run_process
 from tidal_dl.settings import SETTINGS, TOKEN, Settings
@@ -331,7 +331,7 @@ class ReliabilityTests(unittest.TestCase):
           <SegmentTemplate timescale="1" initialization="$RepresentationID$/init" media="$Time%03d$.m4s">
           <SegmentTimeline><S t="0" d="2" r="-1"/></SegmentTimeline></SegmentTemplate>
           <Representation id="audio"/></AdaptationSet></Period></MPD>'''
-        self.assertEqual(dash_segments(manifest), [['https://cdn.invalid/audio/init', 'https://cdn.invalid/000.m4s',
+        self.assertEqual([item['urls'] for item in dash_representations(manifest)], [['https://cdn.invalid/audio/init', 'https://cdn.invalid/000.m4s',
                                                   'https://cdn.invalid/002.m4s', 'https://cdn.invalid/004.m4s']])
 
     def test_dash_selects_highest_fidelity_representation(self):
@@ -349,9 +349,9 @@ class ReliabilityTests(unittest.TestCase):
 
     def test_dash_rejects_entities_and_oversized_input(self):
         with self.assertRaises(Exception):
-            dash_segments('<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><MPD>&xxe;</MPD>')
+            dash_representations('<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><MPD>&xxe;</MPD>')
         with self.assertRaisesRegex(ValueError, 'too large'):
-            dash_segments(' ' * (2 * 1024 * 1024 + 1))
+            dash_representations(' ' * (2 * 1024 * 1024 + 1))
 
     def test_numeric_dash_ids_are_not_bit_depths(self):
         manifest = '''<MPD mediaPresentationDuration="PT2S"><Period>

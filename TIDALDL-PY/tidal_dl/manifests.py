@@ -40,7 +40,6 @@ def hls_segments(content, base_url):
     expanded_bytes = 0
     lines = [line.strip() for line in _text(content).strip().splitlines()]
     for line in lines:
-        line = line.strip()
         if not line:
             continue
         if line.startswith('#EXT-X-KEY:'):
@@ -66,6 +65,7 @@ def hls_segments(content, base_url):
             urls.append(location)
         if len(urls) > MAX_SEGMENTS:
             raise ValueError('HLS manifest has too many segments.')
+    # Report specific unsupported features above before a generic header error.
     if not lines or lines[0] != '#EXTM3U':
         raise ValueError('Invalid HLS playlist header.')
     # RFC 8216 section 4.3.3.5: VOD playlists cannot change. They are
@@ -260,8 +260,3 @@ def _quality_key(representation):
 def best_dash_representation(content):
     """Select the highest-fidelity representation instead of trusting XML order."""
     return max(dash_representations(content), key=_quality_key)
-
-
-def dash_segments(content):
-    """Backward-compatible URL-only view used by older callers and tests."""
-    return [item['urls'] for item in dash_representations(content)]

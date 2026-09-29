@@ -9,7 +9,10 @@
 @Desc    :   Yanlış çeviri ya da düzenleme için 'realmutlusen@gmail.com'a mail atabilirsiniz.
 '''
 
-class LangTurkish(object):
+from .english import LangEnglish
+
+
+class LangTurkish(LangEnglish):
     SETTING = "AYARLAR"
     VALUE = "VERİLER"
     SETTING_DOWNLOAD_PATH = "İndirme konumu:"

@@ -57,6 +57,7 @@ _ALL_LANGUAGE_ = [
     ['Norwegian', LangNorwegian()],
 ]
 
+
 class Language(object):
     def __init__(self) -> None:
         self.select = LangEnglish()
@@ -80,16 +81,12 @@ class Language(object):
             return _ALL_LANGUAGE_[index][0]
         return ""
 
+    def choices(self):
+        """Selectable languages as (index, name) pairs; the index is what settings store."""
+        return [(index, name) for index, (name, _) in enumerate(_ALL_LANGUAGE_)]
+
     def getLangChoicePrint(self):
-        array = []
-        index = 0
-        while True:
-            name = self.getLangName(index)
-            if name == "":
-                break
-            array.append('\'' + str(index) + '\'-' + name)
-            index += 1
-        return ','.join(array)
+        return ','.join(f"'{index}'-{name}" for index, name in self.choices())
 
 
 LANG = Language()

@@ -162,8 +162,44 @@ def fix_height(*widgets: QWidget, height: int = CONTROL_HEIGHT) -> None:
 # Brand
 # --------------------------------------------------------------------------- #
 
+def paint_brand_mark(painter: QPainter, size: float) -> None:
+    """Draw the tide glyph (accent tile with two wave strokes) in a ``size`` square."""
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    # The glyph is designed on a 20px grid and scaled for larger icons.
+    painter.scale(size / 20.0, size / 20.0)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(TOKENS["accent"]))
+    painter.drawRoundedRect(QRectF(0, 0, 20, 20), 5, 5)
+    pen = QPen(QColor(TOKENS["on_accent"]))
+    pen.setWidthF(1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    for base in (7.5, 12.5):
+        path = QPainterPath(QPointF(4, base + 1))
+        path.cubicTo(QPointF(6, base - 1.5), QPointF(8, base - 1.5), QPointF(10, base + 1))
+        path.cubicTo(QPointF(12, base + 3.5), QPointF(14, base + 3.5), QPointF(16, base + 1))
+        painter.drawPath(path)
+    painter.restore()
+
+
+def brand_icon() -> QIcon:
+    """Application icon rendered from the brand mark at common platform sizes."""
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        paint_brand_mark(painter, size)
+        painter.end()
+        icon.addPixmap(pixmap)
+    return icon
+
+
 class BrandMark(QWidget):
-    """20px tide glyph: accent tile with two wave strokes."""
+    """20px tide glyph shown beside the wordmark."""
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -171,21 +207,7 @@ class BrandMark(QWidget):
 
     def paintEvent(self, event):  # noqa: N802 - Qt naming
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(TOKENS["accent"]))
-        painter.drawRoundedRect(QRectF(0, 0, 20, 20), 5, 5)
-        pen = QPen(QColor(TOKENS["on_accent"]))
-        pen.setWidthF(1.8)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        for base in (7.5, 12.5):
-            path = QPainterPath(QPointF(4, base + 1))
-            path.cubicTo(QPointF(6, base - 1.5), QPointF(8, base - 1.5), QPointF(10, base + 1))
-            path.cubicTo(QPointF(12, base + 3.5), QPointF(14, base + 3.5), QPointF(16, base + 1))
-            painter.drawPath(path)
+        paint_brand_mark(painter, 20)
         painter.end()
 
 

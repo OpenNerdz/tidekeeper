@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+<!-- release-title: Clearer errors and consistent download folders -->
+
+- Expand `~` in the download folder for every album, playlist, video, cover,
+  failure log, and doctor check; previously only single tracks honored it and
+  other downloads could land in a literal `~` folder.
+- Search the catalog when desktop search text matches a local folder name
+  (such as `download`); only `.txt` list files are treated as direct links.
+- Keep album, playlist, and artist downloads running when TIDAL omits a title.
+- Report readable errors such as "Get operation failed: Album not found"
+  instead of joined text or stale gateway pages, and only suggest checking disk
+  space for real out-of-space errors.
+- Show quality as Max, HiFi, High, or Normal in desktop results and the queue,
+  describe expired or unknown sessions naturally, confirm settings reloads, and
+  give the desktop app its own window and taskbar icon.
+- Fall back to English for settings labels missing from a translation, and apply
+  terminal concurrency changes only when both values are valid.
+- Simplify internal naming, option parsing, and duplicated quality tables; remove
+  unused manifest helpers and point-in-time review documents.
+
 ## 2026.9.28.2 - 2026-09-28
 
 <!-- release-title: Automated releases and faster builds -->

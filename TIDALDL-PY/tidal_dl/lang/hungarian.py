@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangHungarian(object):
+from .english import LangEnglish
+
+
+class LangHungarian(LangEnglish):
     SETTING = "BEÁLLÍTÁSOK"
     VALUE = "ÉRTÉK"
     SETTING_DOWNLOAD_PATH = "Letöltési útvonal"

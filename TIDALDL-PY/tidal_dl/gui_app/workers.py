@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from threading import RLock, Event
 
+from ..enums import SOUND_QUALITIES, audio_quality_label
 from ..runtime import DownloadCancelled, redact, job_context, check_cancelled
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
@@ -99,7 +100,7 @@ class ItemProgressReporter:
             elapsed = max(time.monotonic() - self._started, 0.05)
             return {'completed': self.completed, 'count': self.count, 'current': self.current,
                     'bytes': current, 'bytes_total': total, 'file_fraction': fraction,
-                    'speed': self._transferred / elapsed, 'eta': None,
+                    'speed': self._transferred / elapsed,
                     'actual_quality': ', '.join(sorted(self._qualities)),
                     'active': bool(active) or self.completed < self.count}
 
@@ -158,6 +159,8 @@ class ItemProgressReporter:
 
     def updateStream(self, stream):
         label = getattr(stream, 'soundQuality', '') or getattr(stream, 'resolution', '')
+        if label in SOUND_QUALITIES:
+            label = audio_quality_label(SOUND_QUALITIES[label])
         codec = getattr(stream, 'codec', '')
         bit_depth = getattr(stream, 'bitDepth', None)
         sample_rate = getattr(stream, 'sampleRate', None)

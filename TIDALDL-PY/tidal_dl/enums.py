@@ -25,6 +25,21 @@ AUDIO_QUALITY_ORDER = (
     AudioQuality.High, AudioQuality.Normal,
 )
 
+# TIDAL stream ``soundQuality`` values and the quality each one represents.
+SOUND_QUALITIES = {
+    'DOLBY_ATMOS': AudioQuality.Atmos,
+    'HI_RES_LOSSLESS': AudioQuality.Max,
+    'HI_RES': AudioQuality.Master,
+    'LOSSLESS': AudioQuality.HiFi,
+    'HIGH': AudioQuality.High,
+    'LOW': AudioQuality.Normal,
+}
+
+
+def audio_quality_label(quality):
+    """User-facing name for a quality, as shown in logs and filenames."""
+    return 'Dolby Atmos' if quality == AudioQuality.Atmos else quality.name
+
 
 def audio_quality_fallbacks(quality):
     """Order current qualities without reintroducing retired MQA requests."""

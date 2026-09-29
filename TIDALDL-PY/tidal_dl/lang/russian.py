@@ -9,7 +9,10 @@
 @Desc    :
 '''
 
-class LangRussian(object):
+from .english import LangEnglish
+
+
+class LangRussian(LangEnglish):
     SETTING = "НАСТРОЙКА"
     VALUE = "УСТАНОВКА"
     SETTING_DOWNLOAD_PATH = "Место сохранения"
