@@ -202,7 +202,7 @@ with output_lock(sys.argv[1]):
 
     def test_shared_root_fallback_uses_portable_key_and_shared_locking(self):
         target = str(self.root / 'Album' / 'track')
-        shared = self.root / '.tidekeeper-locks'
+        shared = Path(runtime._shared_lock_directory(target))
         calls = []
 
         @contextmanager
@@ -211,7 +211,7 @@ with output_lock(sys.argv[1]):
             yield True
 
         def prepare(directory, mode):
-            return os.path.abspath(directory) == os.path.abspath(shared)
+            return os.path.normcase(os.path.realpath(directory)) == os.path.normcase(os.path.realpath(shared))
 
         with mock.patch.object(runtime, '_prepare_lock_directory', side_effect=prepare), \
                 mock.patch.object(runtime, '_shared_key', return_value='Album/track') as shared_key, \
