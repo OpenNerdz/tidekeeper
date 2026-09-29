@@ -1,18 +1,27 @@
 """Validate the media tool boundary with generated, freely reusable fixtures."""
-import json
+
 import copy
-from pathlib import Path
+import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import requests
 
 from tidal_dl import download
 from tidal_dl.model import StreamUrl, Video, VideoStreamUrl
+from tidal_dl.runtime import DownloadCancelled, job_context, run_process
 from tidal_dl.settings import SETTINGS
+from tidal_dl.tidal import TidalAPI
+
+from fixtures import ApiFixture, ProfileFixture, TransferFixture
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'ffmpeg and ffprobe are required')
@@ -120,6 +129,100 @@ class MediaToolIntegrationTests(unittest.TestCase):
             SETTINGS.__dict__.clear()
             SETTINGS.__dict__.update(saved)
 
+
+class MediaProcessingTests(TransferFixture, unittest.TestCase):
+    def test_video_remux_failure_preserves_both_files(self):
+        part, final = self.root / 'video.part', self.root / 'video.mp4'
+        part.write_bytes(b'transport-stream')
+        final.write_bytes(b'previous-good-video')
+        with mock.patch.object(download.shutil, 'which', return_value='ffmpeg'), \
+             mock.patch.object(download.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stderr=b'bad stream')):
+            with self.assertRaisesRegex(RuntimeError, 'Video conversion failed'):
+                download._finalizeVideoFile(str(part), str(final))
+        self.assertEqual(part.read_bytes(), b'transport-stream')
+        self.assertEqual(final.read_bytes(), b'previous-good-video')
+
+    def test_missing_ffmpeg_does_not_create_fake_mp4(self):
+        part, final = self.root / 'video.part', self.root / 'video.mp4'
+        part.write_bytes(b'transport-stream')
+        with mock.patch.object(download.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(RuntimeError, 'ffmpeg'):
+                download._finalizeVideoFile(str(part), str(final))
+        self.assertTrue(part.exists())
+        self.assertFalse(final.exists())
+
+    def test_media_process_is_stopped_on_cancellation(self):
+        cancelled = threading.Event()
+        timer = threading.Timer(0.1, cancelled.set)
+        timer.start()
+        try:
+            with job_context(cancel=cancelled), self.assertRaises(DownloadCancelled):
+                run_process([sys.executable, '-c', 'import time; time.sleep(30)'], timeout=3)
+        finally:
+            timer.cancel()
+
+    def test_numeric_dash_id_does_not_reject_valid_probed_audio(self):
+        manifest = '''<MPD mediaPresentationDuration="PT2S"><Period>
+          <AdaptationSet contentType="audio" mimeType="audio/mp4">
+          <SegmentTemplate duration="2" initialization="init" media="$Number$.m4s"/>
+          <Representation id="99" codecs="flac" audioSamplingRate="44100"/>
+          </AdaptationSet></Period></MPD>'''
+        api = TidalAPI()
+        self.addCleanup(api.session.close)
+        stream = api._dashStreamUrl('1', 'LOSSLESS', manifest)
+        probe = SimpleNamespace(returncode=0, stdout=json.dumps({'streams': [{
+            'codec_name': 'flac', 'sample_rate': '44100', 'bits_per_raw_sample': '16', 'channels': 2,
+        }]}))
+        with mock.patch.object(download, '_localFileSize', return_value=8192), \
+                mock.patch.object(download.shutil, 'which', return_value='ffprobe'), \
+                mock.patch.object(download, 'run_process', return_value=probe):
+            facts = download._verifyMediaQuality('fixture.flac', stream)
+        self.assertEqual(facts['bitDepth'], 16)
+        self.assertEqual(facts['verifiedBy'], 'ffprobe')
+
+
+class FlacExportCancellationTests(ProfileFixture, unittest.TestCase):
+    def test_cancelled_flac_export_cleans_up_ffmpeg_output(self):
+        SETTINGS.saveAsFlac = True
+        source = self.root / 'track.m4a'
+        source.write_bytes(b'media')
+        temporary = self.root / f'track.flac.tmp.{os.getpid()}.flac'
+
+        def cancel(*args, **kwargs):
+            temporary.write_bytes(b'incomplete')
+            raise DownloadCancelled()
+
+        stream = SimpleNamespace(codec='flac', container='mp4', manifestMimeType='')
+        with mock.patch.object(download.shutil, 'which', return_value='ffmpeg'), \
+             mock.patch.object(download, 'run_process', side_effect=cancel), self.assertRaises(DownloadCancelled):
+            download._exportFlacFromContainer(str(source), stream)
+        self.assertFalse(temporary.exists())
+        self.assertEqual(source.read_bytes(), b'media')
+
+
+class MediaToolSafetyTests(ApiFixture, unittest.TestCase):
+    def test_media_tools_are_limited_to_local_media_formats(self):
+        source = self.root / 'audio.m4a'
+        source.write_bytes(b'media fixture' * 400)
+        completed = SimpleNamespace(returncode=0, stderr='', stdout=json.dumps({'streams': [{'codec_name': 'flac'}]}))
+        stream = StreamUrl()
+        stream.codec = 'flac'
+        with mock.patch.object(download.shutil, 'which', return_value='ffprobe'), \
+                mock.patch.object(download, 'run_process', return_value=completed) as process:
+            download._verifyMediaQuality(str(source), stream)
+        command = process.call_args.args[0]
+        self.assertEqual(command[command.index('-protocol_whitelist') + 1], 'file')
+        self.assertIn('-format_whitelist', command)
+
+    def test_small_invalid_audio_is_still_probed(self):
+        source = self.root / 'small.m4a'
+        source.write_bytes(b'incomplete media')
+        with mock.patch.object(download.shutil, 'which', return_value='ffprobe'), \
+                mock.patch.object(download, 'run_process', return_value=SimpleNamespace(
+                    returncode=1, stderr='Invalid media', stdout='')) as process, \
+                self.assertRaises(RuntimeError):
+            download._verifyMediaQuality(str(source), StreamUrl())
+        process.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()

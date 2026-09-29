@@ -1,11 +1,13 @@
 """Issue #65: a freshly authorized account must survive a playback rejection."""
+
 import base64
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 import tempfile
 import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
@@ -13,10 +15,13 @@ import requests
 from mutagen.flac import FLAC
 
 from tidal_dl import download, events, paths
-from tidal_dl.enums import AudioQuality
+from tidal_dl.enums import AudioQuality, VideoQuality
+from tidal_dl.model import VideoStreamUrl
 from tidal_dl.runtime import DownloadCancelled, job_context
 from tidal_dl.settings import SETTINGS, TokenSettings
-from tidal_dl.tidal import TidalAPI, TidalApiError, TidalStreamUnavailable
+from tidal_dl.tidal import API_BASE_PRIMARY, TidalAPI, TidalApiError, TidalStreamUnavailable
+
+from fixtures import ApiFixture, CatalogFixtures, playback_params
 
 
 def response(status=200, payload=None):
@@ -422,6 +427,245 @@ class PlaybackClientTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+
+class PlaybackSelectionTests(ApiFixture, unittest.TestCase):
+    def test_preview_playback_is_not_downloaded_as_full_audio_or_video(self):
+        payload = {'assetPresentation': 'PREVIEW'}
+        with mock.patch.object(self.api, '_getPlaybackData', return_value=payload):
+            with self.assertRaises(TidalStreamUnavailable):
+                self.api._getStandardStreamUrl(123, AudioQuality.High)
+            with self.assertRaises(TidalStreamUnavailable):
+                self.api.getVideoStreamUrl(123, VideoQuality.P720)
+
+    def test_video_resolution_stays_within_selected_maximum(self):
+        variants = []
+        for height in (360, 1080):
+            item = VideoStreamUrl()
+            item.resolutions = ['1920', str(height)]
+            variants.append(item)
+        payload = {'manifestMimeType': 'application/vnd.tidal.emu',
+                   'manifest': base64.b64encode(json.dumps({'urls': ['https://cdn.example/master']}).encode()).decode()}
+        with mock.patch.object(self.api, '_getPlaybackData', return_value=payload), \
+                mock.patch.object(self.api, '_getResolutionList', return_value=variants):
+            self.assertIs(self.api.getVideoStreamUrl(1, VideoQuality.P720), variants[0])
+            self.assertIs(self.api.getVideoStreamUrl(1, VideoQuality.P1080), variants[1])
+
+
+class PlaybackRequestTests(CatalogFixtures, unittest.TestCase):
+    def test_playback_asset_not_ready_retries_before_failing(self):
+        api = TidalAPI()
+        manifest = base64.b64encode(json.dumps({
+            "codecs": "flac",
+            "urls": ["https://example.invalid/track.flac"],
+            "mimeType": "audio/flac",
+        }).encode("utf-8")).decode("utf-8")
+
+        def fake_response(status_code, payload):
+            return SimpleNamespace(
+                status_code=status_code,
+                text=json.dumps(payload),
+                headers={},
+                close=mock.Mock(),
+                json=mock.Mock(return_value=payload),
+            )
+
+        old_delay = events.SETTINGS.downloadDelay
+        try:
+            events.SETTINGS.downloadDelay = False
+            with mock.patch.object(api, "_refreshSavedAccessToken", return_value=False), \
+                 mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+                 mock.patch.object(api.session, "get", side_effect=[
+                     fake_response(401, {"status": 401, "subStatus": 4005, "userMessage": "Asset is not ready for playback"}),
+                     fake_response(200, {
+                         "trackid": 123,
+                         "audioQuality": "LOSSLESS",
+                         "manifestMimeType": "application/vnd.tidal.bt",
+                         "manifest": manifest,
+                     }),
+                 ]):
+                data = api._getOnce(
+                    "tracks/123/playbackinfopostpaywall/v4",
+                    playback_params("LOSSLESS"),
+                    API_BASE_PRIMARY,
+                )
+
+            self.assertEqual(data["trackid"], 123)
+            sleep.assert_called_once_with(5)
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
+    def test_playback_403_does_not_retry(self):
+        api = TidalAPI()
+        old_delay = events.SETTINGS.downloadDelay
+        response = SimpleNamespace(
+            status_code=403,
+            text='{"errors":[{"code":"CLIENT_NOT_ENTITLED"}]}',
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={"errors": [{"code": "CLIENT_NOT_ENTITLED"}]}),
+        )
+        try:
+            events.SETTINGS.downloadDelay = False
+            with mock.patch.object(api.session, "get", return_value=response) as get_mock:
+                with self.assertRaises(TidalApiError) as ctx:
+                    api._getOnce(
+                        "tracks/456/playbackinfopostpaywall/v4",
+                        playback_params("LOSSLESS"),
+                        API_BASE_PRIMARY,
+                    )
+
+            self.assertEqual(ctx.exception.statusCode, 403)
+            self.assertEqual(get_mock.call_count, 1)
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
+    def test_blocked_playback_param_skips_repeat_probe(self):
+        api = TidalAPI()
+        api._playbackBlockedParams["LOSSLESS"] = float("inf")
+        uri = "data:application/dash+xml;base64," + base64.b64encode(
+            self._dash_manifest("flac").encode("utf-8")
+        ).decode("utf-8")
+
+        with mock.patch.object(api, "_getPlaybackData") as playback_get, mock.patch.object(
+            api,
+            "_getOpenApiTrackManifest",
+            return_value={"formats": ["FLAC"], "uri": uri},
+        ):
+            stream = api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
+
+        playback_get.assert_not_called()
+        self.assertEqual(stream.soundQuality, "LOSSLESS")
+
+    def test_hifi_stream_uses_openapi_flac_manifest(self):
+        api = TidalAPI()
+        uri = "data:application/dash+xml;base64," + base64.b64encode(
+            self._dash_manifest("flac").encode("utf-8")
+        ).decode("utf-8")
+
+        with mock.patch.object(api, "_getOpenApiTrackManifest", return_value={
+            "formats": ["FLAC"],
+            "uri": uri,
+        }) as openapi_get, mock.patch.object(
+            api,
+            "_getPlaybackData",
+            side_effect=Exception("Get operation err!Asset is not ready for playback"),
+        ) as playback_get:
+            stream = api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
+
+        self.assertEqual(stream.soundQuality, "LOSSLESS")
+        self.assertEqual(stream.codec, "flac")
+        self.assertEqual(stream.container, "mp4")
+        self.assertEqual(stream.url, "https://example.invalid/init.mp4")
+        self.assertEqual(stream.urls, [
+            "https://example.invalid/init.mp4",
+            "https://example.invalid/1.mp4",
+            "https://example.invalid/2.mp4",
+        ])
+        playback_get.assert_not_called()
+        openapi_get.assert_called_once_with(456, ["FLAC"])
+
+    def test_max_openapi_fallback_requests_flac_hires(self):
+        api = TidalAPI()
+        uri = "data:application/dash+xml;base64," + base64.b64encode(
+            self._dash_manifest("flac").encode("utf-8")
+        ).decode("utf-8")
+
+        with mock.patch.object(api, "_getOpenApiTrackManifest", return_value={
+            "formats": ["FLAC_HIRES", "FLAC"],
+            "uri": uri,
+        }) as openapi_get, mock.patch.object(
+            api,
+            "_getPlaybackData",
+            side_effect=Exception("Get operation err!Asset is not ready for playback"),
+        ):
+            stream = api.getStreamUrlByPriority(456, [AudioQuality.Max])
+
+        self.assertEqual(stream.soundQuality, "HI_RES_LOSSLESS")
+        openapi_get.assert_called_once_with(456, ["FLAC_HIRES", "FLAC"])
+
+    def test_openapi_manifest_falls_back_from_download_to_playback_usage(self):
+        api = TidalAPI()
+        payload = {"data": {"attributes": {"formats": ["FLAC"], "uri": "data:x,eyJ0ZXN0In0="}}}
+
+        def fake_once(track_id, formats, usage):
+            if usage == "DOWNLOAD":
+                raise TidalApiError("Track manifest request failed: HTTP 403", statusCode=403)
+            return payload["data"]["attributes"]
+
+        with mock.patch.object(api, "_getOpenApiTrackManifestOnce", side_effect=fake_once) as once_get:
+            attrs = api._getOpenApiTrackManifest(456, ["FLAC"])
+
+        self.assertEqual(attrs["formats"], ["FLAC"])
+        self.assertEqual(once_get.call_count, 2)
+        once_get.assert_any_call(456, ["FLAC"], "DOWNLOAD")
+        once_get.assert_any_call(456, ["FLAC"], "PLAYBACK")
+
+    def test_get_playback_data_tries_v4_before_legacy(self):
+        api = TidalAPI()
+        manifest = {
+            "trackid": 123,
+            "audioQuality": "HIGH",
+            "manifestMimeType": "application/vnd.tidal.bt",
+            "manifest": base64.b64encode(json.dumps({
+                "codecs": "aac",
+                "urls": ["https://example.invalid/track.m4a"],
+                "mimeType": "audio/mp4",
+            }).encode("utf-8")).decode("utf-8"),
+        }
+        calls = []
+
+        def fake_get_once(path, params, base):
+            calls.append((base, path))
+            if path.endswith("/v4"):
+                raise Exception("v4 unavailable")
+            return manifest
+
+        with mock.patch.object(api, "_getOnce", side_effect=fake_get_once):
+            data = api._getPlaybackData(123, playback_params("HIGH", prefetch=True))
+
+        self.assertEqual(data["trackid"], 123)
+        self.assertEqual(calls[0][1], "tracks/123/playbackinfopostpaywall/v4")
+        self.assertEqual(calls[1][1], "tracks/123/playbackinfopostpaywall")
+
+    def test_openapi_manifest_prerequisite_missing_retries_with_base_format(self):
+        api = TidalAPI()
+        payload = {"formats": ["FLAC"], "uri": "data:x,eyJ0ZXN0In0="}
+
+        def fake_once(track_id, formats, usage):
+            if "FLAC_HIRES" in formats:
+                raise TidalApiError(
+                    'Track manifest request failed: HTTP 403 '
+                    '{"errors":[{"status":"403","code":"PREREQUISITE_MISSING"}]}',
+                    403,
+                    ["PREREQUISITE_MISSING"],
+                )
+            return payload
+
+        with mock.patch.object(api, "_getOpenApiTrackManifestOnce", side_effect=fake_once) as once_get:
+            attrs = api._getOpenApiTrackManifest(456, ["FLAC_HIRES", "FLAC"])
+
+        self.assertEqual(attrs["formats"], ["FLAC"])
+        once_get.assert_any_call(456, ["FLAC_HIRES", "FLAC"], "DOWNLOAD")
+        once_get.assert_any_call(456, ["FLAC"], "DOWNLOAD")
+
+    def test_track_specific_403_does_not_block_playback_api_for_session(self):
+        api = TidalAPI()
+
+        prerequisite_error = TidalApiError(
+            "Get operation failed: HTTP 403", 403, ["PREREQUISITE_MISSING"]
+        )
+        api._markPlaybackParamBlocked("HI_RES_LOSSLESS", prerequisite_error)
+        self.assertNotIn("HI_RES_LOSSLESS", api._playbackBlockedParams)
+
+        stale_error = TidalApiError("Get operation failed: HTTP 404", 404, ["4022"])
+        api._markPlaybackParamBlocked("LOW", stale_error)
+        self.assertNotIn("LOW", api._playbackBlockedParams)
+
+        entitlement_error = TidalApiError(
+            "Get operation failed: HTTP 403", 403, ["CLIENT_NOT_ENTITLED"]
+        )
+        api._markPlaybackParamBlocked("HI_RES_LOSSLESS", entitlement_error)
+        self.assertIn("HI_RES_LOSSLESS", api._playbackBlockedParams)
 
 if __name__ == '__main__':
     unittest.main()

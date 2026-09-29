@@ -1,18 +1,21 @@
 import io
 import logging
-from pathlib import Path
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 import tidal_dl
-from tidal_dl import apiKey, events, printf
-from tidal_dl.printf import Printf
+from tidal_dl import apiKey, events, paths, printf
+from tidal_dl.enums import AudioQuality, VideoQuality
 from tidal_dl.paths import PATHS
+from tidal_dl.printf import Printf
 from tidal_dl.settings import SETTINGS, TOKEN
+
+from fixtures import ApiFixture, CatalogFixtures, TransferFixture
 
 
 class CliUiTests(unittest.TestCase):
@@ -314,6 +317,128 @@ class CliOutputTests(unittest.TestCase):
                 for key in keys:
                     self.assertTrue(getattr(LANG.select, key))
 
+
+class PrintfLockTests(unittest.TestCase):
+    def test_failed_console_write_releases_the_lock(self):
+        failure = UnicodeEncodeError("ascii", "x", 0, 1, "unencodable")
+        for method in (printf.Printf.err, printf.Printf.info, printf.Printf.success):
+            with self.subTest(method=method.__name__):
+                with mock.patch.object(printf, "print", side_effect=failure):
+                    with self.assertRaises(UnicodeEncodeError):
+                        method("message")
+                self.assertFalse(printf.print_mutex.locked())
+
+
+class ConfigOverrideTests(TransferFixture, unittest.TestCase):
+    def test_config_override_equals_and_space_forms(self):
+        old = PATHS.homePathOverride
+        self.addCleanup(setattr, PATHS, 'homePathOverride', old)
+        for args in [['--configPathOverride=' + str(self.root)], ['--configPathOverride', str(self.root)],
+                     ['-c', str(self.root)], ['-c' + str(self.root)]]:
+            with self.subTest(args=args), mock.patch.object(sys, 'argv', ['tidekeeper', *args, '--help']):
+                tidal_dl.preMainCommand()
+                self.assertEqual(PATHS.homePathOverride, str(self.root))
+
+
+class CommandOptionTests(ApiFixture, unittest.TestCase):
+    def test_help_and_version_do_not_read_or_write_a_profile(self):
+        for flag in ('--help', '--version'):
+            with self.subTest(flag=flag), mock.patch('sys.argv', ['tidekeeper', flag]), \
+                    mock.patch.object(SETTINGS, 'read') as read, \
+                    mock.patch.object(tidal_dl, 'configure_logging') as configure, \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(tidal_dl.main(), 0)
+            read.assert_not_called()
+            configure.assert_not_called()
+
+    def test_invalid_cli_options_leave_settings_unchanged(self):
+        old = dict(SETTINGS.__dict__)
+        for flags in (['-o', 'different', '-q', 'typo'], ['--quality-priority', 'High,typo'],
+                      ['-r', '999'], ['--quality-priority', ''], ['unrecognized'], ['--output', '']):
+            with self.subTest(flags=flags), mock.patch('sys.argv', ['tidekeeper', *flags]), \
+                    mock.patch.object(SETTINGS, 'save') as save, mock.patch.object(Printf, 'err'):
+                self.assertEqual(tidal_dl.mainCommand(), 1)
+                save.assert_not_called()
+            self.assertEqual(SETTINGS.__dict__, old)
+
+    def test_valid_cli_options_save_once(self):
+        with mock.patch('sys.argv', ['tidekeeper', '-q', 'HiFi', '-r', '1080p', '--paths']), \
+                mock.patch.object(SETTINGS, 'save') as save, mock.patch.object(Printf, 'paths'):
+            self.assertEqual(tidal_dl.mainCommand(), 0)
+        self.assertEqual(SETTINGS.audioQuality, AudioQuality.HiFi)
+        self.assertEqual(SETTINGS.videoQuality, VideoQuality.P1080)
+        save.assert_called_once()
+
+    def test_cli_write_failure_rolls_back_runtime_settings(self):
+        old = dict(SETTINGS.__dict__)
+        with mock.patch('sys.argv', ['tidekeeper', '-q', 'Normal']), \
+                mock.patch.object(SETTINGS, 'save', side_effect=OSError('Read-only folder')), \
+                mock.patch.object(Printf, 'err'):
+            self.assertEqual(tidal_dl.mainCommand(), 1)
+        self.assertEqual(SETTINGS.__dict__, old)
+
+    def test_option_values_are_not_mistaken_for_config_flags(self):
+        with mock.patch('sys.argv', ['tidekeeper', '-o', '-collection', '--paths']), \
+                mock.patch.object(paths.PATHS, 'homePathOverride', None):
+            tidal_dl.preMainCommand()
+            self.assertIsNone(paths.PATHS.homePathOverride)
+
+
+class CommandBehaviorTests(CatalogFixtures, unittest.TestCase):
+    def test_link_command_aborts_when_login_fails(self):
+        old_argv = sys.argv
+        sys.argv = ["tidekeeper", "--link", "123456"]
+        try:
+            with mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
+                 mock.patch.object(tidal_dl, "loginByConfig", return_value=False), \
+                 mock.patch.object(tidal_dl, "loginByWeb", return_value=False), \
+                 mock.patch.object(tidal_dl, "start") as start:
+                tidal_dl.mainCommand()
+        finally:
+            sys.argv = old_argv
+
+        start.assert_not_called()
+
+    def test_quality_priority_command_sets_fallback_order(self):
+        old_argv = sys.argv
+        old_quality = tidal_dl.SETTINGS.audioQuality
+        old_priority = tidal_dl.SETTINGS.audioQualityPriority
+        sys.argv = ["tidekeeper", "--quality-priority", "Atmos,High,HiFi,Normal"]
+        try:
+            with mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
+                 mock.patch.object(tidal_dl.SETTINGS, "save") as save:
+                tidal_dl.mainCommand()
+
+            self.assertEqual(tidal_dl.SETTINGS.audioQuality, AudioQuality.Atmos)
+            self.assertEqual(tidal_dl.SETTINGS.audioQualityPriority, [
+                AudioQuality.Atmos,
+                AudioQuality.High,
+                AudioQuality.HiFi,
+                AudioQuality.Normal,
+            ])
+            save.assert_called()
+        finally:
+            sys.argv = old_argv
+            tidal_dl.SETTINGS.audioQuality = old_quality
+            tidal_dl.SETTINGS.audioQualityPriority = old_priority
+
+    def test_quality_command_clears_fallback_order(self):
+        old_argv = sys.argv
+        old_quality = tidal_dl.SETTINGS.audioQuality
+        old_priority = tidal_dl.SETTINGS.audioQualityPriority
+        sys.argv = ["tidekeeper", "--quality", "High"]
+        try:
+            tidal_dl.SETTINGS.audioQualityPriority = [AudioQuality.Atmos, AudioQuality.High]
+            with mock.patch.object(tidal_dl.aigpy.path, "mkdirs", return_value=True), \
+                 mock.patch.object(tidal_dl.SETTINGS, "save"):
+                tidal_dl.mainCommand()
+
+            self.assertEqual(tidal_dl.SETTINGS.audioQuality, AudioQuality.High)
+            self.assertEqual(tidal_dl.SETTINGS.audioQualityPriority, [])
+        finally:
+            sys.argv = old_argv
+            tidal_dl.SETTINGS.audioQuality = old_quality
+            tidal_dl.SETTINGS.audioQualityPriority = old_priority
 
 if __name__ == "__main__":
     unittest.main()

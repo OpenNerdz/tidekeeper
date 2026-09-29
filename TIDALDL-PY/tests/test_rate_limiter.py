@@ -1,7 +1,9 @@
+import json
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from tidal_dl import events
 from tidal_dl.enums import AudioQuality
 from tidal_dl.tidal import (
     API_BASE_PRIMARY,
@@ -10,6 +12,8 @@ from tidal_dl.tidal import (
     TidalApiError,
     TidalStreamUnavailable,
 )
+
+from fixtures import CatalogFixtures
 
 
 class AdaptiveRateLimiterTests(unittest.TestCase):
@@ -219,6 +223,138 @@ class AdaptiveRateLimiterTests(unittest.TestCase):
         self.assertIs(second, atmos)
         albums.assert_called_once()
 
+
+class RateLimitedRequestTests(CatalogFixtures, unittest.TestCase):
+    def test_playback_api_requests_use_rate_limiter(self):
+        api = TidalAPI()
+        old_delay = events.SETTINGS.downloadDelay
+        limiter = SimpleNamespace(wait=mock.Mock())
+        response = SimpleNamespace(
+            status_code=200,
+            text=json.dumps({"ok": True}),
+            headers={},
+            url="https://api.tidal.com/v1/tracks/123/playbackinfopostpaywall/v4",
+            close=mock.Mock(),
+        )
+        try:
+            events.SETTINGS.downloadDelay = True
+            api.playbackRateLimiter = limiter
+            with mock.patch.object(api.session, "get", return_value=response):
+                self.assertEqual(api._get("tracks/123/playbackinfopostpaywall/v4"), {"ok": True})
+
+            limiter.wait.assert_called_once_with()
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
+    def test_openapi_rate_limit_penalizes_shared_limiter(self):
+        api = TidalAPI()
+        limiter = SimpleNamespace(wait=mock.Mock(), penalize=mock.Mock(return_value=17.0), reward=mock.Mock())
+        rate_limited = SimpleNamespace(
+            status_code=429,
+            text="rate limited",
+            headers={"Retry-After": "17"},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={}),
+        )
+        success = SimpleNamespace(
+            status_code=200,
+            text='{"data":{"attributes":{"formats":["FLAC"]}}}',
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value={"data": {"attributes": {"formats": ["FLAC"]}}}),
+        )
+        old_values = (
+            events.SETTINGS.downloadDelay,
+            events.SETTINGS.adaptiveRateLimit,
+            events.SETTINGS.requestIntervalSeconds,
+        )
+        try:
+            events.SETTINGS.downloadDelay = True
+            events.SETTINGS.adaptiveRateLimit = True
+            events.SETTINGS.requestIntervalSeconds = 3.0
+            api.playbackRateLimiter = limiter
+            with mock.patch.object(api.session, "get", side_effect=[rate_limited, success]), \
+                 mock.patch("tidal_dl.tidal.time.sleep") as sleep:
+                attrs = api._getOpenApiTrackManifest(456, ["FLAC"])
+
+            self.assertEqual(attrs["formats"], ["FLAC"])
+            limiter.penalize.assert_called_once_with(17.0)
+            self.assertEqual(limiter.wait.call_count, 2)
+            limiter.reward.assert_called_once_with()
+            sleep.assert_called_once_with(17.0)
+        finally:
+            (
+                events.SETTINGS.downloadDelay,
+                events.SETTINGS.adaptiveRateLimit,
+                events.SETTINGS.requestIntervalSeconds,
+            ) = old_values
+
+    def test_openapi_manifest_requests_use_rate_limiter(self):
+        api = TidalAPI()
+        old_delay = events.SETTINGS.downloadDelay
+        limiter = SimpleNamespace(wait=mock.Mock())
+        payload = {"data": {"attributes": {"formats": ["FLAC"], "uri": "data:x,eyJ0ZXN0In0="}}}
+        response = SimpleNamespace(
+            status_code=200,
+            text=json.dumps(payload),
+            headers={},
+            close=mock.Mock(),
+            json=mock.Mock(return_value=payload),
+        )
+        try:
+            events.SETTINGS.downloadDelay = True
+            api.playbackRateLimiter = limiter
+            with mock.patch.object(api.session, "get", return_value=response):
+                attrs = api._getOpenApiTrackManifest(456, ["FLAC"])
+
+            self.assertEqual(attrs["formats"], ["FLAC"])
+            limiter.wait.assert_called_once_with()
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
+
+    def test_openapi_rate_limit_skips_playback_manifest(self):
+        api = TidalAPI()
+
+        with mock.patch.object(
+            api,
+            "_getOpenApiTrackManifest",
+            side_effect=TidalApiError("Get operation failed: HTTP 429", statusCode=429),
+        ) as openapi_get, mock.patch.object(
+            api,
+            "_getPlaybackData",
+        ) as playback_get:
+            with self.assertRaises(TidalApiError) as ctx:
+                api.getStreamUrlByPriority(456, [AudioQuality.HiFi])
+
+        self.assertIn("429", str(ctx.exception))
+        openapi_get.assert_called_once_with(456, ["FLAC"])
+        playback_get.assert_not_called()
+
+    def test_manifest_rate_limit_fails_after_wait_cap(self):
+        api = TidalAPI()
+        old_delay = events.SETTINGS.downloadDelay
+        try:
+            events.SETTINGS.downloadDelay = False
+            response = SimpleNamespace(
+                status_code=429,
+                text='{"errors":[{"status":"429"}]}',
+                headers={},
+                close=mock.Mock(),
+                json=mock.Mock(return_value={"errors": [{"status": "429"}]}),
+            )
+            with mock.patch.object(api.session, "get", return_value=response) as get_mock, \
+                 mock.patch.object(api, "_applyRateLimitPenalty", return_value=60.0), \
+                 mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+                 mock.patch("builtins.print"):
+                with self.assertRaises(TidalApiError) as ctx:
+                    api._getOpenApiTrackManifest(456, ["FLAC"])
+
+            self.assertEqual(ctx.exception.statusCode, 429)
+            # First 429 waits 60s (under 90s cap); second would exceed the cap.
+            self.assertEqual(sleep.call_count, 1)
+            self.assertEqual(get_mock.call_count, 2)
+        finally:
+            events.SETTINGS.downloadDelay = old_delay
 
 if __name__ == "__main__":
     unittest.main()

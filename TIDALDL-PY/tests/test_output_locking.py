@@ -1,0 +1,217 @@
+"""Coordination between writers to the same destination."""
+
+import copy
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+from unittest import mock
+
+from tidal_dl import download, runtime
+from tidal_dl.enums import AudioQuality
+from tidal_dl.model import StreamUrl, Track, Video, VideoStreamUrl
+from tidal_dl.settings import SETTINGS
+
+from fixtures import ApiFixture, response
+
+
+class DestinationLockIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.saved_settings = copy.deepcopy(SETTINGS.__dict__)
+        def restore():
+            SETTINGS.__dict__.clear()
+            SETTINGS.__dict__.update(self.saved_settings)
+        self.addCleanup(restore)
+        SETTINGS.checkExist = True
+        SETTINGS.showProgress = SETTINGS.showTrackInfo = SETTINGS.lyricFile = False
+        SETTINGS.audioQuality = AudioQuality.High
+
+    def test_track_and_video_writers_hold_lock_through_completion_receipt(self):
+        for kind in ('track', 'video'):
+            with self.subTest(kind=kind):
+                self._concurrent_downloads(kind)
+
+    def _concurrent_downloads(self, kind):
+        target = self.root / (kind + '.mp4')
+        item = Track() if kind == 'track' else Video()
+        item.id, item.title = 1, 'Test media'
+        item.allowStreaming = True
+        item.streamReady = True
+        stream = StreamUrl() if kind == 'track' else VideoStreamUrl()
+        stream.urls = ['https://cdn.example/segment']
+        stream.url = stream.urls[0]
+        stream.m3u8Url = 'https://cdn.example/playlist.m3u8'
+        stream.codec, stream.container = 'aac', 'mp4'
+        at_receipt, release_receipt, second_attempt = (threading.Event() for _ in range(3))
+        errors, results = [], []
+        original_receipt = download.record_completion
+
+        @contextmanager
+        def observe_lock(path):
+            if threading.current_thread().name == 'second':
+                second_attempt.set()
+            with runtime.output_lock(path):
+                yield
+
+        def transfer(urls, path, *args, **kwargs):
+            Path(path).write_bytes(b'complete generated fixture')
+            return True, ''
+
+        def finalize(source, path):
+            os.replace(source, path)
+            return path
+
+        def receipt(*args, **kwargs):
+            at_receipt.set()
+            if not release_receipt.wait(5):
+                raise RuntimeError('Timed out waiting to record completion')
+            original_receipt(*args, **kwargs)
+
+        def worker():
+            try:
+                with runtime.job_context(output=lambda text: None):
+                    results.append(download.downloadTrack(item) if kind == 'track' else download.downloadVideo(item))
+            except BaseException as error:
+                errors.append(error)
+
+        with ExitStack() as patches:
+            for name, value in (
+                ('output_lock', observe_lock), ('_downloadUrls', transfer),
+                ('record_completion', receipt), ('_finalizeVideoFile', finalize),
+                ('_getTrackStream', lambda *args: stream),
+                ('getTrackPath', lambda *args: str(target)), ('getVideoPath', lambda *args: str(target)),
+                ('_resolveTrackForAtmosDownload', lambda track, album: (track, album)),
+                ('_encrypted', lambda stream, source, path: os.replace(source, path)),
+                ('_exportFlacFromContainer', lambda path, stream: path),
+                ('_verifyMediaQuality', lambda *args: {}), ('_setMetaData', lambda *args: None),
+                ('_saveLyricsForTrack', lambda *args: ''),
+            ):
+                patches.enter_context(mock.patch.object(download, name, side_effect=value))
+            transferred = download._downloadUrls
+            patches.enter_context(mock.patch.object(download.TIDAL_API, 'getVideoStreamUrl', return_value=stream))
+            patches.enter_context(mock.patch.object(download.TIDAL_API, 'getTrackContributors', return_value=None))
+            patches.enter_context(mock.patch.object(download.Printf, 'video'))
+            patches.enter_context(mock.patch.object(download, '_httpRequest', return_value=response(
+                b'#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:1,\nsegment\n')))
+            first = threading.Thread(target=worker, name='first')
+            second = threading.Thread(target=worker, name='second')
+            first.start()
+            try:
+                self.assertTrue(at_receipt.wait(5), str(results))
+                second.start()
+                self.assertTrue(second_attempt.wait(2))
+                self.assertEqual(transferred.call_count, 1)
+            finally:
+                release_receipt.set()
+                first.join(5)
+                if second.ident is not None:
+                    second.join(5)
+            self.assertFalse(first.is_alive() or second.is_alive())
+            self.assertFalse(errors, errors)
+            self.assertEqual(results, [(True, ''), (True, '')])
+            self.assertEqual(transferred.call_count, 1, 'second writer should reuse the first receipt')
+
+    def test_process_lock_cancellation_crash_release_and_reentrancy(self):
+        target = str(self.root / 'shared')
+        ready = self.root / 'ready'
+        code = '''
+import sys
+from pathlib import Path
+from tidal_dl.runtime import output_lock
+with output_lock(sys.argv[1]):
+    Path(sys.argv[2]).touch()
+    sys.stdin.read()
+'''
+        child = subprocess.Popen([sys.executable, '-c', code, target, str(ready)],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 10
+            while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists(), 'child did not acquire the lock')
+            cancel = threading.Event()
+            timer = threading.Timer(0.15, cancel.set)
+            timer.start()
+            try:
+                with runtime.job_context(cancel=cancel), self.assertRaises(runtime.DownloadCancelled):
+                    with runtime.output_lock(target):
+                        self.fail('acquired a lock held by another process')
+            finally:
+                timer.cancel()
+        finally:
+            child.terminate()
+            child.communicate(timeout=10)
+        self.assertFalse(runtime._output_locks)
+
+        with runtime.output_lock(target), runtime.output_lock(target), runtime.output_lock(str(self.root / 'SHARED')):
+            self.assertTrue(runtime._output_locks)
+        self.assertFalse(runtime._output_locks)
+
+    def test_distinct_directories_keep_distinct_os_locks(self):
+        first, second = self.root / 'Folder', self.root / 'folder'
+        first.mkdir()
+        second.mkdir(exist_ok=True)
+        if os.path.samefile(first, second):
+            self.skipTest('Filesystem does not distinguish directory case')
+        with mock.patch.object(runtime, 'isTermux', return_value=False), \
+                runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
+            self.assertEqual(len(runtime._output_locks), 2)
+            self.assertEqual(len(list(first.rglob('*.lock'))), 1)
+            self.assertEqual(len(list(second.rglob('*.lock'))), 1)
+        self.assertFalse(runtime._output_locks)
+
+    def test_termux_locks_live_in_private_home_and_distinguish_destinations(self):
+        private_home = self.root / 'private-home'
+        private_home.mkdir()
+        first, second = self.root / 'shared' / 'album-1', self.root / 'shared' / 'album-2'
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        with mock.patch.dict(os.environ, {'TERMUX_VERSION': 'test', 'HOME': str(private_home)}), \
+                runtime.output_lock(str(first / 'track')), runtime.output_lock(str(second / 'track')):
+            locks = list((private_home / '.local' / 'state' / 'tidekeeper' / 'locks').glob('*.lock'))
+            self.assertEqual(len(locks), 2)
+            self.assertEqual(len(runtime._output_locks), 2)
+            self.assertFalse(list((self.root / 'shared').rglob('*.lock')))
+        self.assertFalse(runtime._output_locks)
+
+
+class OutputLockTests(ApiFixture, unittest.TestCase):
+    def test_output_lock_wait_is_cancellable_and_cleans_up(self):
+        cancel = threading.Event()
+        finished = threading.Event()
+        outcomes = []
+        target = str(self.root / 'audio')
+
+        def writer():
+            try:
+                with runtime.job_context(cancel=cancel), runtime.output_lock(target):
+                    outcomes.append('acquired')
+            except runtime.DownloadCancelled:
+                outcomes.append('cancelled')
+            finally:
+                finished.set()
+
+        with runtime.output_lock(target):
+            thread = threading.Thread(target=writer)
+            thread.start()
+            try:
+                self.assertFalse(finished.wait(0.05))
+                cancel.set()
+                self.assertTrue(finished.wait(2))
+            finally:
+                cancel.set()
+                thread.join(timeout=2)
+        self.assertEqual(outcomes, ['cancelled'])
+        self.assertFalse(runtime._output_locks)
+
+
+if __name__ == "__main__":
+    unittest.main()

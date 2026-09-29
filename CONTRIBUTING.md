@@ -26,8 +26,11 @@ QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
 tidekeeper --help
 ```
 
-The desktop tests are skipped when PySide6 isn't installed, so install the `gui`
-extra to run all of them. For installer or build script changes, also run
+Tests are grouped by area, such as `test_auth.py`, `test_transfers.py`, and
+`test_paths.py`; add yours to the file for the area you change. Shared stub
+responses and setup helpers live in `tests/fixtures.py`. The desktop tests are
+skipped when PySide6 isn't installed, so install the `gui` extra to run all of
+them. For installer or build script changes, also run
 `bash -n` on `../install.sh`, `../scripts/install-termux.sh`, and `../build.sh`.
 
 Ruff checks for real defects such as undefined names, unused imports, and bare

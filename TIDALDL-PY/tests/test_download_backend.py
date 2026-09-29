@@ -9,7 +9,10 @@ from unittest import mock
 
 import requests
 
-from tidal_dl import download
+from tidal_dl import download, events
+from tidal_dl.enums import AudioQuality
+
+from fixtures import CatalogFixtures
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -706,6 +709,123 @@ class DirectInputAndProgressTests(unittest.TestCase):
         download._noteProgress(SimpleNamespace(), sink, 8)
         sink.addCurNum.assert_called_once_with(8)
 
+
+class DownloadFlowTests(CatalogFixtures, unittest.TestCase):
+    def test_artist_video_only_downloads_artist_videos_without_album_audio(self):
+        artist = SimpleNamespace(id=99, name="Artist", type="MAIN")
+        video = self._video()
+        video.id = 10
+
+        with mock.patch.object(events.TIDAL_API, "getArtistVideos", return_value=[video]) as artist_videos, \
+             mock.patch.object(events.TIDAL_API, "getArtistAlbums") as artist_albums, \
+             mock.patch.object(events, "start_album") as start_album, \
+             mock.patch.object(events, "downloadVideos") as download_videos:
+            events.start_artist(artist, videoOnly=True)
+
+        artist_videos.assert_called_once_with(99)
+        artist_albums.assert_not_called()
+        start_album.assert_not_called()
+        download_videos.assert_called_once_with([video], None)
+
+    def test_download_tracks_reuses_album_fetches_and_covers(self):
+        old_values = {
+            "saveCovers": download.SETTINGS.saveCovers,
+            "usePlaylistFolder": download.SETTINGS.usePlaylistFolder,
+            "multiThread": download.SETTINGS.multiThread,
+        }
+        album = self._album()
+        track_one = self._track()
+        track_two = self._track()
+        track_one.id = 1
+        track_two.id = 2
+        track_one.album = SimpleNamespace(id=album.id)
+        track_two.album = SimpleNamespace(id=album.id)
+        try:
+            download.SETTINGS.saveCovers = True
+            download.SETTINGS.usePlaylistFolder = False
+            download.SETTINGS.multiThread = False
+
+            with mock.patch.object(download.TIDAL_API, "getAlbum", return_value=album) as get_album, \
+                 mock.patch.object(download, "downloadCover", return_value=(True, "")) as cover, \
+                 mock.patch.object(download, "downloadTrack", return_value=(True, "")) as track_download:
+                self.assertTrue(download.downloadTracks([track_one, track_two], None, self._playlist()))
+
+            get_album.assert_called_once_with(album.id)
+            cover.assert_called_once_with(album)
+            self.assertEqual(track_download.call_count, 2)
+        finally:
+            for key, value in old_values.items():
+                setattr(download.SETTINGS, key, value)
+
+    def test_download_track_uses_configured_audio_quality_priority(self):
+        old_priority = download.SETTINGS.audioQualityPriority
+        old_quality = download.SETTINGS.audioQuality
+        track = self._track()
+        try:
+            download.SETTINGS.audioQuality = AudioQuality.Atmos
+            download.SETTINGS.audioQualityPriority = [AudioQuality.Atmos, AudioQuality.High]
+            expected_stream = self._stream()
+            with mock.patch.object(
+                download.TIDAL_API,
+                "getStreamUrlByPriority",
+                return_value=expected_stream,
+            ) as priority_get:
+                stream = download._getTrackStream(track.id)
+
+            self.assertIs(stream, expected_stream)
+            priority_get.assert_called_once_with(track.id, [AudioQuality.Atmos, AudioQuality.High])
+        finally:
+            download.SETTINGS.audioQualityPriority = old_priority
+            download.SETTINGS.audioQuality = old_quality
+
+    def test_download_track_uses_single_quality_as_strict_priority(self):
+        old_priority = download.SETTINGS.audioQualityPriority
+        old_quality = download.SETTINGS.audioQuality
+        track = self._track()
+        try:
+            download.SETTINGS.audioQuality = AudioQuality.HiFi
+            download.SETTINGS.audioQualityPriority = []
+            expected_stream = self._stream()
+            with mock.patch.object(
+                download.TIDAL_API,
+                "getStreamUrlByPriority",
+                return_value=expected_stream,
+            ) as priority_get, mock.patch.object(download.TIDAL_API, "getStreamUrl") as ladder_get:
+                stream = download._getTrackStream(track.id)
+
+            self.assertIs(stream, expected_stream)
+            priority_get.assert_called_once_with(track.id, [AudioQuality.HiFi])
+            ladder_get.assert_not_called()
+        finally:
+            download.SETTINGS.audioQualityPriority = old_priority
+            download.SETTINGS.audioQuality = old_quality
+
+    def test_download_rejects_track_not_stream_ready(self):
+        track = self._track()
+        track.streamReady = False
+        with mock.patch.object(download, "_getTrackStream") as get_stream:
+            ok, err = download.downloadTrack(track)
+        get_stream.assert_not_called()
+        self.assertFalse(ok)
+        self.assertIn("not ready for streaming", err)
+
+    def test_download_error_hint_for_asset_not_ready(self):
+        hint = download._downloadErrorHint(Exception("Asset is not ready for playback"))
+        self.assertIn("retry later", hint)
+
+    def test_download_error_hint_for_stale_session(self):
+        hint = download._downloadErrorHint(Exception(
+            'Get operation failed: HTTP 404 {"status":404,"subStatus":4022,'
+            '"userMessage":"Client referenced in the request does not seem to exist."}'
+        ))
+        self.assertIn("log in again", hint)
+
+    def test_download_error_hint_for_prerequisite_missing(self):
+        hint = download._downloadErrorHint(Exception(
+            'Track manifest request failed: HTTP 403 '
+            '{"errors":[{"status":"403","code":"PREREQUISITE_MISSING"}]}'
+        ))
+        self.assertIn("quality-priority", hint)
 
 if __name__ == "__main__":
     unittest.main()

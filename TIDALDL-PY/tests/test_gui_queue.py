@@ -1,10 +1,10 @@
-import os
-import unittest
 import copy
+import os
 import tempfile
+import unittest
 from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
+from unittest import mock
 
 try:
     from PySide6.QtWidgets import QApplication
@@ -893,43 +893,6 @@ class GuiQueueTests(unittest.TestCase):
             self.assertFalse(self.window.body.isEnabled())
         finally:
             self.window.active_workers.remove(worker)
-
-
-class DesktopBackendTests(unittest.TestCase):
-    def test_folder_names_are_searched_instead_of_queued_as_links(self):
-        from tidal_dl.enums import Type
-        from tidal_dl.gui_app.backend import TidekeeperBackend
-
-        backend = TidekeeperBackend()
-        with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.object(backend, "_ensure_catalog_session"), \
-                mock.patch("tidal_dl.gui_app.backend.TIDAL_API.searchAll", return_value=None) as search:
-            self.assertEqual(backend.search(directory, Type.Track), [])
-            search.assert_called_once()
-            list_file = Path(directory) / "links.txt"
-            list_file.write_text("https://tidal.com/browse/track/1\n", encoding="utf-8")
-            [item] = backend.search(str(list_file), Type.Track)
-        self.assertEqual((item.kind, item.title), (Type.Null, "links.txt"))
-
-    def test_session_expiry_text_reads_naturally(self):
-        import time
-        from tidal_dl.gui_app.backend import AuthStatus
-
-        self.assertEqual(AuthStatus("1", "US", 0, True).expiry_summary, "expiry unknown")
-        self.assertEqual(AuthStatus("1", "US", time.time() - 5, True).expiry_summary, "session expired")
-        self.assertTrue(AuthStatus("1", "US", time.time() + 7200, True).expiry_summary.startswith("expires in 1h"))
-
-
-@unittest.skipIf(QApplication is None, "PySide6 is not installed")
-class BrandIconTests(unittest.TestCase):
-    def test_brand_icon_renders_platform_sizes(self):
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        QApplication.instance() or QApplication([])
-        from tidal_dl.gui_app.widgets import brand_icon
-
-        icon = brand_icon()
-        self.assertFalse(icon.isNull())
-        self.assertGreaterEqual(max(size.width() for size in icon.availableSizes()), 256)
 
 
 if __name__ == "__main__":

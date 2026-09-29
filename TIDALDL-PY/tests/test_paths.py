@@ -1,14 +1,17 @@
 import os
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
+from tidal_dl import paths
 from tidal_dl.enums import AudioQuality
 from tidal_dl.model import Album, Artist, StreamUrl, Track, Video
-from tidal_dl.paths import _getExtension, PATHS, getAlbumPath, getTrackPath, getVideoPath, openPath
+from tidal_dl.paths import PATHS, _getExtension, getAlbumPath, getTrackPath, getVideoPath, openPath
 from tidal_dl.settings import SETTINGS
 from tidal_dl.transfer_state import prepare_transfer, record_completion
+
+from fixtures import ApiFixture, CatalogFixtures
 
 
 class PathTests(unittest.TestCase):
@@ -218,6 +221,277 @@ class DownloadRootTests(unittest.TestCase):
                     self.assertTrue(path.startswith(expected), path)
                     self.assertNotIn('~', path)
 
+
+class PathSafetyTests(ApiFixture, unittest.TestCase):
+    def test_root_download_folder_is_preserved(self):
+        track, stream = Track(), StreamUrl()
+        SETTINGS.downloadPath = '/'
+        SETTINGS.trackFileFormat = '{TrackID}'
+        track.id = 123
+        self.assertEqual(paths.getTrackPath(track, stream), '/123.m4a')
+
+    def test_volume_labels_stay_in_one_directory_component(self):
+        album, track, stream = Album(), Track(), StreamUrl()
+        album.numberOfVolumes = 2
+        album.releaseDate = '2026-01-01'
+        track.volumeNumber = 'disc one / bonus'
+        SETTINGS.downloadPath = str(self.root)
+        SETTINGS.albumFolderFormat = 'album'
+        SETTINGS.trackFileFormat = 'track'
+        self.assertEqual(Path(paths.getTrackPath(track, stream, album)).parent.name, 'CDdisc one - bonus')
+
+
+class PathTemplateTests(CatalogFixtures, unittest.TestCase):
+    def test_empty_path_formats_use_default_formats(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "albumFolderFormat": paths.SETTINGS.albumFolderFormat,
+            "playlistFolderFormat": paths.SETTINGS.playlistFolderFormat,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+            "usePlaylistFolder": paths.SETTINGS.usePlaylistFolder,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.albumFolderFormat = ""
+            paths.SETTINGS.playlistFolderFormat = ""
+            paths.SETTINGS.trackFileFormat = ""
+            paths.SETTINGS.videoFileFormat = ""
+            paths.SETTINGS.usePlaylistFolder = True
+
+            self.assertIn("Album [123] [2026]", paths.getAlbumPath(self._album()))
+            self.assertIn("Playlist [playlist-uuid]", paths.getPlaylistPath(self._playlist()))
+            self.assertTrue(paths.getTrackPath(self._track(), self._stream(), self._album()).endswith("01 - Artist - Track.m4a"))
+            self.assertTrue(paths.getVideoPath(self._video()).endswith("01 - Artist - Video.mp4"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_video_artist_id_token_lists_all_ids_and_skips_missing(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.videoFileFormat = "{ArtistID} - {VideoTitle}"
+
+            video = self._video()
+            video.artists = [self._artist(id=123), self._artist(name="Feat", id=456)]
+            self.assertTrue(paths.getVideoPath(video).endswith("123, 456 - Video.mp4"))
+
+            video.artists = [self._artist(id=None), self._artist(name="Feat", id=456)]
+            video.artist = self._artist(id=None)
+            video_path = paths.getVideoPath(video)
+            self.assertNotIn("None", video_path)
+            self.assertTrue(video_path.endswith("456 - Video.mp4"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_track_artist_tokens_keep_primary_name_and_add_new_tokens(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "albumFolderFormat": paths.SETTINGS.albumFolderFormat,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.albumFolderFormat = "{AlbumTitle}"
+            track = self._track()
+            track.artist = self._artist("Primary/Name", 111)
+            track.artists = [self._artist("Primary/Name", 111), self._artist("Feat", 222)]
+
+            paths.SETTINGS.trackFileFormat = "{TrackNumber} - {ArtistName} - {TrackTitle}{ExplicitFlag}"
+            default_path = paths.getTrackPath(track, self._stream(), self._album())
+            self.assertTrue(default_path.endswith("01 - Primary-Name - Track.m4a"))
+
+            paths.SETTINGS.trackFileFormat = (
+                "{ArtistName}|{ArtistsName}|{ArtistID}|{TrackArtistID}|{TrackArtistName}"
+            )
+            token_path = paths.getTrackPath(track, self._stream(), self._album())
+            self.assertTrue(
+                token_path.endswith("Primary-Name-Primary-Name, Feat-111, 222-111-Primary-Name.m4a")
+            )
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_video_artist_tokens_keep_primary_name_and_add_new_tokens(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            video = self._video()
+            video.artist = self._artist("Primary/Name", 111)
+            video.artists = [self._artist("Primary/Name", 111), self._artist("Feat", 222)]
+
+            paths.SETTINGS.videoFileFormat = "{VideoNumber} - {ArtistName} - {VideoTitle}{ExplicitFlag}"
+            default_path = paths.getVideoPath(video)
+            self.assertTrue(default_path.endswith("01 - Primary-Name - Video.mp4"))
+
+            paths.SETTINGS.videoFileFormat = (
+                "{ArtistName}|{ArtistsName}|{ArtistID}|{VideoArtistID}|{VideoArtistName}"
+            )
+            token_path = paths.getVideoPath(video)
+            self.assertTrue(
+                token_path.endswith("Primary-Name-Primary-Name, Feat-111, 222-111-Primary-Name.mp4")
+            )
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_track_and_video_primary_artist_tokens_omit_missing_fields(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "albumFolderFormat": paths.SETTINGS.albumFolderFormat,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.albumFolderFormat = "{AlbumTitle}"
+            paths.SETTINGS.trackFileFormat = "{TrackArtistID}/{TrackArtistName}/{TrackTitle}"
+            paths.SETTINGS.videoFileFormat = "{VideoArtistID}/{VideoArtistName}/{VideoTitle}"
+
+            track = self._track()
+            track.artist = self._artist(None, None)
+            track_path = paths.getTrackPath(track, self._stream(), self._album())
+            self.assertNotIn("None", track_path)
+            self.assertTrue(track_path.endswith("/Track.m4a"))
+
+            video = self._video()
+            video.artist = self._artist(None, None)
+            video_path = paths.getVideoPath(video)
+            self.assertNotIn("None", video_path)
+            self.assertTrue(video_path.endswith("/Video.mp4"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_album_path_tolerates_missing_optional_tokens(self):
+        album = self._album()
+        album.audioQuality = None
+        album.type = None
+        album.numberOfVolumes = None
+        album.releaseDate = None
+        album.duration = None
+        album.numberOfTracks = None
+        album.numberOfVideos = None
+
+        with mock.patch.object(
+            paths.SETTINGS,
+            "albumFolderFormat",
+            "{AlbumTitle}/{AudioQuality}/{RecordType}/{NumberOfVolumes}",
+        ), mock.patch.object(paths.SETTINGS, "downloadPath", "/tmp/tidekeeper"):
+            path = paths.getAlbumPath(album)
+
+        self.assertEqual(path, "/tmp/tidekeeper/Album/0")
+
+    def test_album_path_replaces_album_artist_ids_for_singular_artist(self):
+        album = self._album()
+        album.artist = self._artist("Artist One", 123)
+
+        with mock.patch.object(paths.SETTINGS, "albumFolderFormat", "{AlbumArtistID}/{AlbumTitle}"):
+            self.assertTrue(paths.getAlbumPath(album).endswith("123/Album"))
+
+    def test_album_path_replaces_artist_ids_for_multiple_artists(self):
+        album = self._album()
+        album.artists = [self._artist("Artist One", 123), self._artist("Artist Two", 456)]
+
+        with mock.patch.object(paths.SETTINGS, "albumFolderFormat", "{ArtistID}/{AlbumTitle}"):
+            self.assertTrue(paths.getAlbumPath(album).endswith("123, 456/Album"))
+
+    def test_album_path_omits_missing_primary_artist_fields(self):
+        album = self._album()
+        album.artist = self._artist(None, None)
+
+        with mock.patch.object(
+            paths.SETTINGS,
+            "albumFolderFormat",
+            "{AlbumArtistID}/{AlbumArtistName}/{AlbumTitle}",
+        ):
+            path = paths.getAlbumPath(album)
+
+        self.assertTrue(path.endswith("/Album"))
+        self.assertNotIn("None", path)
+
+    def test_video_path_respects_playlist_folder_setting(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "usePlaylistFolder": paths.SETTINGS.usePlaylistFolder,
+            "albumFolderFormat": paths.SETTINGS.albumFolderFormat,
+            "playlistFolderFormat": paths.SETTINGS.playlistFolderFormat,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.usePlaylistFolder = False
+            paths.SETTINGS.albumFolderFormat = "{AlbumTitle}"
+            paths.SETTINGS.playlistFolderFormat = "Playlist/{PlaylistName}"
+            paths.SETTINGS.videoFileFormat = "{VideoNumber} - {VideoTitle}"
+
+            video_path = paths.getVideoPath(self._video(), None, self._playlist())
+
+            self.assertTrue(video_path.startswith("/tmp/tidekeeper/Video/"))
+            self.assertNotIn("Playlist/Playlist", video_path)
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_atmos_stream_adds_identifying_suffix_to_default_track_filename(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+            "audioQuality": paths.SETTINGS.audioQuality,
+        }
+        stream = self._stream()
+        stream.codec = "ec-3"
+        stream.soundQuality = "DOLBY_ATMOS"
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.trackFileFormat = "{TrackNumber} - {ArtistName} - {TrackTitle}{ExplicitFlag}"
+            paths.SETTINGS.audioQuality = AudioQuality.Atmos
+
+            track_path = paths.getTrackPath(self._track(), stream, self._album())
+
+            self.assertTrue(track_path.endswith("01 - Artist - Track [Dolby Atmos].m4a"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_track_path_supports_stream_quality_and_codec_tokens(self):
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+            "audioQuality": paths.SETTINGS.audioQuality,
+        }
+        stream = self._stream()
+        stream.codec = "ec-3"
+        stream.soundQuality = "DOLBY_ATMOS"
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.trackFileFormat = "{TrackTitle} [{StreamQuality}] [{Codec}]"
+            paths.SETTINGS.audioQuality = AudioQuality.Atmos
+
+            track_path = paths.getTrackPath(self._track(), stream, self._album())
+
+            self.assertTrue(track_path.endswith("Track [Dolby Atmos] [ec-3].m4a"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_album_path_handles_missing_artist_list(self):
+        album = self._album()
+        album.artists = None
+        old_format = paths.SETTINGS.albumFolderFormat
+        try:
+            paths.SETTINGS.albumFolderFormat = "{ArtistName}-{ArtistID}-{AlbumTitle}"
+            self.assertTrue(paths.getAlbumPath(album).endswith("--Album"))
+        finally:
+            paths.SETTINGS.albumFolderFormat = old_format
 
 if __name__ == "__main__":
     unittest.main()

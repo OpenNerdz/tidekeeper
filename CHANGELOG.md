@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+<!-- release-title: Rewritten README and guides -->
+
 - Rewrite the README around installing, signing in, and downloading, with a
   complete option table, quality guide, and troubleshooting. Document the default
   filename templates and correct the duration and flag label descriptions.

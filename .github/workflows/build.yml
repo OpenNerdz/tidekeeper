@@ -118,11 +118,9 @@ jobs:
             libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 xvfb xauth
 
-      - name: Check download locking and release regressions on this platform
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python -m unittest discover -s tests -p test_release_followup.py
-        working-directory: TIDALDL-PY
+      - name: Check file locking and resumable transfers on this platform
+        run: python -m unittest test_output_locking test_transfers
+        working-directory: TIDALDL-PY/tests
 
       - name: Build tidekeeper
         run: pyinstaller -F tidal_dl/__main__.py -n tidekeeper

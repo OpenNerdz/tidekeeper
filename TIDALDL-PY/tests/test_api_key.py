@@ -2,6 +2,8 @@ import unittest
 
 from tidal_dl import apiKey
 
+from fixtures import CatalogFixtures
+
 
 class ApiKeyTests(unittest.TestCase):
     def test_default_api_key_supports_hires_lossless(self):
@@ -37,6 +39,11 @@ class ApiKeyTests(unittest.TestCase):
             self.assertNotIn('clientId', item)
             self.assertNotIn('clientSecret', item)
 
+
+class ApiKeyLookupTests(CatalogFixtures, unittest.TestCase):
+    def test_invalid_api_key_index_returns_error_key_dict(self):
+        self.assertFalse(apiKey.isItemValid(999))
+        self.assertEqual(apiKey.getItem(999)["platform"], "None")
 
 if __name__ == "__main__":
     unittest.main()
