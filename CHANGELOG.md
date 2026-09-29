@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.9.29.3 - 2026-09-29
+
 <!-- release-title: Cleaner downloads and controlled releases -->
 
 - Keep destination locks in a private per-user state folder rather than hidden
@@ -19,6 +21,8 @@
   verifying uploads, and retry brief network or server failures.
 - Refresh the bundled supporter snapshot once daily instead of committing once
   for every new star.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.9.29.2...v2026.9.29.3)
 
 ## 2026.9.29.2 - 2026-09-29
 
