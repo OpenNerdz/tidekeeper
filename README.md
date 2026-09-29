@@ -2,376 +2,256 @@
 
 # Tidekeeper
 
-Tidekeeper is an unofficial TIDAL downloader with a terminal interface and an
-optional desktop app. It is a maintained fork of
+Download the music and videos you can play on TIDAL, from lossless and hi-res
+FLAC to Dolby Atmos, using a terminal or a desktop app. Tidekeeper is a
+maintained fork of
 [Tidal-Media-Downloader](https://github.com/yaronzz/Tidal-Media-Downloader).
 
 [![Build](https://github.com/OpenNerdz/tidekeeper/actions/workflows/build.yml/badge.svg)](https://github.com/OpenNerdz/tidekeeper/actions/workflows/build.yml)
 [![PyPI](https://img.shields.io/pypi/v/tidekeeper.svg)](https://pypi.org/project/tidekeeper/)
-[![Release](https://img.shields.io/github/v/release/OpenNerdz/tidekeeper?display_name=tag)](https://github.com/OpenNerdz/tidekeeper/releases/latest)
+[![Python](https://img.shields.io/pypi/pyversions/tidekeeper.svg)](https://pypi.org/project/tidekeeper/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/downloads/)
 
-## Get started
+- **Best available quality.** FLAC up to 24-bit/192 kHz, with automatic fallback
+  when a format is unavailable.
+- **Anything with a link.** Tracks, albums, playlists, mixes, artists, videos, or
+  a text file full of links.
+- **Tagged and organized.** Metadata, cover art, and lyrics, in folders you name.
+- **Picks up where it left off.** Interrupted downloads resume and finished
+  files are skipped.
+- **Runs everywhere.** Windows, macOS, Linux, Android (Termux), and Docker.
 
-### 1. Install Tidekeeper
+![Tidekeeper desktop app with search results and a download queue](docs/screenshots/workspace.png)
 
-Choose the option that best fits how you want to use it.
+## Install
 
-#### Python install
-
-This is the recommended option if you already have Python 3.10 or newer. For
-the terminal version:
-
-```bash
-python -m pip install -U tidekeeper
-tidekeeper
-```
-
-For the desktop app:
+**With Python 3.10 or newer** (recommended):
 
 ```bash
-python -m pip install -U "tidekeeper[gui]"
-tidekeeper-gui
+python -m pip install -U "tidekeeper[gui]"   # desktop app and terminal
+python -m pip install -U tidekeeper          # terminal only
 ```
 
-#### Standalone app
+**Without Python:** download the terminal or desktop app for Windows, macOS
+(Apple silicon or Intel), or Linux (x86-64 or ARM64) from the
+[latest release](https://github.com/OpenNerdz/tidekeeper/releases/latest).
 
-If you do not want to install Python, download the terminal or desktop app for
-your operating system from the [latest GitHub Release](https://github.com/OpenNerdz/tidekeeper/releases/latest).
-Builds are available for Windows x86-64, macOS Apple Silicon and Intel, Linux
-x86-64, and Linux ARM64. Unix downloads are `.tar.gz` archives so executable
-permissions survive extraction. Each release includes `SHA256SUMS` and GitHub
-build-provenance attestations.
-
-Standalone apps cannot replace themselves during an update. Download a newer
-file from the Releases page when a new version is available.
-
-#### Linux and Termux installer
+**Linux or Android (Termux):** this script installs Tidekeeper and ffmpeg. On
+Android, run `termux-setup-storage` first so downloads can reach shared storage.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OpenNerdz/tidekeeper/main/install.sh | bash
 ```
 
-On Android, first allow Termux to use shared storage:
+**Docker:** the image includes ffmpeg. Settings and downloads stay in the
+mounted folders, which must be writable by user ID `1000`.
 
 ```bash
-termux-setup-storage
+docker build -t tidekeeper https://github.com/OpenNerdz/tidekeeper.git
+docker run --rm -it -v "$PWD/config:/config" -v "$PWD/downloads:/downloads" tidekeeper
 ```
 
-#### Docker
+**Also install [ffmpeg](https://ffmpeg.org/download.html)**, for example with
+`brew install ffmpeg`, `winget install ffmpeg`, or `sudo apt install ffmpeg`.
+Videos need it, and it saves lossless audio as `.flac` instead of `.m4a`.
 
-The Docker image includes ffmpeg and stores configuration and downloads in
-folders on the host:
+## Quick start
 
-```bash
-docker build -t tidekeeper .
-docker run --rm -it \
-  -v "$PWD/config:/config" \
-  -v "$PWD/downloads:/downloads" \
-  tidekeeper
-```
+1. **Sign in.** Run `tidekeeper`, or open `tidekeeper-gui` and click
+   **Signed out** → **Start device login**. Open the link it shows and approve
+   the sign-in. The session is saved, so this is usually a one-time step.
+2. **Download.** Paste a TIDAL link at the terminal prompt, or run:
 
-The container runs as user ID `1000`, so both folders must be writable by that
-user. The desktop app is not included in the Docker image.
-Dependency layers are reused when rebuilding after application-only changes.
+   ```bash
+   tidekeeper -l "https://tidal.com/browse/album/123456"
+   ```
 
-### 2. Sign in
+   In the desktop app, search for something or paste links in **Links**, then
+   click **Download now**.
 
-You only need to complete device login the first time and whenever Tidekeeper
-needs a fresh session.
+Downloads go to a `download` folder inside the directory you start Tidekeeper
+from (`Download/Tidekeeper` on Android, `/downloads` in Docker). To choose a
+permanent folder, use **Settings** or run `tidekeeper -o ~/Music` once.
 
-In the terminal:
+## Terminal
 
-1. Run `tidekeeper`.
-2. Open the displayed `link.tidal.com` address.
-3. Enter the displayed code and approve the login.
-4. Return to Tidekeeper after the login succeeds.
+Run `tidekeeper` on its own for an interactive menu: paste a link, or pick a
+number to sign in, change quality, choose a folder, or edit options. Or pass
+options directly:
 
-In the desktop app:
+| Option | What it does |
+| --- | --- |
+| `-l, --link LINK` | Download a link, an ID, or a text file of links |
+| `-o, --output FOLDER` | Set the download folder |
+| `-q, --quality NAME` | Use one audio quality: `Max`, `HiFi`, `High`, `Normal`, or `Atmos` |
+| `--quality-priority LIST` | Try qualities in order, for example `Max,HiFi,High` |
+| `-r, --resolution NAME` | Set the highest video resolution: `1080`, `720`, `480`, `360`, or `240` |
+| `--video-only` | Download only the videos from an artist, album, playlist, or mix |
+| `--doctor` | Check your login, download folder, and ffmpeg |
+| `--paths` | Show where settings, the login, and logs are stored |
+| `--open-output` | Open the download folder |
+| `--update` | Update Tidekeeper (`--update-gui` for the desktop app too) |
+| `-c, --configPathOverride FOLDER` | Keep settings and the login in another folder |
 
-1. Click **Signed out** to open the Account panel.
-2. Click **Start device login**.
-3. Click **Open in browser** and approve the login.
+`-o`, `-q`, `--quality-priority`, and `-r` are saved as your new defaults.
 
-Click **Cancel login** to stop a pending sign-in while keeping your saved
-session. Downloads and settings changes wait until sign-in finishes or is
-cancelled. Manual token entry is hidden in the terminal; desktop token fields
-are cleared after a successful sign-in.
-
-Tidekeeper may ask you to sign in once after an update changes the TIDAL
-client. This is expected and prevents an old session from breaking downloads.
-
-### 3. Download something
-
-In the terminal, paste a TIDAL link at the prompt. You can also start a download
-directly:
-
-```bash
-tidekeeper -l "https://tidal.com/browse/track/70973230"
-```
-
-In the desktop app, paste a link at the top and click **Download now**. You can
-also search, select a result, and add it to the queue.
-
-Use `tidekeeper --open-output` to open the download folder. Use only content
-that your account can play and that you are permitted to download.
-
-## Keep Tidekeeper updated
-
-For a Python terminal install:
-
-```bash
-tidekeeper --update
-```
-
-For a Python desktop install, use the **Update** button in the Account panel or:
-
-```bash
-tidekeeper --update-gui
-```
-
-Restart Tidekeeper after updating. If you use a standalone app, download the
-new executable from the [Releases page](https://github.com/OpenNerdz/tidekeeper/releases/latest)
-instead. Check the installed version with `tidekeeper --version`.
-
-## Common tasks
-
-### Choose quality
-
-`Max` is the default and requests the best available standard audio quality,
-including 24-bit/192 kHz FLAC when the track and account offer it. Tidekeeper
-uses a fixed FLAC manifest first, chooses the highest-fidelity representation
-from its measured codec/bit-depth/sample-rate/bandwidth fields, and uses the
-playback API as a separate fallback. When `ffprobe` is installed, the finished
-audio stream is checked and its actual properties are stored in the completion
-receipt. New profiles use the **Tidal HiRes** client for Max playback. Existing profiles that still use
-**Tidal TV** can select **Tidal HiRes** in the desktop Advanced settings or
-terminal API-client menu, save, and sign in once with the new client.
-A single legacy `Master` selection requests lossless FLAC: Max first, then HiFi.
-TIDAL [retired MQA in July 2024](https://support.tidal.com/hc/en-us/articles/25876825185425-Audio-Format-Updates).
-To choose your own fallback order, use `--quality-priority Max,HiFi,High,Normal`.
-Other single-quality selections remain strict, and lists of fallback qualities
-keep their order (`Master` is treated as `Max`).
-DRM-protected DASH streams are rejected; fallback can use unencrypted streams
-offered by TIDAL for your account.
-
-Video resolution selects the highest available variant at or below your
-choice, or the lowest available variant if none fit. Preview streams,
-unfinished/live HLS playlists, and multi-period DASH are reported as unsupported
-instead of being saved as complete downloads. Invalid terminal quality or
-resolution choices leave your saved settings unchanged.
-
-TIDAL links may omit `https://`, for example `tidal.com/browse/album/123` or
-`listen.tidal.com/track/1`. This works in commands, batch lists, and the desktop.
-HLS playlists explicitly marked `VOD` are treated as complete even when the
-provider omits the end marker.
-
-Dolby Atmos is optional because it is often a separate version of an album or
-track. Select **Atmos** in the desktop app or use:
-
-```bash
-tidekeeper -q Atmos -l "TIDAL_LINK"
-```
-
-Tidekeeper will use a matching Atmos release when one is available. To download
-only videos from a link, use:
-
-```bash
-tidekeeper --video-only -l "TIDAL_LINK"
-```
-
-### Change the download folder
-
-Choose a folder in the desktop Settings panel, or pass one for a terminal
-download:
-
-```bash
-tidekeeper --output "/path/to/music" -l "TIDAL_LINK"
-```
-
-To set the default folder before Tidekeeper creates its profile:
-
-```bash
-export TIDEKEEPER_DOWNLOAD_PATH="/path/to/music"
-```
-
-An existing profile keeps the folder already saved in its settings.
-
-### Download a list
-
-Pass a text file instead of a link:
-
-```bash
-tidekeeper -l "/path/to/links.txt"
-```
-
-The file can contain TIDAL links or IDs separated by lines, spaces, or commas.
-Lines beginning with `#` are comments. A list can also point to another text
-file. Repeated items are skipped.
-
-If some items fail, Tidekeeper saves them to `failed-tracks.txt` in the download
-folder. Retry that file with the same command.
-
-### Customize names and folders
-
-Filename templates use labels such as `{ArtistName}`, `{AlbumTitle}`, and
-`{TrackTitle}`. The defaults work for most users. See the
-[filename template guide](docs/filename-templates.md) for examples and the full
-list of available labels.
+**Links** can be full URLs, links without `https://` (such as
+`tidal.com/browse/track/123` or `listen.tidal.com/album/456`), or bare IDs.
+**Text files** can hold links separated by lines, spaces, or commas. Lines
+starting with `#` are comments, a file can include other files, and repeated
+items are skipped. Tracks that fail are listed in `failed-tracks.txt` in the
+download folder. Pass that file back to `-l` to retry them.
 
 ## Desktop app
 
-The desktop app keeps search, links, results, and the download queue in one
-window. **Download now** starts immediately, while **Add to queue** lets you
-prepare several downloads before clicking **Start**.
+Search the catalog or paste links, then build a queue. **Download now** starts
+right away, and **Add to queue** lets you line up several downloads before you
+click **Start**. You can drag links from a browser, or `.txt` files from your
+file manager, onto the window.
 
-You can also drag TIDAL links from a browser, or `.txt` link lists from a file
-manager, onto the window. They are added to **Links** so you can review them
-before queueing.
+Select a queue row to see why it failed. **Retry incomplete** downloads only the
+items that did not finish. Settings apply to the next download; click **Save** to
+keep them after a restart.
 
-Completed items can be cleared without removing unfinished work. Failed,
-partial, interrupted, and cancelled items can be retried. Select an item to see
-its error details. For a completed artist or album attempt with failed tracks or
-videos, **Retry incomplete** downloads only those failed items. Interrupted
-collection attempts retry the collection so unattempted items are included.
-Older saved rows without complete retry details also revisit the collection,
-using the normal existing-file checks. Retried videos keep their original album
-folders and partial transfers.
-
-Settings affect the next download. Click **Save** if you want to keep them after
-restarting. Changing the TIDAL client signs you out automatically, so sign in
-again after saving that change.
-
-The Account panel's **Supporters** list shows GitHub accounts that have starred
-this repository. It displays a bundled snapshot immediately and refreshes in
-the background. New stars trigger a repository update; a scheduled refresh every
-six hours also picks up unstars. GitHub scheduling and caching can delay changes.
-Click **Refresh** to fetch the latest published list. Offline, the app uses its
-bundled snapshot. No GitHub login is needed in the app.
-
-Useful shortcuts:
-
-- `Ctrl+F` focuses search.
-- `Enter` adds a selected result to the queue.
-- `Delete` removes selected queue items.
-- `Ctrl+Z` restores the last removed queue item.
-- `Ctrl+,` opens Settings.
-- `Esc` closes the side panel.
-
-![Workspace with search, results, and queue](docs/screenshots/workspace.png)
+| Shortcut | Action |
+| --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> | Search |
+| <kbd>Enter</kbd> | Add selected results to the queue |
+| <kbd>Delete</kbd> | Remove selected queue items |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> | Undo the last removal |
+| <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open Settings |
+| <kbd>Esc</kbd> | Close the side panel |
 
 | Settings | Account |
 | --- | --- |
 | ![Settings panel](docs/screenshots/settings.png) | ![Account panel](docs/screenshots/account.png) |
 
+## Quality and files
+
+| Quality | You get |
+| --- | --- |
+| **Max** (default) | FLAC up to 24-bit/192 kHz, when the track has it |
+| **HiFi** | FLAC, 16-bit/44.1 kHz |
+| **High** | AAC, 320 kbps |
+| **Normal** | AAC, 96 kbps |
+| **Atmos** | Dolby Atmos, when the release has an Atmos version |
+
+New installs try **Max → HiFi → High → Normal**, so a track still downloads when
+the best format is unavailable. `-q` picks one quality with no fallback, and
+`--quality-priority` sets your own order. Videos download at the highest
+resolution up to your setting. An old **Master** (MQA) setting now means lossless
+FLAC, because TIDAL retired MQA in 2024.
+
+By default, files are organized like this:
+
+```text
+download/
+└── Artist/
+    └── Album [123456] [2024]/
+        ├── 01 - Artist - First Track.flac
+        ├── 02 - Artist - Second Track.flac
+        └── cover.jpg
+```
+
+Change the layout with [filename templates](docs/filename-templates.md). Other
+options, such as `.lrc` lyrics files, parallel downloads, request delays, and
+playlist folders, are in **Settings** or the terminal menu's **Options**.
+
+## Update
+
+```bash
+tidekeeper --update       # terminal
+tidekeeper --update-gui   # desktop app and terminal (or click Update in Account)
+```
+
+Standalone apps can't update themselves. Download the new version from the
+[releases page](https://github.com/OpenNerdz/tidekeeper/releases/latest).
+
 ## Troubleshooting
 
-Start by checking your installation, login, download folder, and local tools:
+Start with `tidekeeper --doctor`. It checks your login, download folder, and
+ffmpeg, and tells you what to fix.
+
+<details>
+<summary><b>I was signed out after updating or changing the TIDAL client</b></summary>
+
+Sessions belong to the client that created them, so sign in again once. If you
+use a standalone app, make sure you downloaded the latest release.
+
+</details>
+
+<details>
+<summary><b>Max downloads are only 16-bit/44.1 kHz</b></summary>
+
+Max is a ceiling. Tracks that TIDAL only offers in CD quality stay 16-bit. For
+hi-res tracks, choose the **Tidal HiRes** client (desktop **Settings → Advanced**,
+or terminal menu option **7**), save, and sign in again.
+
+</details>
+
+<details>
+<summary><b>Playback fails with HTTP 404 / subStatus 4022</b></summary>
+
+TIDAL rejected this client for that format, but your login is still valid.
+Tidekeeper tries other endpoints and your fallback qualities automatically. Try
+**HiFi** or `--quality-priority Max,HiFi,High,Normal`. If it keeps failing,
+include the endpoint, client, country, and quality from the error in an issue.
+
+</details>
+
+<details>
+<summary><b>Repeated HTTP 429 (too many requests)</b></summary>
+
+TIDAL is limiting requests. Keep the request delay on and raise it to `30` or
+`60` seconds in **Settings** (terminal menu **Options**), then retry.
+
+</details>
+
+<details>
+<summary><b>Videos fail or audio is saved as .m4a</b></summary>
+
+Install ffmpeg (see [Install](#install)) and run `tidekeeper --doctor` to confirm
+Tidekeeper can find it.
+
+</details>
+
+<details>
+<summary><b>macOS or Windows won't open the standalone app</b></summary>
+
+The apps aren't code-signed. On macOS, run
+`xattr -d com.apple.quarantine tidekeeper-gui` (or `tidekeeper`) in the folder
+you extracted it to. On Windows, choose **More info → Run anyway**.
+
+</details>
+
+<details>
+<summary><b>Termux: ffmpeg reports <code>cannot locate symbol</code></b></summary>
+
+Update all packages together, then reinstall ffmpeg:
 
 ```bash
-tidekeeper --doctor
-tidekeeper --paths
+pkg upgrade -y && pkg reinstall -y ffmpeg
 ```
 
-### Session removed after updating or changing clients
+If that doesn't work, run `termux-change-repo`, pick another mirror, and repeat.
 
-Sign in again after the client changes. Current versions automatically remove
-sessions created by an old TIDAL client. If you
-use a standalone app, make sure you downloaded the latest executable rather
-than only pressing its Update button.
+</details>
 
-### Login succeeds, but playback returns HTTP 404 / subStatus 4022
+Still stuck? [Open an issue](https://github.com/OpenNerdz/tidekeeper/issues) with
+the output of `tidekeeper --version`, how you installed Tidekeeper, your
+operating system, and the full error message with any tokens removed.
 
-A playback rejection alone does not mean your login is invalid. Tidekeeper
-keeps the session and tries its alternate manifest endpoint and any configured
-quality fallbacks. Try **HiFi** or `--quality-priority Max,HiFi,High,Normal`.
-Legacy **Master** settings now use FLAC automatically.
+## Contributing
 
-If all attempts fail, include the endpoint, client label, country, and quality
-from the error in your issue report. Repeatedly logging in with the same client
-may not change its playback availability. A client rejection on a catalog
-request still clears the unusable session after a failed refresh.
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
+covers setup and checks, and [CHANGELOG.md](CHANGELOG.md) lists every release.
+Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
-### Max downloads are only 16-bit/44.1 kHz
+## License and policy
 
-Max is a ceiling, not an upsampling target: tracks whose best source is HiFi
-correctly remain 16-bit. For tracks marked Max, select the **Tidal HiRes** client
-in Advanced settings (or terminal menu option 7), save, sign in again, and keep
-audio quality set to **Max**. The older **Tidal TV** client remains available for
-accounts where its more conservative playback support is preferable.
+Tidekeeper is released under the [Apache 2.0 license](LICENSE). The original
+project was created by YaronH and contributors; see [NOTICE](NOTICE).
 
-### Repeated HTTP 429 errors
-
-TIDAL is temporarily limiting requests. Keep **Use request delay** enabled and
-raise **Request delay seconds** to `30` or `60` before retrying.
-
-### ffmpeg is missing
-
-Install ffmpeg with your operating system's package manager. It is recommended
-for video downloads and optional FLAC remuxing. The Docker image already
-includes it.
-
-### Termux reports `cannot locate symbol` from ffmpeg or ffprobe
-
-Update Termux's installed packages together, then reinstall ffmpeg:
-
-```bash
-pkg upgrade -y
-pkg reinstall -y ffmpeg
-```
-
-If that does not work, run `termux-change-repo`, choose another mirror, and try
-again.
-
-### Still need help?
-
-Open a [GitHub issue](https://github.com/OpenNerdz/tidekeeper/issues) and include:
-
-- The version shown by `tidekeeper --version`.
-- How you installed Tidekeeper.
-- Your operating system.
-- The complete error message with private tokens removed.
-
-## Install the latest source
-
-Use this only if you specifically want the newest code from GitHub:
-
-```bash
-python -m pip install -U "git+https://github.com/OpenNerdz/tidekeeper.git#subdirectory=TIDALDL-PY"
-```
-
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks,
-[CHANGELOG.md](CHANGELOG.md) for release history, and
-[SECURITY.md](SECURITY.md) for private vulnerability reporting. Build and release
-procedures are in [MAINTAINING.md](MAINTAINING.md).
-
-```bash
-git clone --depth 1 https://github.com/OpenNerdz/tidekeeper.git
-cd tidekeeper/TIDALDL-PY
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-python -m unittest discover -s tests
-```
-
-Build release artifacts with `./build.sh` from the repository root. It retains
-PyInstaller work for faster rebuilds; use `./build.sh --clean` to reset that
-cache. A shallow clone avoids downloading the upstream project's large history;
-use `git fetch --unshallow` if you need it later.
-
-Application changes pushed to `main` automatically produce a dated release after
-CI, platform builds, and PyPI verification pass. Versions, tags, and release notes
-are generated by the workflow. See [automatic releases](MAINTAINING.md#automatic-releases)
-for the naming scheme, optional note hints, and recovery steps.
-
-## Project policy
-
-Tidekeeper does not aim to bypass access controls, subscription checks, or DRM.
-Use it only where permitted by law and applicable service terms. This project is
-not affiliated with or endorsed by TIDAL or Block, Inc.
-
-The original project was created by YaronH and contributors. See
-[NOTICE](NOTICE) and [LICENSE](LICENSE) for attribution and licensing.
+Tidekeeper does not bypass access controls, subscription checks, or DRM.
+Download only what your account can play, where the law and TIDAL's terms allow
+it. This project is not affiliated with or endorsed by TIDAL or Block, Inc.

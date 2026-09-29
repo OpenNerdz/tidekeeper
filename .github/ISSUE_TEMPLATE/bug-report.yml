@@ -11,21 +11,22 @@ body:
   - type: dropdown
     id: tool
     attributes:
-      label: Which entry point?
+      label: How do you run Tidekeeper?
       options:
-        - tidekeeper
-        - tidekeeper-gui
-        - tidal-dl
-        - install.sh
-        - Termux install
+        - Terminal (pip install)
+        - Desktop app (pip install)
+        - Standalone app from GitHub Releases
+        - Linux or Termux install script
+        - Docker
         - Other
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: Tidekeeper version or commit
-      placeholder: "Example: latest main / commit SHA / pip version"
+      label: Tidekeeper version
+      description: Run `tidekeeper --version`, or see Account in the desktop app.
+      placeholder: "Example: 2026.9.29.0"
     validations:
       required: true
   - type: input

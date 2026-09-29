@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Rewrite the README around installing, signing in, and downloading, with a
+  complete option table, quality guide, and troubleshooting. Document the default
+  filename templates and correct the duration and flag label descriptions.
+
 ## 2026.9.29.0 - 2026-09-29
 
 <!-- release-title: Clearer errors and consistent download folders -->

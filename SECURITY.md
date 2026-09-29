@@ -1,63 +1,48 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Reporting a vulnerability
 
-Security fixes are made on the `main` branch and included in the next tagged
-release. Users should update to the latest release before reporting issues.
+Please don't open a public issue for security problems. Report them through
+GitHub's [private vulnerability reporting](https://github.com/OpenNerdz/tidekeeper/security/advisories/new)
+and include:
 
-## Reporting a Vulnerability
+- The affected version (`tidekeeper --version`) and how you installed it.
+- Your platform, the steps to reproduce, and the impact.
 
-Please do not open a public issue for security-sensitive problems.
+Remove access tokens, refresh tokens, cookies, account IDs, and personal data
+from anything you share. Fixes ship in the next release, so update before
+reporting.
 
-Report vulnerabilities through GitHub's private vulnerability reporting for this
-repository, or contact the maintainers privately if that is unavailable. Include:
+## Your login
 
-- The affected version or commit.
-- The platform and install method.
-- Steps to reproduce.
-- The impact and any known workaround.
+Tidekeeper saves your TIDAL access and refresh tokens so you stay signed in.
+`tidekeeper --paths` shows where. Treat that file like a password: keep it out of
+bug reports, screenshots, shared backups, and shell history. It's written with
+owner-only permissions where the platform supports them.
 
-Redact access tokens, refresh tokens, cookies, account IDs, and personal data
-from logs before sharing them.
+## Built-in safeguards
 
-## Token Handling
+- Logs redact tokens, credentials, and signed URL parameters. Redaction is best
+  effort, so check logs before sharing them.
+- Pasted tokens are hidden in the terminal, and sign-in links are limited to
+  TIDAL's HTTPS login hosts.
+- Media downloads never send your login or `.netrc` credentials, reject private
+  or local network addresses, and refuse HTTPS-to-HTTP redirects.
+- Manifests, artwork, and link lists have size limits. DRM-protected streams are
+  rejected rather than saved.
+- Filenames are sanitized so downloads stay inside your download folder.
+- ffmpeg and ffprobe only read local files in expected media formats. Keep them
+  updated through your system's package manager.
 
-Tidekeeper stores TIDAL access and refresh tokens locally so it can reuse a
-login session. Token files are written with owner-only permissions where the
-platform supports POSIX file modes. Treat token files as secrets and avoid
-including them in bug reports, screenshots, backups, or shell history.
+These are application safeguards, not a sandbox. Run Tidekeeper as a normal user,
+not an administrator, with configuration and download folders you trust.
 
-Manual token entry is hidden, and application logs redact bearer/basic
-credentials, token assignments, and signed URL queries. Redaction is a best
-effort safeguard; inspect logs before sharing them. Media requests do not
-inherit `.netrc` credentials, and authenticated API requests do not follow
-redirects. Device sign-in links are restricted to TIDAL's HTTPS login hosts.
+Tidekeeper coordinates writes between running copies with lock files in hidden
+`.tidekeeper-locks` folders (on Termux, in `~/.local/state/tidekeeper/locks`).
+Don't delete them while Tidekeeper is running.
 
-## Untrusted Input
+## Dependencies
 
-Remote manifest and embedded artwork reads have size limits. Manifest expansion
-and nested batch lists have aggregate limits as well. Media URLs and redirects
-are checked before requests, including public-address checks and rejection of
-HTTPS downgrades. These checks are application safeguards, not a network sandbox.
-
-FFmpeg and ffprobe are invoked with supported input formats and the local-file
-protocol only. Keep these separately installed tools updated through your
-operating system. Tidekeeper's dependency audit does not scan external binaries.
-
-Output filenames are sanitized and writers to the same destination are
-serialized across cooperating Tidekeeper instances using OS file locks through
-`filelock`. Lock metadata is retained in hidden `.tidekeeper-locks` directories.
-On Termux it lives under `~/.local/state/tidekeeper/locks` on private storage so
-Android shared-storage downloads can use working OS locks;
-do not delete it while instances are running. Locks are released when a process
-exits, including after a crash. Use a local filesystem with working OS locking;
-other programs and older Tidekeeper versions do not honor these locks. The application runs
-with your user's filesystem permissions; use trusted configuration/output
-directories and do not run it as an administrator.
-
-## Dependency Checks
-
-CI runs `pip-audit` against the installed terminal and desktop dependencies.
-GitHub Actions are pinned to commit IDs and tracked by Dependabot. A clean audit
-means no matching published advisories were found at that time, not proof that
-the software is free of vulnerabilities.
+CI audits Python dependencies with `pip-audit`, and GitHub Actions are pinned to
+commit IDs and updated by Dependabot. A clean audit means no known advisories
+matched at the time; it doesn't prove the absence of vulnerabilities.
