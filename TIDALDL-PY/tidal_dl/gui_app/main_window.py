@@ -1184,6 +1184,7 @@ class MainWindow(QMainWindow):
     def _set_queue_row(self, row_index: int, item: SearchItem):
         sorting = self.queue_table.isSortingEnabled()
         self.queue_table.setSortingEnabled(False)
+        percent = 100 if item.status == "Done" else int(item.progress_percent or 0)
         values = [
             self._queue_kind_label(item),
             item.title,
@@ -1195,20 +1196,23 @@ class MainWindow(QMainWindow):
         for col, value in enumerate(values):
             cell = self.queue_table.item(row_index, col)
             if cell is None:
-                cell = self._table_cell(value, item if col == 0 else None, muted=col == 0)
+                cell = (_SortKeyTableWidgetItem(str(value), percent) if col == 5 else
+                        self._table_cell(value, item if col == 0 else None, muted=col == 0))
                 self.queue_table.setItem(row_index, col, cell)
             else:
+                if col == 5:
+                    cell.sort_key = percent
                 cell.setText(str(value))
-                cell.setToolTip(str(value))
                 if col == 0:
                     cell.setData(Qt.UserRole, item)
+            cell.setToolTip(str(value))
         state = self._queue_progress_state(item)
         self.queue_table.item(row_index, 4).setData(PROGRESS_STATE_ROLE, state)
         self.queue_table.item(row_index, 4).setToolTip(item.status_detail or self._queue_status_text(item))
         self.queue_table.item(row_index, 1).setToolTip('\n'.join(filter(None, [item.title, item.artists])))
         progress_cell = self.queue_table.item(row_index, 5)
         progress_cell.setData(PROGRESS_STATE_ROLE, state)
-        progress_cell.setData(PROGRESS_PERCENT_ROLE, 100 if item.status == "Done" else int(item.progress_percent or 0))
+        progress_cell.setData(PROGRESS_PERCENT_ROLE, percent)
         quality_cell = self.queue_table.item(row_index, 3)
         if quality_cell is not None:
             quality_cell.setToolTip(
@@ -1307,13 +1311,6 @@ class MainWindow(QMainWindow):
         if not items:
             self._set_queue_message("No incomplete items to retry.")
             return
-        for item in items:
-            item.status = "Queued"
-            item.progress_percent = 0
-            item.progress_label = ""
-            item.actual_quality = ""
-            item.status_detail = ""
-        self.refresh_queue_table()
         self.start_downloads(items)
 
     def start_downloads(self, items: List[SearchItem]):
@@ -1339,7 +1336,10 @@ class MainWindow(QMainWindow):
         self.update_action_states()
         self._set_queue_message(f"Downloading {self._plural(len(items), 'item')}…")
         self.download_log.append("Starting downloads")
-        worker = DownloadWorker(self.backend, items, more_items=self._live_queued_items)
+        existing_jobs = {id(item) for item in self.queue}
+        worker = DownloadWorker(self.backend, items, more_items=lambda: [
+            item for item in self._live_queued_items() if id(item) not in existing_jobs
+        ])
         self.download_worker = worker
         worker.signals.log.connect(self.append_download_log)
         worker.signals.item_status.connect(self._set_queue_item_status)

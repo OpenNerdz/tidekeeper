@@ -113,6 +113,18 @@ class HttpReliabilityTests(unittest.TestCase):
         head.close.assert_called_once()
         partial.close.assert_called_once()
 
+    def test_size_probe_requests_identity_and_ignores_encoded_lengths(self):
+        encoded = response(headers={'Content-Encoding': 'gzip', 'Content-Length': '25'})
+        partial = response(206, headers={
+            'Content-Encoding': 'gzip', 'Content-Range': 'bytes 0-0/25', 'Content-Length': '1',
+        })
+        with mock.patch.object(download, '_httpRequest', side_effect=[encoded, partial]) as request:
+            self.assertEqual(download._contentLength('https://example.invalid/media'), -1)
+        for call in request.call_args_list:
+            self.assertEqual(call.kwargs['headers']['Accept-Encoding'], 'identity')
+        encoded.close.assert_called_once()
+        partial.close.assert_called_once()
+
     def test_cdn_retry_budget_is_not_multiplied_by_nested_request_loop(self):
         session = mock.Mock()
         session.request.side_effect = lambda *args, **kwargs: response(503)

@@ -44,6 +44,6 @@ Ruff checks for real defects such as undefined names, unused imports, and bare
 - Update `README.md` or the docs when user-facing behavior changes.
 - Keep the `tidal-dl` command working where practical.
 
-Add a short, user-facing bullet under `## Unreleased` in `CHANGELOG.md`. Merged
-changes are versioned and released automatically; see
-[MAINTAINING.md](MAINTAINING.md).
+Add a short, user-facing bullet under `## Unreleased` in `CHANGELOG.md`. Pushes
+run checks and platform builds. Maintainers publish through the Build workflow's
+manual **publish** switch; see [MAINTAINING.md](MAINTAINING.md).

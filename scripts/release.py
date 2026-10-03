@@ -184,8 +184,9 @@ def published_tag(repository):
     return tag
 
 
-def output_plan(ref, tag='', build=True):
-    values = {'ref': ref, 'tag': tag, 'build': str(build).lower(), 'publish': str(bool(tag)).lower()}
+def output_plan(ref, tag='', build=True, source=None):
+    values = {'ref': ref, 'source': source or ref, 'tag': tag,
+              'build': str(build).lower(), 'publish': str(bool(tag)).lower()}
     target = os.environ.get('GITHUB_OUTPUT')
     if target:
         with open(target, 'a', encoding='utf-8') as handle:
@@ -211,19 +212,18 @@ def prepare(root, mode, source, ref, repository):
         if tags[latest] == source or f'{SOURCE_MARKER}{source}' in annotation.splitlines():
             git('checkout', '--detach', latest)
             release_notes(root, latest)
-            output_plan(git('rev-parse', 'HEAD'), latest)
+            output_plan(git('rev-parse', 'HEAD'), latest, source=source)
             return
     git('fetch', 'origin', 'main')
     tip = git('rev-parse', 'FETCH_HEAD')
     if tip != source:
-        print('A newer main commit supersedes this run; it will handle publication.')
-        output_plan(source, build=False)
-        return
+        print('Main advanced after this release was requested; preparing its current tip.')
+        source = tip
     git('checkout', '--detach', tip)
     prepared_source, prepared_tag = candidate_metadata('HEAD')
     if prepared_source and prepared_tag:
         release_notes(root, prepared_tag)
-        output_plan(tip, prepared_tag)
+        output_plan(tip, prepared_tag, source=prepared_source)
         return
     promoted = git('log', '--format=%H', f'--grep=^{RELEASE_MARKER}v', tip).splitlines()
     for commit in promoted:
@@ -240,7 +240,7 @@ def prepare(root, mode, source, ref, repository):
         if candidate_source == source and candidate_tag:
             git('checkout', '--detach', candidate)
             release_notes(root, candidate_tag)
-            output_plan(candidate, candidate_tag)
+            output_plan(candidate, candidate_tag, source=source)
             return
         git('checkout', '--detach', tip)
     baseline = published_tag(repository)
@@ -294,7 +294,7 @@ def prepare(root, mode, source, ref, repository):
     except subprocess.CalledProcessError:
         if remote_candidate() != candidate_commit:
             raise
-    output_plan(candidate_commit, tag)
+    output_plan(candidate_commit, tag, source=source)
 
 
 def promote(root, source, candidate, tag):

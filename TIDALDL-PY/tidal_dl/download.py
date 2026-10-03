@@ -251,6 +251,10 @@ def _contentTotalSize(response):
     """Best-effort total object size from Content-Range or Content-Length."""
     if response is None:
         return -1
+    if response.headers.get('Content-Encoding', 'identity').lower() not in ('', 'identity'):
+        # Content-Length and byte ranges describe the encoded representation,
+        # while iter_content writes decoded bytes to disk.
+        return -1
     contentRange = response.headers.get("Content-Range", "")
     if contentRange.lower().startswith("bytes ") and "/" in contentRange:
         total = contentRange.rsplit("/", 1)[-1].strip()
@@ -269,7 +273,7 @@ def _contentTotalSize(response):
 def _contentLength(url):
     """Probe remote size via HEAD, falling back to a 1-byte Range GET."""
     try:
-        response = _httpRequest("HEAD", url, allow_redirects=True)
+        response = _httpRequest("HEAD", url, allow_redirects=True, headers={"Accept-Encoding": "identity"})
         try:
             size = _contentTotalSize(response)
             if size > 0:
@@ -288,7 +292,7 @@ def _contentLength(url):
             url,
             allow_redirects=True,
             stream=True,
-            headers={"Range": "bytes=0-0"},
+            headers={"Accept-Encoding": "identity", "Range": "bytes=0-0"},
         )
         try:
             size = _contentTotalSize(response)
@@ -496,7 +500,9 @@ def _downloadSingleUrl(
             # Its Content-Length describes the compressed bytes, so it cannot
             # validate the size of the decoded file written below.
             responseTotal = -1 if encoded else _contentTotalSize(response)
-            if responseTotal > 0:
+            if encoded:
+                knownTotal = -1
+            elif responseTotal > 0:
                 knownTotal = responseTotal
             elif response.status_code == 200 and not encoded:
                 contentLength = _parseIntHeader(response.headers.get("Content-Length"))
@@ -519,6 +525,7 @@ def _downloadSingleUrl(
                     _noteProgress(progress, userProgress, credit, progressLock)
                     reportedBytes += credit
 
+            check_cancelled()
             _verifyLocalSize(tempOutputPath, knownTotal, label="CDN object")
             os.replace(tempOutputPath, outputPath)
             size = _localFileSize(outputPath)

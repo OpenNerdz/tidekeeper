@@ -104,9 +104,88 @@ class GuiQueueTests(unittest.TestCase):
         self.window.retry_failed_downloads()
 
         self.assertEqual(started, [failed])
-        self.assertEqual(failed.status, "Queued")
+        self.assertEqual(failed.status, "Failed")
         self.assertEqual(done.status, "Done")
         self.assertEqual(queued.status, "Queued")
+
+    def test_rejected_retry_preserves_previous_failure_state(self):
+        item = self.backend.search('song', self.Type.Track)[0]
+        item.status = 'Partial'
+        item.progress_percent = 75
+        item.progress_label = 'Previous transfer'
+        item.actual_quality = 'HiFi (flac)'
+        item.status_detail = 'Cover could not be saved'
+        self.window.queue = [item]
+        self.window.refresh_queue_table()
+        previous = copy.deepcopy(item.__dict__)
+
+        with mock.patch.object(self.backend, 'apply_download_settings',
+                               side_effect=ValueError('Save the changed client first')), \
+                mock.patch.object(self.window, 'start_worker') as start:
+            self.window.retry_failed_downloads()
+
+        start.assert_not_called()
+        self.assertEqual(item.__dict__, previous)
+        self.assertIn('Save the changed client first', self.window.queue_status.toolTip())
+
+    def test_retry_worker_leaves_preexisting_queued_jobs_for_start(self):
+        failed, queued = self.backend.search('song', self.Type.Track)[:2]
+        failed.status = 'Failed'
+        self.window.queue = [failed, queued]
+        self.window.refresh_queue_table()
+        self.window.start_worker = lambda worker: worker.run()
+
+        with mock.patch.object(self.backend, 'download') as download:
+            self.window.retry_failed_downloads()
+
+        self.assertEqual([call.args[0] for call in download.call_args_list], [failed])
+        self.assertEqual(failed.status, 'Done')
+        self.assertEqual(queued.status, 'Queued')
+
+    def test_download_now_leaves_preexisting_queued_jobs_for_start(self):
+        queued, selected = self.backend.search('song', self.Type.Track)[:2]
+        self.window.queue = [queued]
+        self.window.refresh_queue_table()
+        self.window.set_search_results([selected])
+        self.window.results_table.selectRow(0)
+        self.window.start_worker = lambda worker: worker.run()
+
+        with mock.patch.object(self.backend, 'download') as download:
+            self.window.download_selected()
+
+        self.assertEqual([call.args[0].identifier for call in download.call_args_list],
+                         [selected.identifier])
+        self.assertEqual(queued.status, 'Queued')
+        self.assertEqual(self.window.queue[1].status, 'Done')
+
+    def test_download_worker_includes_jobs_added_after_start(self):
+        from threading import Event
+
+        failed, queued, added = self.backend.search('song', self.Type.Track)[:3]
+        failed.status = 'Failed'
+        self.window.queue = [failed, queued]
+        self.window.refresh_queue_table()
+        entered, release = Event(), Event()
+
+        def download(item, *_args, **_kwargs):
+            if item is failed:
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError('Timed out waiting to add a queue job')
+
+        with mock.patch.object(self.backend, 'download', side_effect=download) as transfer:
+            self.window.retry_failed_downloads()
+            try:
+                self.assertTrue(entered.wait(2))
+                self.app.processEvents()
+                self.window._enqueue_items([added])
+            finally:
+                release.set()
+                self._wait_for_workers()
+
+        self.assertEqual([call.args[0] for call in transfer.call_args_list], [failed, added])
+        self.assertEqual(queued.status, 'Queued')
+        self.assertEqual(added.status, 'Done')
 
     def test_retry_does_not_treat_an_incomplete_artist_as_a_complete_failure_list(self):
         from tidal_dl.gui_app import backend as gui_backend
@@ -164,6 +243,7 @@ class GuiQueueTests(unittest.TestCase):
 
     def test_start_downloads_asks_worker_for_items_added_later(self):
         queued = self.SearchItem(self.Type.Track, "Queued", "", "", "3", "", SimpleNamespace(id=3), status="Queued")
+        self.window.queue = [queued]
         captured = {}
 
         class FakeWorker:
@@ -191,7 +271,10 @@ class GuiQueueTests(unittest.TestCase):
             main_window.DownloadWorker = original
 
         self.assertEqual(captured["items"], [queued])
-        self.assertEqual(captured["more_items"], self.window._live_queued_items)
+        self.assertEqual(captured["more_items"](), [])
+        added = self.backend.direct_item('123')
+        self.window.queue.append(added)
+        self.assertEqual(captured["more_items"](), [added])
 
     def test_catalog_selection_and_equivalent_links_share_one_unfinished_job(self):
         item = self.backend.search('song', self.Type.Track)[0]
@@ -264,12 +347,18 @@ class GuiQueueTests(unittest.TestCase):
             item.progress_percent = 50
         self.window.queue = items
         self.window.refresh_queue_table()
-        with mock.patch.object(self.window, 'start_downloads') as start:
-            self.window.retry_failed_downloads()
-        start.assert_called_once_with(items[:4])
-        for item in items[:4]:
+        self.window.start_worker = lambda worker: worker.run()
+        started = []
+
+        def download(item, *_args, **_kwargs):
+            started.append(item)
             self.assertEqual((item.status, item.status_detail, item.actual_quality, item.progress_percent),
-                             ('Queued', '', '', 0))
+                             ('Downloading', '', '', 0))
+
+        with mock.patch.object(self.backend, 'download', side_effect=download):
+            self.window.retry_failed_downloads()
+        self.assertEqual(started, items[:4])
+        self.assertEqual([item.status for item in items[:4]], ['Done'] * 4)
         self.assertEqual([item.status for item in items[4:]], ['Done', 'Queued'])
 
     def test_failure_details_are_visible_selectable_and_redacted(self):
@@ -346,6 +435,30 @@ class GuiQueueTests(unittest.TestCase):
         self.window.results_table.sortItems(4, Qt.DescendingOrder)
         descending = [self.window.results_table.item(row, 4).text() for row in range(3)]
         self.assertEqual(descending, ['2:21:31', '1:00:24', '2:17'])
+
+    def test_queue_sorts_progress_numerically_after_updates(self):
+        from PySide6.QtCore import Qt
+
+        items = self.backend.search('song', self.Type.Track)[:4]
+        for item, percent in zip(items, (0, 9, 20, 0)):
+            item.progress_percent = percent
+            item.status = 'Downloading'
+        items[0].status, items[3].status = 'Queued', 'Done'
+        self.window.queue = items
+        self.window.refresh_queue_table()
+
+        self.window.queue_table.sortItems(5, Qt.AscendingOrder)
+        self.assertEqual([self.window._row_item(self.window.queue_table, row).identifier
+                          for row in range(4)], [item.identifier for item in items])
+        self.window.queue_table.sortItems(5, Qt.DescendingOrder)
+        self.assertEqual([self.window._row_item(self.window.queue_table, row).identifier
+                          for row in range(4)], [item.identifier for item in reversed(items)])
+
+        self.window._set_queue_item_progress(items[2],
+                                             {'bytes': 6, 'bytes_total': 100, 'active': True})
+        self.assertEqual([self.window._row_item(self.window.queue_table, row).identifier
+                          for row in range(4)],
+                         [items[index].identifier for index in (3, 1, 2, 0)])
 
     def test_search_and_download_failures_use_inline_feedback(self):
         with mock.patch('tidal_dl.gui_app.main_window.QMessageBox.warning') as warning:

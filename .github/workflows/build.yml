@@ -30,6 +30,7 @@ jobs:
       contents: write
     outputs:
       ref: ${{ steps.plan.outputs.ref }}
+      source: ${{ steps.plan.outputs.source }}
       tag: ${{ steps.plan.outputs.tag }}
       build: ${{ steps.plan.outputs.build }}
       publish: ${{ steps.plan.outputs.publish }}
@@ -245,7 +246,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           RELEASE_CANDIDATE: ${{ needs.preflight.outputs.ref }}
-          RELEASE_SOURCE: ${{ github.sha }}
+          RELEASE_SOURCE: ${{ needs.preflight.outputs.source }}
         run: |
           python3 scripts/release.py promote --source "$RELEASE_SOURCE" \
             --candidate "$RELEASE_CANDIDATE" --tag "$RELEASE_TAG"

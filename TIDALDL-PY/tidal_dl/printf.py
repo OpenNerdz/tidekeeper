@@ -306,7 +306,7 @@ class Printf(object):
         tb = Printf._gettable([LANG.select.MODEL_TRACK_PROPERTY, LANG.select.VALUE], [
             [LANG.select.MODEL_TITLE, data.title],
             ["ID", data.id],
-            [LANG.select.MODEL_ALBUM, data.album.title],
+            [LANG.select.MODEL_ALBUM, data.album.title if data.album is not None else None],
             [LANG.select.MODEL_VERSION, data.version],
             [LANG.select.MODEL_EXPLICIT, data.explicit],
             ["Max-Q", data.audioQuality],

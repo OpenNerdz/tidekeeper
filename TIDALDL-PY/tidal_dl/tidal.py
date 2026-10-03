@@ -256,14 +256,15 @@ class TidalAPI(object):
 
     def saveKeyToToken(self, expiresAfter=None):
         """Persist the active login; every sign-in path writes the same fields."""
-        TOKEN.userid = self.key.userId
-        TOKEN.countryCode = self.key.countryCode
-        TOKEN.clientId = self.apiKey.get('clientId')
-        TOKEN.accessToken = self.key.accessToken
-        TOKEN.refreshToken = self.key.refreshToken
-        if expiresAfter is not None:
-            TOKEN.expiresAfter = expiresAfter
-        TOKEN.save()
+        with self._authStateLock:
+            TOKEN.userid = self.key.userId
+            TOKEN.countryCode = self.key.countryCode
+            TOKEN.clientId = self.apiKey.get('clientId')
+            TOKEN.accessToken = self.key.accessToken
+            TOKEN.refreshToken = self.key.refreshToken
+            if expiresAfter is not None:
+                TOKEN.expiresAfter = expiresAfter
+            TOKEN.save()
 
     def clearSessionCaches(self):
         with self._streamCacheLock:
@@ -339,28 +340,38 @@ class TidalAPI(object):
             self._responseErrorCodes(response),
         )
 
-    def _refreshSavedAccessToken(self):
-        if aigpy.string.isNull(getattr(TOKEN, 'refreshToken', None)):
-            return False
-
-        access_token_before_wait = self.key.accessToken
+    def _refreshSavedAccessToken(self, expectedGeneration=None):
+        with self._authStateLock:
+            generation = self._sessionGeneration
+            if expectedGeneration is not None and expectedGeneration != generation:
+                return False
+            access_token_before_wait = self.key.accessToken
+            if TOKEN.accessToken != access_token_before_wait:
+                # A manual login may be installed before its caller persists it.
+                # An older saved token must never be mistaken for a renewal.
+                return False
         with self._tokenRefreshLock:
-            # Another worker may have refreshed while this request waited.
-            if (
-                not aigpy.string.isNull(getattr(TOKEN, 'accessToken', None))
-                and TOKEN.accessToken != access_token_before_wait
-            ):
-                self.key.userId = TOKEN.userid
-                self.key.countryCode = TOKEN.countryCode
-                self.key.accessToken = TOKEN.accessToken
-                self.key.refreshToken = TOKEN.refreshToken
-                return True
+            with self._authStateLock:
+                if generation != self._sessionGeneration:
+                    return False
+                refresh_token = getattr(TOKEN, 'refreshToken', None)
+                if aigpy.string.isNull(refresh_token):
+                    return False
+                # Another worker may have refreshed while this request waited.
+                if (
+                    not aigpy.string.isNull(getattr(TOKEN, 'accessToken', None))
+                    and TOKEN.accessToken != access_token_before_wait
+                ):
+                    return TOKEN.accessToken == self.key.accessToken
 
             try:
-                if not self.refreshAccessToken(TOKEN.refreshToken):
+                if not self.refreshAccessToken(refresh_token, expectedGeneration=generation):
                     return False
-                self.saveKeyToToken(self.keyExpiresAfter())
-                return True
+                with self._authStateLock:
+                    if generation != self._sessionGeneration:
+                        return False
+                    self.saveKeyToToken(self.keyExpiresAfter())
+                    return True
             except (KeyError, TypeError, ValueError, OSError, requests.RequestException) as error:
                 logging.info("Unable to refresh saved access token: %s", error)
                 return False
@@ -525,7 +536,6 @@ class TidalAPI(object):
 
     def _getOnce(self, path, params=None, urlpre=API_BASE_PRIMARY):
         params = {} if params is None else dict(params)
-        params['countryCode'] = self.key.countryCode
         detail = None
         respond = None
         lastError = None
@@ -540,15 +550,28 @@ class TidalAPI(object):
             respond = None
             check_cancelled()
             try:
-                header = {'authorization': f'Bearer {self.key.accessToken}'}
                 if playbackRequest:
                     self._waitForStreamRequestQuota()
                 else:
                     # Only engages after a 429 raised the adaptive interval.
                     self._waitForCatalogRequestQuota()
 
+                with self._authStateLock:
+                    request_generation = self._sessionGeneration
+                    header = {'authorization': f'Bearer {self.key.accessToken}'}
+                    params['countryCode'] = self.key.countryCode
                 respond = self.session.get(url, headers=header, params=params, timeout=REQUEST_TIMEOUT,
                                            allow_redirects=False)
+
+                if respond.status_code == 401 or self._isStaleClientResponse(respond):
+                    with self._authStateLock:
+                        if request_generation != self._sessionGeneration:
+                            raise TidalApiError(
+                                "Get operation failed for an earlier login. "
+                                "The current login was kept; retry the operation.",
+                                respond.status_code,
+                                self._responseErrorCodes(respond),
+                            )
 
                 if respond.status_code == 429:
                     # Always apply adaptive penalty (catalog and playback) so one
@@ -561,7 +584,8 @@ class TidalAPI(object):
                     self._backOffForAssetNotReady(respond, index)
                     continue
 
-                if respond.status_code == 401 and not refreshedToken and self._refreshSavedAccessToken():
+                if (respond.status_code == 401 and not refreshedToken
+                        and self._refreshSavedAccessToken(expectedGeneration=request_generation)):
                     refreshedToken = True
                     continue
 
@@ -570,11 +594,19 @@ class TidalAPI(object):
                         raise self._playbackClientError(
                             path, params.get('audioquality') or params.get('videoquality') or 'unknown',
                         )
-                    if not refreshedToken and self._refreshSavedAccessToken():
+                    if not refreshedToken and self._refreshSavedAccessToken(expectedGeneration=request_generation):
                         refreshedToken = True
                         continue
                     error = self._httpError("Get operation", respond)
-                    self.clearSavedSession()
+                    with self._authStateLock:
+                        if request_generation != self._sessionGeneration:
+                            raise TidalApiError(
+                                "Get operation failed for an earlier login (HTTP 404, subStatus 4022). "
+                                "The current login was kept; retry the operation.",
+                                404,
+                                error.errorCodes,
+                            )
+                        self.clearSavedSession()
                     raise TidalApiError(
                         "Get operation failed: the saved login session references an API client "
                         "that no longer exists (HTTP 404, subStatus 4022). "
@@ -839,8 +871,11 @@ class TidalAPI(object):
             if response is not None:
                 response.close()
 
-    def refreshAccessToken(self, refreshToken) -> bool:
-        generation = self._sessionGeneration
+    def refreshAccessToken(self, refreshToken, expectedGeneration=None) -> bool:
+        with self._authStateLock:
+            generation = self._sessionGeneration
+            if expectedGeneration is not None and expectedGeneration != generation:
+                return False
         result = self._post('/token', self._oauthData(
             refresh_token=refreshToken,
             grant_type='refresh_token',
@@ -882,7 +917,10 @@ class TidalAPI(object):
         with self._authStateLock:
             if generation != self._sessionGeneration:
                 raise TidalApiError('Login cancelled.')
+            self._sessionGeneration += 1
+            self.cancelDeviceLogin()
             self.clearSessionCaches()
+            self.key = LoginKey()
             self.key.userId = result['userId']
             self.key.countryCode = result['countryCode']
             self.key.accessToken = accessToken
@@ -1271,10 +1309,13 @@ class TidalAPI(object):
             while attempt < PLAYBACK_ASSET_NOT_READY_ATTEMPTS:
                 check_cancelled()
                 self._waitForStreamRequestQuota()
+                with self._authStateLock:
+                    request_generation = self._sessionGeneration
+                    authorization = f'Bearer {self.key.accessToken}'
                 response = self.session.get(
                     f'https://openapi.tidal.com/v2/trackManifests/{str(id)}',
                     headers={
-                        'authorization': f'Bearer {self.key.accessToken}',
+                        'authorization': authorization,
                         'Accept': 'application/vnd.api+json',
                     },
                     params=params,
@@ -1291,7 +1332,8 @@ class TidalAPI(object):
                     attempt += 1
                     continue
 
-                if response.status_code == 401 and not refreshedToken and self._refreshSavedAccessToken():
+                if (response.status_code == 401 and not refreshedToken
+                        and self._refreshSavedAccessToken(expectedGeneration=request_generation)):
                     refreshedToken = True
                     response.close()
                     continue

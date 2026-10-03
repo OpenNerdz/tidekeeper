@@ -11,6 +11,7 @@ from unittest import mock
 import tidal_dl
 from tidal_dl import apiKey, events, paths, printf
 from tidal_dl.enums import AudioQuality, VideoQuality
+from tidal_dl.model import Track
 from tidal_dl.paths import PATHS
 from tidal_dl.printf import Printf
 from tidal_dl.settings import SETTINGS, TOKEN
@@ -311,6 +312,16 @@ class CliUiTests(unittest.TestCase):
 
 
 class CliOutputTests(unittest.TestCase):
+    def test_track_summary_accepts_missing_album_metadata(self):
+        track = Track()
+        track.id = 123
+        track.title = 'Track without album metadata'
+        track.album = None
+        output = io.StringIO()
+        with redirect_stdout(output):
+            Printf.track(track)
+        self.assertIn(track.title, output.getvalue())
+
     def test_collection_summaries_accept_missing_titles(self):
         album = SimpleNamespace(id=1, title=None, numberOfTracks=2, numberOfVideos=0, releaseDate=None,
                                 version=None, explicit=False, audioQuality=None, audioModes=None)

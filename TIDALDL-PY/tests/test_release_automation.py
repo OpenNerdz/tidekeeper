@@ -85,6 +85,8 @@ class ReleaseMetadataTests(unittest.TestCase):
         root = SCRIPTS.parent
         build = (root / '.github/workflows/build.yml').read_text(encoding='utf-8')
         self.assertIn('RELEASE_REQUESTED: ${{ inputs.publish }}', build)
+        self.assertIn('source: ${{ steps.plan.outputs.source }}', build)
+        self.assertIn('RELEASE_SOURCE: ${{ needs.preflight.outputs.source }}', build)
         self.assertNotIn("github.event_name == 'push' || inputs.publish", build)
         self.assertNotIn('tags: ["v*"]', build)
         self.assertNotIn('mode=tag', build)
@@ -225,12 +227,24 @@ class ReleaseGitTests(unittest.TestCase):
         self.assertIn('- Improve builds.', body)
         self.assertIn('- Improve retries.', body)
 
-    def test_newer_application_push_supersedes_old_run(self):
+    def test_queued_release_includes_newer_main_and_promotes_its_checked_candidate(self):
         source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
-        self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 2\n')
+        newer = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 2\n')
         result = self.prepare(source)
-        self.assertFalse(result.kwargs['build'])
+        candidate, tag = result.args
+        self.assertEqual(result.kwargs, {'source': newer})
+        self.assertEqual(self.run_git('rev-parse', candidate + '^'), newer)
+        self.assertEqual(self.run_git('show', f'{candidate}:TIDALDL-PY/tidal_dl/app.py'), 'VALUE = 2')
+        self.assertEqual(self.run_git('ls-remote', 'origin', 'refs/heads/main').split()[0], newer)
         self.assertEqual(self.run_git('tag', '--list'), 'v2020.1.1.0')
+        self.promote(result.kwargs['source'], candidate, tag)
+        self.assertEqual(self.run_git('ls-remote', 'origin', 'refs/heads/main').split()[0], candidate)
+
+    def test_queued_release_reuses_a_candidate_for_current_main(self):
+        source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')
+        newer = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 2\n')
+        prepared = self.prepare(newer)
+        self.assertEqual(self.prepare(source), prepared)
 
     def test_competing_push_blocks_promotion_and_never_creates_a_release_tag(self):
         source = self.change('TIDALDL-PY/tidal_dl/app.py', 'VALUE = 1\n')

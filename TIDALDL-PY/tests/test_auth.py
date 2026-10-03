@@ -282,6 +282,108 @@ class DeviceLoginTests(ApiFixture, unittest.TestCase):
 
 
 class DeviceLoginCancellationTests(DownloadFolderApiFixture, unittest.TestCase):
+    def test_manual_login_invalidates_inflight_refresh(self):
+        self.api.key.accessToken = 'old-access'
+        grant = {'user': {'userId': 'old-user', 'countryCode': 'US'},
+                 'access_token': 'old-renewed', 'refresh_token': 'old-refresh', 'expires_in': 60}
+
+        def complete_refresh(*args):
+            self.api.loginByAccessToken('new-access')
+            return grant
+
+        with mock.patch.object(self.api.session, 'get', return_value=FakeResponse(body={
+                'userId': 'new-user', 'countryCode': 'GB'})), \
+                mock.patch.object(self.api, '_post', side_effect=complete_refresh):
+            self.assertFalse(self.api.refreshAccessToken('old-refresh'))
+        self.assertEqual(self.api.key.accessToken, 'new-access')
+        self.assertEqual(self.api.key.userId, 'new-user')
+
+    def test_manual_login_invalidates_inflight_device_grant(self):
+        grant = {'user': {'userId': 'device-user', 'countryCode': 'US'},
+                 'access_token': 'device-access', 'refresh_token': 'device-refresh', 'expires_in': 60}
+
+        def complete_device_grant(*args):
+            self.api.loginByAccessToken('manual-access')
+            return grant
+
+        with mock.patch.object(self.api.session, 'get', return_value=FakeResponse(body={
+                'userId': 'manual-user', 'countryCode': 'GB'})), \
+                mock.patch.object(self.api, '_post', side_effect=complete_device_grant):
+            self.assertFalse(self.api.checkAuthStatus())
+        self.assertEqual(self.api.key.accessToken, 'manual-access')
+
+    def test_late_catalog_client_error_preserves_newer_login(self):
+        stale = FakeResponse(status=404, body={'subStatus': 4022})
+
+        def complete_catalog_request(*args, **kwargs):
+            self.api.clearSession()
+            self.api.key.accessToken = 'new-access'
+            return stale
+
+        with mock.patch.object(self.api.session, 'get', side_effect=complete_catalog_request), \
+                mock.patch.object(self.api, '_refreshSavedAccessToken', return_value=False), \
+                mock.patch.object(self.api, 'clearSavedSession') as clear, \
+                self.assertRaises(TidalApiError):
+            self.api._getOnce('albums/1')
+        clear.assert_not_called()
+        self.assertEqual(self.api.key.accessToken, 'new-access')
+
+    def test_queued_saved_refresh_cannot_reinstall_a_logged_out_session(self):
+        class LogoutWhileWaiting:
+            def __enter__(lock):
+                self.api.clearSession()
+
+            def __exit__(lock, *args):
+                pass
+
+        self.api.key.accessToken = 'old-access'
+        with mock.patch.multiple(TOKEN, accessToken='old-access', refreshToken='old-refresh'), \
+                mock.patch.object(self.api, '_tokenRefreshLock', LogoutWhileWaiting()), \
+                mock.patch.object(self.api, 'refreshAccessToken') as refresh:
+            self.assertFalse(self.api._refreshSavedAccessToken())
+        refresh.assert_not_called()
+        self.assertIsNone(self.api.key.accessToken)
+
+    def test_saved_refresh_cannot_persist_after_session_changes(self):
+        def refresh(*args, **kwargs):
+            self.api.clearSession()
+            self.api.key.accessToken = 'new-login'
+            return True
+
+        self.api.key.accessToken = 'old-access'
+        with mock.patch.multiple(TOKEN, accessToken='old-access', refreshToken='old-refresh'), \
+                mock.patch.object(self.api, 'refreshAccessToken', side_effect=refresh), \
+                mock.patch.object(self.api, 'saveKeyToToken') as save:
+            self.assertFalse(self.api._refreshSavedAccessToken())
+        save.assert_not_called()
+        self.assertEqual(self.api.key.accessToken, 'new-login')
+
+    def test_manual_login_before_persistence_cannot_reinstall_old_saved_token(self):
+        self.api.key.accessToken = 'manual-access'
+        with mock.patch.multiple(TOKEN, accessToken='old-access', refreshToken='old-refresh'), \
+                mock.patch.object(self.api, 'refreshAccessToken') as refresh:
+            self.assertFalse(self.api._refreshSavedAccessToken())
+        refresh.assert_not_called()
+        self.assertEqual(self.api.key.accessToken, 'manual-access')
+
+    def test_saved_refresh_rejects_a_session_change_before_refresh_starts(self):
+        original_refresh = self.api.refreshAccessToken
+
+        def start_refresh(*args, **kwargs):
+            self.api.clearSession()
+            self.api.key.accessToken = 'new-login'
+            return original_refresh(*args, **kwargs)
+
+        self.api.key.accessToken = 'old-access'
+        with mock.patch.multiple(TOKEN, accessToken='old-access', refreshToken='old-refresh'), \
+                mock.patch.object(self.api, 'refreshAccessToken', side_effect=start_refresh), \
+                mock.patch.object(self.api, '_post') as post, \
+                mock.patch.object(self.api, 'saveKeyToToken') as save:
+            self.assertFalse(self.api._refreshSavedAccessToken())
+        post.assert_not_called()
+        save.assert_not_called()
+        self.assertEqual(self.api.key.accessToken, 'new-login')
+
     def test_cancel_device_login_does_not_invalidate_a_token_refresh(self):
         self.api.key.accessToken = 'saved-access'
         original_generation = self.api._sessionGeneration
@@ -454,7 +556,7 @@ class TokenRefreshTests(CatalogFixtures, unittest.TestCase):
             api.key.accessToken = "expired-access"
             api.key.countryCode = "GB"
 
-            def fake_refresh(refresh_token):
+            def fake_refresh(refresh_token, expectedGeneration=None):
                 self.assertEqual(refresh_token, "refresh-token")
                 api.key.userId = "user-123"
                 api.key.countryCode = "GB"
@@ -525,7 +627,7 @@ class TokenRefreshTests(CatalogFixtures, unittest.TestCase):
                 json=mock.Mock(return_value=body),
             )
 
-        def fake_refresh():
+        def fake_refresh(**kwargs):
             api.key.accessToken = "fresh-access"
             return True
 
@@ -610,12 +712,23 @@ class AuthRequestTests(unittest.TestCase):
         api = TidalAPI()
         api.key.accessToken = "expired"
         old_values = (TOKEN.accessToken, TOKEN.refreshToken, TOKEN.userid, TOKEN.countryCode)
+
+        class RenewWhileWaiting:
+            def __enter__(lock):
+                TOKEN.accessToken = api.key.accessToken = "fresh"
+                api.key.userId = "user"
+                api.key.countryCode = "US"
+
+            def __exit__(lock, *args):
+                pass
+
         try:
-            TOKEN.accessToken = "fresh"
+            TOKEN.accessToken = "expired"
             TOKEN.refreshToken = "refresh"
             TOKEN.userid = "user"
             TOKEN.countryCode = "US"
-            with mock.patch.object(api, "refreshAccessToken") as refresh:
+            with mock.patch.object(api, "refreshAccessToken") as refresh, \
+                    mock.patch.object(api, '_tokenRefreshLock', RenewWhileWaiting()):
                 self.assertTrue(api._refreshSavedAccessToken())
             refresh.assert_not_called()
             self.assertEqual(api.key.accessToken, "fresh")

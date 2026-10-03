@@ -179,6 +179,23 @@ class ResumeAndReceiptTests(TransferFixture, unittest.TestCase):
         self.assertEqual(Path(path).read_bytes(), b'previous-good')
         self.assertEqual(Path(path + '.download').read_bytes(), b'first')
 
+    def test_cancel_after_last_chunk_preserves_existing_output(self):
+        path = str(self.root / 'track')
+        Path(path).write_bytes(b'previous-good')
+        cancelled = threading.Event()
+
+        class CancelAtEnd(FakeResponse):
+            def iter_content(self, chunk_size):
+                yield b'complete'
+                cancelled.set()
+
+        with job_context(cancel=cancelled), \
+                mock.patch.object(download, '_httpRequest', return_value=CancelAtEnd(b'complete')):
+            with self.assertRaises(DownloadCancelled):
+                download._downloadUrls(['https://cdn.invalid/file'], path, probeSize=False)
+        self.assertEqual(Path(path).read_bytes(), b'previous-good')
+        self.assertEqual(Path(path + '.download').read_bytes(), b'complete')
+
 
 class AssemblyCancellationTests(ProfileFixture, unittest.TestCase):
     def test_cancelled_assembly_preserves_output_and_removes_temporary_file(self):
@@ -252,6 +269,16 @@ class ResponseAndProgressTests(ApiFixture, unittest.TestCase):
 
 
 class RangeAndRedirectTests(DownloadFolderApiFixture, unittest.TestCase):
+    def test_fresh_encoded_response_does_not_use_compressed_expected_size(self):
+        target = self.root / 'audio.part'
+        result = response(b'fresh', headers={'Content-Encoding': 'gzip', 'Content-Length': '25'})
+        result.iter_content = mock.Mock(side_effect=lambda **kwargs: iter([b'fresh']))
+        with mock.patch.object(download, '_httpRequest', return_value=result), \
+                mock.patch.object(download, 'cancellable_sleep'):
+            self.assertEqual(download._downloadSingleUrl(
+                'https://cdn.example/audio', str(target), expectedSize=25), 5)
+        self.assertEqual(target.read_bytes(), b'fresh')
+
     def test_fresh_encoded_response_is_decoded_and_saved(self):
         target = self.root / 'audio.part'
         result = response(b'fresh', headers={'Content-Encoding': 'gzip', 'Content-Length': '25'})

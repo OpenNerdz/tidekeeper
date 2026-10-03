@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+<!-- release-title: Reliable sign-in and focused queue retries -->
+
+- Keep a newer login safe when requests, token refreshes, or device sign-in from
+  an earlier session finish late.
+- Keep Download now and Retry incomplete focused on the requested items while
+  still accepting jobs added during the download. Preserve failure details when
+  a retry cannot start, remove the redundant early queue reset, and sort queue
+  progress numerically.
+- Validate compressed media responses using decoded file sizes instead of
+  compressed transfer sizes, and honor cancellation before replacing a completed
+  transfer's destination.
+- Display tracks with missing album metadata without interrupting downloads.
+- Prepare queued manual releases from the latest main commit and carry that
+  source through the checked promotion step.
+- Stop the Linux dependency installer when refreshing apt's package index fails,
+  and create working launchers when the installation folder is a relative path.
+
 ## 2026.9.29.4 - 2026-09-29
 
 <!-- release-title: Reliable containers and fully gated releases -->

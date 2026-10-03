@@ -57,7 +57,7 @@ install_linux_dependencies() {
     fi
 
     if has_command apt-get; then
-        run_as_root apt-get update
+        run_as_root apt-get update || return
         run_as_root apt-get install -y python3 python3-pip python3-venv git ffmpeg gcc libxml2-dev libxslt1-dev
     elif has_command dnf; then
         run_as_root dnf install -y python3 python3-pip git ffmpeg gcc libxml2-devel libxslt-devel
@@ -106,19 +106,20 @@ install_termux_package() {
 }
 
 install_linux_package() {
-    local python source venv_python
+    local python source venv_root venv_python
     python="$(python_command)"
     source="$(package_source)"
 
     mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
-    "$python" -m venv "$INSTALL_ROOT/venv"
-    venv_python="$INSTALL_ROOT/venv/bin/python"
+    venv_root="$(cd "$INSTALL_ROOT" && pwd)/venv"
+    "$python" -m venv "$venv_root"
+    venv_python="$venv_root/bin/python"
 
     "$venv_python" -m pip install --upgrade pip wheel
     "$venv_python" -m pip install --upgrade "$source"
 
-    ln -sf "$INSTALL_ROOT/venv/bin/tidekeeper" "$BIN_DIR/tidekeeper"
-    ln -sf "$INSTALL_ROOT/venv/bin/tidal-dl" "$BIN_DIR/tidal-dl"
+    ln -sf "$venv_root/bin/tidekeeper" "$BIN_DIR/tidekeeper"
+    ln -sf "$venv_root/bin/tidal-dl" "$BIN_DIR/tidal-dl"
 }
 
 print_done() {
