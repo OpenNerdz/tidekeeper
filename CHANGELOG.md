@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.10.3.0 - 2026-10-03
+
 <!-- release-title: Reliable sign-in and focused queue retries -->
 
 - Keep a newer login safe when requests, token refreshes, or device sign-in from
@@ -18,6 +20,8 @@
   source through the checked promotion step.
 - Stop the Linux dependency installer when refreshing apt's package index fails,
   and create working launchers when the installation folder is a relative path.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.9.29.4...v2026.10.3.0)
 
 ## 2026.9.29.4 - 2026-09-29
 
