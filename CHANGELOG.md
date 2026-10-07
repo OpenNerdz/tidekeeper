@@ -2,11 +2,15 @@
 
 ## Unreleased
 
+## 2026.10.7.0 - 2026-10-07
+
 <!-- release-title: Optional download receipts -->
 
 - Add a **Save download receipts** setting to stop writing `.tidekeeper.json`
   files next to downloads. When it is off, skipping only checks that a file
   exists.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.3.0...v2026.10.7.0)
 
 ## 2026.10.3.0 - 2026-10-03
 
