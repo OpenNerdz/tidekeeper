@@ -167,6 +167,7 @@ class Printf(object):
             [LANG.select.SETTING_REQUEST_INTERVAL_SECONDS, data.requestIntervalSeconds],
             [LANG.select.SETTING_ADAPTIVE_RATE_LIMIT, data.adaptiveRateLimit],
             [LANG.select.SETTING_SAVE_AS_FLAC, data.saveAsFlac],
+            [LANG.select.SETTING_SAVE_RECEIPTS, data.saveReceipts],
         ])
         print(tb)
 

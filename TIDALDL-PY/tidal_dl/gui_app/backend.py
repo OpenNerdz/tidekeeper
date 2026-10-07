@@ -669,6 +669,7 @@ class TidekeeperBackend:
         SETTINGS.requestIntervalSeconds = min(300.0, max(0.0, interval)) if math.isfinite(interval) else 0.0
         SETTINGS.adaptiveRateLimit = values.get("adaptiveRateLimit", True)
         SETTINGS.saveAsFlac = values.get("saveAsFlac", False)
+        SETTINGS.saveReceipts = values.get("saveReceipts", True)
         SETTINGS.usePlaylistFolder = values["usePlaylistFolder"]
         SETTINGS.showProgress = values["showProgress"]
         SETTINGS.showTrackInfo = values["showTrackInfo"]
@@ -811,6 +812,7 @@ class DemoBackend(TidekeeperBackend):
         SETTINGS.requestIntervalSeconds = 3.0
         SETTINGS.adaptiveRateLimit = True
         SETTINGS.saveAsFlac = False
+        SETTINGS.saveReceipts = True
         SETTINGS.usePlaylistFolder = True
         self._saved_settings = copy.deepcopy(SETTINGS.__dict__)
 

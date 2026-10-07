@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .settings import _atomicWrite
+from .settings import SETTINGS, _atomicWrite
 from .runtime import check_cancelled
 
 
@@ -122,6 +122,14 @@ def record_completion(path, identity, metadata_complete=True, media_facts=None):
     stat = os.stat(path)
     if stat.st_size <= 0:
         raise OSError('Cannot finalize an empty media file')
+    if not SETTINGS.saveReceipts:
+        # A receipt from an earlier download no longer describes these bytes.
+        # It could never match them, so failing to remove it is harmless.
+        try:
+            Path(path + '.tidekeeper.json').unlink(missing_ok=True)
+        except OSError:
+            pass
+        return
     _atomicWrite(path + '.tidekeeper.json', json.dumps({
         'identity': identity, 'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns,
         'sha256': file_digest(path), 'fingerprint': file_fingerprint(path),
@@ -132,6 +140,15 @@ def record_completion(path, identity, metadata_complete=True, media_facts=None):
 
 def completion_state(path, identity, verify=False):
     """Return (media_complete, metadata_complete) for a completion receipt."""
+    if not SETTINGS.saveReceipts:
+        # Finished media is moved into place only once complete, so without a
+        # receipt a non-empty file is the only signal; quality and tags are
+        # not checked.
+        try:
+            complete = os.path.isfile(path) and os.path.getsize(path) > 0
+        except OSError:
+            complete = False
+        return complete, complete
     receipt = _read(path + '.tidekeeper.json')
     try:
         stat = os.stat(path)

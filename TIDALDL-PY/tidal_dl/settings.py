@@ -110,6 +110,7 @@ class Settings(aigpy.model.ModelBase):
     requestIntervalSeconds = 3.0
     adaptiveRateLimit = True
     saveAsFlac = False
+    saveReceipts = True
 
     downloadPath = "./download/"
     audioQuality = AudioQuality.Max

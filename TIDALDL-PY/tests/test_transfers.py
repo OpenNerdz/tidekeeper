@@ -164,6 +164,62 @@ class ResumeAndReceiptTests(TransferFixture, unittest.TestCase):
             self.assertEqual(download.downloadVideo(video, None), (True, ''))
         resolve.assert_not_called()
 
+    def test_disabled_receipts_only_check_that_media_exists(self):
+        SETTINGS.saveReceipts = False
+        path = str(self.root / 'track.flac')
+        identity = {'type': 'track', 'id': '1', 'quality': 'LOSSLESS'}
+        self.assertFalse(is_completed(path, identity))
+        Path(path).write_bytes(b'')
+        self.assertFalse(is_completed(path, identity))
+        Path(path).write_bytes(b'media')
+        self.assertTrue(is_completed(path, identity))
+        self.assertTrue(is_completed(path, dict(identity, quality='HIGH')))
+
+    def test_disabled_receipts_remove_stale_receipt_instead_of_writing_one(self):
+        path = str(self.root / 'track.flac')
+        identity = {'type': 'track', 'id': '1'}
+        Path(path).write_bytes(b'old')
+        record_completion(path, identity)
+        SETTINGS.saveReceipts = False
+        Path(path).write_bytes(b'new media')
+        record_completion(path, identity)
+        self.assertFalse(Path(path + '.tidekeeper.json').exists())
+        Path(path).write_bytes(b'')
+        with self.assertRaises(OSError):
+            record_completion(path, identity)
+
+    def test_video_skip_without_receipts_needs_only_the_file(self):
+        path = str(self.root / 'video.mp4')
+        video = SimpleNamespace(id=2, title='Video')
+        SETTINGS.checkExist = True
+        SETTINGS.saveReceipts = False
+        Path(path).write_bytes(b'video')
+        with mock.patch.object(download, 'getVideoPath', return_value=path), \
+             mock.patch.object(TIDAL_API, 'getVideoStreamUrl') as resolve:
+            self.assertEqual(download.downloadVideo(video, None), (True, ''))
+        resolve.assert_not_called()
+
+    def test_track_without_receipts_leaves_only_media_and_is_skipped_next_time(self):
+        path = str(self.root / 'track.flac')
+        track = SimpleNamespace(id=1, title='Track', allowStreaming=True, streamReady=True)
+        stream = SimpleNamespace(trackid=1, soundQuality='LOSSLESS', codec='flac',
+                                 container='flac', encryptionKey=None,
+                                 url='https://cdn.invalid/file', urls=['https://cdn.invalid/file'])
+        SETTINGS.checkExist = True
+        SETTINGS.saveReceipts = False
+        SETTINGS.showTrackInfo = SETTINGS.showProgress = SETTINGS.multiThread = False
+        with mock.patch.object(download, '_resolveTrackForAtmosDownload', return_value=(track, None)), \
+             mock.patch.object(download, '_getTrackStream', return_value=stream), \
+             mock.patch.object(download, 'getTrackPath', return_value=path), \
+             mock.patch.object(download, '_httpRequest', return_value=FakeResponse(b'media')) as request, \
+             mock.patch.object(TIDAL_API, 'getTrackContributors', return_value=None), \
+             mock.patch.object(download, '_saveLyricsForTrack', return_value=''), \
+             mock.patch.object(download, '_setMetaData'):
+            self.assertTrue(download.downloadTrack(track)[0])
+            self.assertEqual(sorted(item.name for item in self.root.iterdir()), ['track.flac'])
+            self.assertTrue(download.downloadTrack(track)[0])
+        self.assertEqual(request.call_count, 1, 'The existing file should be skipped')
+
     def test_cancel_during_transfer_keeps_partial_and_existing_output(self):
         path = str(self.root / 'track')
         Path(path).write_bytes(b'previous-good')

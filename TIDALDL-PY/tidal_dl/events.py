@@ -315,6 +315,7 @@ def changeSettings():
         Printf.info("Keeping existing request delay seconds.")
     SETTINGS.adaptiveRateLimit = Printf.enterBool(LANG.select.CHANGE_ADAPTIVE_RATE_LIMIT)
     SETTINGS.saveAsFlac = Printf.enterBool(LANG.select.CHANGE_SAVE_AS_FLAC)
+    SETTINGS.saveReceipts = Printf.enterBool(LANG.select.CHANGE_SAVE_RECEIPTS)
     language = Printf.enter(LANG.select.CHANGE_LANGUAGE + "(" + LANG.getLangChoicePrint() + "):")
     # Store the numeric index like the GUI does; invalid input keeps the current language.
     if LANG.getLangName(language) and str(language).strip().isdigit():

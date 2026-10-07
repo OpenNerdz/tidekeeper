@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a **Save download receipts** setting to stop writing `.tidekeeper.json`
+  files next to downloads. When it is off, skipping only checks that a file
+  exists.
+
 ## 2026.10.3.0 - 2026-10-03
 
 <!-- release-title: Reliable sign-in and focused queue retries -->

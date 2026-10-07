@@ -583,6 +583,7 @@ class MainWindow(QMainWindow):
             ("lyricFile", "Save lyrics"),
             ("saveAlbumInfo", "Save album info"),
             ("saveAsFlac", "Save FLAC streams as .flac"),
+            ("saveReceipts", "Save download receipts"),
             ("usePlaylistFolder", "Put playlists in their own folder"),
             ("includeEP", "Include EPs and singles"),
             ("downloadVideos", "Download videos with albums"),
@@ -623,7 +624,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(downloads)
 
         files = FormSection("Files")
-        for key in ("saveCovers", "lyricFile", "saveAlbumInfo", "saveAsFlac", "usePlaylistFolder"):
+        self.checks["saveReceipts"].setToolTip(
+            "Writes a small .tidekeeper.json file next to each download so Tidekeeper can check "
+            "its quality and repair missing tags. When off, skipping only checks that a file exists."
+        )
+        for key in ("saveCovers", "lyricFile", "saveAlbumInfo", "saveAsFlac", "saveReceipts", "usePlaylistFolder"):
             files.add_widget(self.checks[key])
         layout.addWidget(files)
 

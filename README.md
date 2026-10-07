@@ -161,6 +161,11 @@ Change the layout with [filename templates](docs/filename-templates.md). Other
 options, such as `.lrc` lyrics files, parallel downloads, request delays, and
 playlist folders, are in **Settings** or the terminal menu's **Options**.
 
+Each finished file also gets a small `.tidekeeper.json` receipt, which lets
+Tidekeeper skip files that are already complete at the chosen quality and repair
+missing tags later. To keep folders clean, turn off **Save download receipts**;
+skipping then only checks that the file exists.
+
 ## Update
 
 ```bash

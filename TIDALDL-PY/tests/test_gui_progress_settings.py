@@ -133,6 +133,7 @@ class RuntimeSettingsTests(unittest.TestCase):
             "audioQuality": SETTINGS.audioQuality,
             "apiKeyIndex": SETTINGS.apiKeyIndex,
             "saveAsFlac": SETTINGS.saveAsFlac,
+            "saveReceipts": SETTINGS.saveReceipts,
             "downloadPath": SETTINGS.downloadPath,
         }
         SETTINGS.apiKeyIndex = 4
@@ -140,12 +141,13 @@ class RuntimeSettingsTests(unittest.TestCase):
             with mock.patch.object(SETTINGS, "save") as save, \
                  mock.patch("tidal_dl.gui_app.backend.logout") as logout, \
                  mock.patch("tidal_dl.gui_app.backend.syncPlaybackRateLimiter"):
-                result = backend.apply_runtime_settings(self._values())
+                result = backend.apply_runtime_settings(self._values(saveReceipts=False))
             save.assert_not_called()
             logout.assert_not_called()
             self.assertFalse(result.get("reauth_required"))
             self.assertEqual(SETTINGS.audioQuality, AudioQuality.HiFi)
             self.assertTrue(SETTINGS.saveAsFlac)
+            self.assertFalse(SETTINGS.saveReceipts)
             self.assertEqual(SETTINGS.apiKeyIndex, 4)
         finally:
             for key, value in old.items():

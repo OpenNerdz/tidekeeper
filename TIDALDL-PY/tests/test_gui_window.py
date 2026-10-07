@@ -66,6 +66,15 @@ class GuiDropAndDoctorTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.window.doctor_button.isEnabled())
 
+    def test_receipt_setting_round_trips_through_settings_page(self):
+        receipts = self.window.checks["saveReceipts"]
+        self.assertTrue(receipts.isChecked())
+        SETTINGS.saveReceipts = False
+        self.window.refresh_settings()
+        self.assertFalse(receipts.isChecked())
+        receipts.setChecked(True)
+        self.assertTrue(self.window.collect_settings_values()["saveReceipts"])
+
 
 @unittest.skipIf(QApplication is None, "PySide6 is not installed")
 class BrandIconTests(unittest.TestCase):
