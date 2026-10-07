@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+<!-- release-title: Optional download receipts -->
+
 - Add a **Save download receipts** setting to stop writing `.tidekeeper.json`
   files next to downloads. When it is off, skipping only checks that a file
   exists.
