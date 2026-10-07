@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 2026.10.7.1 - 2026-10-07
+
 <!-- release-title: No leftover cover files -->
 
 - Stop leaving a `cover.jpg.source.json` file next to each saved album cover.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.7.0...v2026.10.7.1)
 
 ## 2026.10.7.0 - 2026-10-07
 
