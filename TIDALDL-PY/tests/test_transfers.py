@@ -220,6 +220,15 @@ class ResumeAndReceiptTests(TransferFixture, unittest.TestCase):
             self.assertTrue(download.downloadTrack(track)[0])
         self.assertEqual(request.call_count, 1, 'The existing file should be skipped')
 
+    def test_cover_download_leaves_only_the_image(self):
+        album = SimpleNamespace(title='Album', cover='cover-id')
+        SETTINGS.showProgress = False
+        with mock.patch.object(download, 'getAlbumPath', return_value=str(self.root)), \
+             mock.patch.object(TIDAL_API, 'getCoverUrl', return_value='https://cdn.invalid/cover.jpg'), \
+             mock.patch.object(download, '_httpRequest', return_value=FakeResponse(b'jpeg')):
+            self.assertEqual(download.downloadCover(album), (True, ''))
+        self.assertEqual(sorted(item.name for item in self.root.iterdir()), ['cover.jpg'])
+
     def test_cancel_during_transfer_keeps_partial_and_existing_output(self):
         path = str(self.root / 'track')
         Path(path).write_bytes(b'previous-good')

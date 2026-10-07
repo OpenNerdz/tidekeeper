@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+<!-- release-title: No leftover cover files -->
+
+- Stop leaving a `cover.jpg.source.json` file next to each saved album cover.
+
 ## 2026.10.7.0 - 2026-10-07
 
 <!-- release-title: Optional download receipts -->

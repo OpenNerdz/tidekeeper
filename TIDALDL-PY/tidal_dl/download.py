@@ -1229,6 +1229,7 @@ def downloadCover(album):
         msg = str(err)
         Printf.err(f"DL Cover '{album.title}' failed: {msg}")
         return False, msg
+    _removeFile(path + '.source.json')
     return True, ''
 
 
