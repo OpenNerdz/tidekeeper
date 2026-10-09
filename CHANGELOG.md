@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show versions such as *Extended Mix* or *Remastered* in desktop search
+  results so remixes and editions can be told apart. Track titles now match
+  the saved file names.
+
 ## 2026.10.7.1 - 2026-10-07
 
 <!-- release-title: No leftover cover files -->

@@ -177,7 +177,11 @@ def _artists_label(item) -> str:
 
 
 def _item_title(item) -> str:
-    return getattr(item, "title", None) or getattr(item, "name", None) or "Untitled"
+    title = getattr(item, "title", None) or getattr(item, "name", None) or "Untitled"
+    # TIDAL keeps "Extended Mix", "Remastered", etc. apart from the title; show it
+    # the way saved track names and tags do so remixes are distinguishable.
+    version = str(getattr(item, "version", None) or "").strip()
+    return f"{title} ({version})" if version else title
 
 
 def _item_quality(item, kind: Type | None = None) -> str:

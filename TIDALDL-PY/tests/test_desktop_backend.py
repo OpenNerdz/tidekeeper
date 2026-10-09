@@ -10,7 +10,7 @@ from unittest import mock
 
 from tidal_dl import events
 from tidal_dl.enums import Type
-from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend, queue_item, with_video_only
+from tidal_dl.gui_app.backend import SearchItem, TidekeeperBackend, queue_item, to_search_item, with_video_only
 from tidal_dl.paths import PATHS
 from tidal_dl.settings import SETTINGS
 from tidal_dl.tidal import TIDAL_API
@@ -41,6 +41,14 @@ class DesktopBackendTests(unittest.TestCase):
         self.assertEqual(AuthStatus("1", "US", 0, True).expiry_summary, "expiry unknown")
         self.assertEqual(AuthStatus("1", "US", time.time() - 5, True).expiry_summary, "session expired")
         self.assertTrue(AuthStatus("1", "US", time.time() + 7200, True).expiry_summary.startswith("expires in 1h"))
+
+    def test_search_titles_include_the_track_version(self):
+        def track(version):
+            return SimpleNamespace(id=1, title="Strobe", version=version, artists=[], duration=0)
+
+        self.assertEqual(to_search_item(Type.Track, track("Extended Mix")).title, "Strobe (Extended Mix)")
+        self.assertEqual(to_search_item(Type.Track, track(None)).title, "Strobe")
+        self.assertEqual(to_search_item(Type.Track, track("  ")).title, "Strobe")
 
 
 class QueuePersistenceTests(TransferFixture, unittest.TestCase):
