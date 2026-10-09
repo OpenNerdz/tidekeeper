@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+## 2026.10.9.0 - 2026-10-09
+
+<!-- release-title: Show versions such as *Extended Mix* or *Remastered* in desktop search -->
+
 - Show versions such as *Extended Mix* or *Remastered* in desktop search
   results so remixes and editions can be told apart. Track titles now match
   the saved file names.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.7.1...v2026.10.9.0)
 
 ## 2026.10.7.1 - 2026-10-07
 
