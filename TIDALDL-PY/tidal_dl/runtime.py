@@ -26,6 +26,9 @@ LOCK_NOTICE_SECONDS = 2.0
 LOCK_SLOT_COUNT = 256
 LEGACY_LOCK_GRACE_SECONDS = 24 * 60 * 60
 _LEGACY_LOCK_NAME = re.compile(r'^[0-9a-f]{64}\.lock$')
+# The windowed desktop app has no console, so Windows would open (and flash) one
+# for every ffmpeg or ffprobe run. Media tools' output is always captured.
+_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
 class DownloadCancelled(Exception):
@@ -275,6 +278,8 @@ def report_warning(message):
 
 def run_process(args, timeout=300, check=False, capture_output=False, **kwargs):
     """Run media processing with cancellation and bounded cleanup."""
+    if _NO_WINDOW:
+        kwargs['creationflags'] = kwargs.get('creationflags', 0) | _NO_WINDOW
     if _cancel.get() is None:
         return subprocess.run(args, timeout=timeout, check=check, capture_output=capture_output, **kwargs)
     check_cancelled()

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+<!-- release-title: No flashing console windows on Windows -->
+
+- Stop the Windows desktop app from flashing a console window each time ffmpeg
+  or ffprobe runs, such as when saving FLAC files or finishing videos.
+
 ## 2026.10.9.0 - 2026-10-09
 
 <!-- release-title: Show versions such as *Extended Mix* or *Remastered* in desktop search -->

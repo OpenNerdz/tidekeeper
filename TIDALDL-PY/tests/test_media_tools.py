@@ -15,7 +15,7 @@ from unittest import mock
 
 import requests
 
-from tidal_dl import download
+from tidal_dl import download, runtime
 from tidal_dl.model import StreamUrl, Video, VideoStreamUrl
 from tidal_dl.runtime import DownloadCancelled, job_context, run_process
 from tidal_dl.settings import SETTINGS
@@ -160,6 +160,30 @@ class MediaProcessingTests(TransferFixture, unittest.TestCase):
                 run_process([sys.executable, '-c', 'import time; time.sleep(30)'], timeout=3)
         finally:
             timer.cancel()
+
+    def test_media_tools_do_not_open_console_windows_on_windows(self):
+        no_window = 0x08000000
+        completed = subprocess.CompletedProcess(['ffmpeg'], 0, b'', b'')
+        with mock.patch.object(runtime, '_NO_WINDOW', no_window), \
+             mock.patch.object(runtime.subprocess, 'run', return_value=completed) as run:
+            run_process(['ffmpeg'], capture_output=True, creationflags=0x200)
+        self.assertEqual(run.call_args.kwargs['creationflags'], no_window | 0x200)
+
+        process = mock.MagicMock(returncode=0)
+        process.communicate.return_value = (b'', b'')
+        with mock.patch.object(runtime, '_NO_WINDOW', no_window), \
+             mock.patch.object(runtime.subprocess, 'Popen') as popen, \
+             job_context(cancel=threading.Event()):
+            popen.return_value.__enter__.return_value = process
+            run_process(['ffprobe'], capture_output=True)
+        self.assertEqual(popen.call_args.kwargs['creationflags'], no_window)
+
+    def test_media_tools_keep_default_process_flags_elsewhere(self):
+        completed = subprocess.CompletedProcess(['ffmpeg'], 0, b'', b'')
+        with mock.patch.object(runtime, '_NO_WINDOW', 0), \
+             mock.patch.object(runtime.subprocess, 'run', return_value=completed) as run:
+            run_process(['ffmpeg'], capture_output=True)
+        self.assertNotIn('creationflags', run.call_args.kwargs)
 
     def test_numeric_dash_id_does_not_reject_valid_probed_audio(self):
         manifest = '''<MPD mediaPresentationDuration="PT2S"><Period>
