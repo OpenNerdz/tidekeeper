@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+## 2026.10.10.0 - 2026-10-10
+
 <!-- release-title: No flashing console windows on Windows -->
 
 - Stop the Windows desktop app from flashing a console window each time ffmpeg
   or ffprobe runs, such as when saving FLAC files or finishing videos.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.9.0...v2026.10.10.0)
 
 ## 2026.10.9.0 - 2026-10-09
 
