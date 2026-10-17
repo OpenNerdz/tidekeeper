@@ -219,10 +219,27 @@ def _tokenValue(value):
     return str(value)
 
 
+def _primaryArtist(item):
+    """Return the main artist, falling back to the item's artist list.
+
+    TIDAL leaves out `artist` on some tracks, videos and albums while still
+    listing everyone under `artists` (issue #80). Prefer a MAIN artist there.
+    """
+    artist = getattr(item, 'artist', None)
+    if getattr(artist, 'name', None):
+        return artist
+    artists = getattr(item, 'artists', None)
+    if not isinstance(artists, (list, tuple)):
+        return artist
+    named = [entry for entry in artists if getattr(entry, 'name', None)]
+    main = [entry for entry in named if str(getattr(entry, 'type', '') or '').upper() == 'MAIN']
+    return (main or named or [artist])[0]
+
+
 def getAlbumPath(album):
     artistID = _fixPath(TIDAL_API.getArtistsID(album.artists))
     artistName = _fixPath(TIDAL_API.getArtistsName(album.artists))
-    primary_artist = getattr(album, 'artist', None)
+    primary_artist = _primaryArtist(album)
     albumArtistID = _fixPath(_tokenValue(getattr(primary_artist, 'id', None)))
     albumArtistName = _fixPath(_tokenValue(getattr(primary_artist, 'name', None)))
 
@@ -288,7 +305,7 @@ def getTrackPath(track, stream, album=None, playlist=None):
     # artist
     artists = _fixPath(TIDAL_API.getArtistsName(track.artists))
     artistID = _fixPath(TIDAL_API.getArtistsID(track.artists))
-    primary_artist = getattr(track, 'artist', None)
+    primary_artist = _primaryArtist(track)
     trackArtistID = _fixPath(_tokenValue(getattr(primary_artist, 'id', None)))
     trackArtistName = _fixPath(_tokenValue(getattr(primary_artist, 'name', None)))
 
@@ -346,7 +363,7 @@ def getVideoPath(video, album=None, playlist=None):
     # get artist
     artists = _fixPath(TIDAL_API.getArtistsName(video.artists))
     artistID = _fixPath(TIDAL_API.getArtistsID(video.artists))
-    primary_artist = getattr(video, 'artist', None)
+    primary_artist = _primaryArtist(video)
     videoArtistID = _fixPath(_tokenValue(getattr(primary_artist, 'id', None)))
     videoArtistName = _fixPath(_tokenValue(getattr(primary_artist, 'name', None)))
 

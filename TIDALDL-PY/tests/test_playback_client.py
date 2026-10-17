@@ -190,6 +190,25 @@ class PlaybackClientTests(unittest.TestCase):
 
         self.assertEqual(manifest.call_count, 2)
 
+    def test_preview_only_manifest_explains_tidal_reason(self):
+        preview = {
+            'trackPresentation': 'PREVIEW',
+            'previewReason': 'FULL_REQUIRES_HIGHER_ACCESS_TIER',
+            'formats': ['FLAC_HIRES'],
+        }
+        with mock.patch.object(self.api, '_getOpenApiTrackManifestOnce', return_value=preview):
+            with self.assertRaisesRegex(TidalStreamUnavailable, r'preview-only .*\(needs a higher TIDAL plan\)'):
+                self.api._getOpenApiTrackManifest(465909959, ['FLAC_HIRES'])
+
+    def test_openapi_manifest_hash_is_kept_on_the_stream(self):
+        attrs = {'trackPresentation': 'FULL', 'formats': ['FLAC'], 'uri': 'data:,x', 'hash': 'abc123'}
+        with mock.patch.object(self.api, '_getOpenApiTrackManifest', return_value=attrs), \
+                mock.patch.object(self.api, '_decodeManifestDataUri', return_value='<MPD/>'), \
+                mock.patch.object(self.api, '_dashStreamUrl', return_value='stream') as dash:
+            self.assertEqual(self.api._getOpenApiFlacStreamUrl(465909959, AudioQuality.HiFi), 'stream')
+
+        self.assertEqual(dash.call_args.kwargs['manifestHash'], 'abc123')
+
     def test_catalog_4022_still_clears_unusable_session_without_legacy_retry(self):
         with mock.patch.object(self.api.session, 'get', return_value=rejected()) as get, \
                 mock.patch.object(self.api, '_refreshSavedAccessToken', return_value=False):

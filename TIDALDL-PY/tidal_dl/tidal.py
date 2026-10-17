@@ -72,6 +72,13 @@ SEARCH_BUCKETS = {
     Type.Playlist: 'playlists',
 }
 
+# OpenAPI trackManifests `previewReason` values, explained in preview errors.
+PREVIEW_REASONS = {
+    'FULL_REQUIRES_SUBSCRIPTION': 'needs an active TIDAL subscription',
+    'FULL_REQUIRES_PURCHASE': 'must be bought on TIDAL',
+    'FULL_REQUIRES_HIGHER_ACCESS_TIER': 'needs a higher TIDAL plan',
+}
+
 
 class RequestRateLimiter:
     def __init__(self, minInterval=1.0, jitter=0.5):
@@ -1277,9 +1284,11 @@ class TidalAPI(object):
                     # contains only a short preview. Codec/sample-rate checks
                     # cannot detect that truncation, so retry the same formats
                     # with PLAYBACK and never report a preview as completed.
-                    last_error = TidalStreamUnavailable(
-                        'TIDAL returned a preview-only stream instead of the full track.'
-                    )
+                    message = 'TIDAL returned a preview-only stream instead of the full track'
+                    reason = str(attributes.get('previewReason') or '').strip().upper()
+                    if reason:
+                        message += f' ({PREVIEW_REASONS.get(reason, reason)})'
+                    last_error = TidalStreamUnavailable(message + '.')
                     logging.debug(
                         "Track manifest usage=%s formats=%s returned PREVIEW; trying next usage.",
                         usage,
@@ -1405,7 +1414,7 @@ class TidalAPI(object):
             raise TidalStreamUnavailable("Dolby Atmos manifest is empty.")
 
         xmldata = self._decodeManifestDataUri(uri)
-        ret = self._dashStreamUrl(id, 'DOLBY_ATMOS', xmldata, manifestHash=attrs.get('manifestHash'))
+        ret = self._dashStreamUrl(id, 'DOLBY_ATMOS', xmldata, manifestHash=attrs.get('hash'))
         self._atmosUnavailableTrackIds.discard(track_id)
         return ret
 
@@ -1431,7 +1440,7 @@ class TidalAPI(object):
             raise TidalStreamUnavailable("Lossless FLAC manifest is empty.")
 
         xmldata = self._decodeManifestDataUri(uri)
-        return self._dashStreamUrl(id, sound_quality, xmldata, manifestHash=attrs.get('manifestHash'))
+        return self._dashStreamUrl(id, sound_quality, xmldata, manifestHash=attrs.get('hash'))
 
     def _getAudioStreamUrlForQuality(self, id, quality: AudioQuality):
         chain = []

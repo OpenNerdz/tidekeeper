@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+<!-- release-title: Fix empty artist names in file names -->
+
+- Fill `{ArtistName}`, `{TrackArtistName}`, `{VideoArtistName}` and
+  `{AlbumArtistName}` from the artist list when TIDAL leaves out the main
+  artist, instead of leaving them empty (#80).
+- Say why TIDAL only offered a preview, such as needing a higher plan or a
+  purchase, when a track can't be downloaded in full.
+- Keep TIDAL's manifest hash in download records for lossless and Dolby Atmos
+  downloads.
+
 ## 2026.10.10.0 - 2026-10-10
 
 <!-- release-title: No flashing console windows on Windows -->

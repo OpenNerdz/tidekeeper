@@ -404,15 +404,54 @@ class PathTemplateTests(CatalogFixtures, unittest.TestCase):
 
             track = self._track()
             track.artist = self._artist(None, None)
+            track.artists = []
             track_path = paths.getTrackPath(track, self._stream(), self._album())
             self.assertNotIn("None", track_path)
             self.assertTrue(track_path.endswith("/Track.m4a"))
 
             video = self._video()
             video.artist = self._artist(None, None)
+            video.artists = []
             video_path = paths.getVideoPath(video)
             self.assertNotIn("None", video_path)
             self.assertTrue(video_path.endswith("/Video.mp4"))
+        finally:
+            for key, value in old_values.items():
+                setattr(paths.SETTINGS, key, value)
+
+    def test_primary_artist_tokens_fall_back_to_artist_list(self):
+        # TIDAL omits `artist` on some items but still lists `artists` (#80).
+        old_values = {
+            "downloadPath": paths.SETTINGS.downloadPath,
+            "albumFolderFormat": paths.SETTINGS.albumFolderFormat,
+            "trackFileFormat": paths.SETTINGS.trackFileFormat,
+            "videoFileFormat": paths.SETTINGS.videoFileFormat,
+        }
+        try:
+            paths.SETTINGS.downloadPath = "/tmp/tidekeeper"
+            paths.SETTINGS.albumFolderFormat = "{AlbumArtistID}|{AlbumArtistName}"
+            paths.SETTINGS.trackFileFormat = "{ArtistName}|{TrackArtistID}|{TrackArtistName}|{ArtistsName}"
+            paths.SETTINGS.videoFileFormat = "{ArtistName}|{VideoArtistID}|{VideoArtistName}"
+            featured = self._artist("Feat", 222)
+            featured.type = "FEATURED"
+            main = self._artist("Main/Name", 111)
+            main.type = "MAIN"
+
+            track = self._track()
+            track.artist = None
+            track.artists = [featured, main]
+            track_path = paths.getTrackPath(track, self._stream())
+            self.assertTrue(track_path.endswith("/Main-Name-111-Main-Name-Feat, Main-Name.m4a"))
+
+            album = self._album()
+            album.artist = self._artist(None, None)
+            album.artists = [main]
+            self.assertTrue(paths.getAlbumPath(album).endswith("/111-Main-Name"))
+
+            video = self._video()
+            video.artist = None
+            video.artists = [self._artist(None, 444), self._artist("Solo", 333)]
+            self.assertTrue(paths.getVideoPath(video).endswith("/Solo-333-Solo.mp4"))
         finally:
             for key, value in old_values.items():
                 setattr(paths.SETTINGS, key, value)
@@ -453,6 +492,7 @@ class PathTemplateTests(CatalogFixtures, unittest.TestCase):
     def test_album_path_omits_missing_primary_artist_fields(self):
         album = self._album()
         album.artist = self._artist(None, None)
+        album.artists = []
 
         with mock.patch.object(
             paths.SETTINGS,
