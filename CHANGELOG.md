@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.10.17.0 - 2026-10-17
+
 <!-- release-title: Fix empty artist names in file names -->
 
 - Fill `{ArtistName}`, `{TrackArtistName}`, `{VideoArtistName}` and
@@ -11,6 +13,8 @@
   purchase, when a track can't be downloaded in full.
 - Keep TIDAL's manifest hash in download records for lossless and Dolby Atmos
   downloads.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.10.0...v2026.10.17.0)
 
 ## 2026.10.10.0 - 2026-10-10
 
