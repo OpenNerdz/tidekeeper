@@ -2,11 +2,15 @@
 
 ## Unreleased
 
+## 2026.10.17.1 - 2026-10-17
+
 <!-- release-title: ReplayGain tags for even volume -->
 
 - Write ReplayGain tags (track and album gain and peak) from TIDAL's own
   loudness data, so players with ReplayGain or volume levelling turned on play
   tracks at an even volume. Works for FLAC and M4A, including Dolby Atmos.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.17.0...v2026.10.17.1)
 
 ## 2026.10.17.0 - 2026-10-17
 
