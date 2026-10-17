@@ -78,6 +78,8 @@ PREVIEW_REASONS = {
     'FULL_REQUIRES_PURCHASE': 'must be bought on TIDAL',
     'FULL_REQUIRES_HIGHER_ACCESS_TIER': 'needs a higher TIDAL plan',
 }
+# StreamUrl loudness fields, filled from playback and manifest responses.
+REPLAY_GAIN_FIELDS = ('trackReplayGain', 'trackPeakAmplitude', 'albumReplayGain', 'albumPeakAmplitude')
 
 
 class RequestRateLimiter:
@@ -1225,9 +1227,21 @@ class TidalAPI(object):
         ret.channels = representation.get('channels')
         ret.representationId = representation.get('id')
         ret.manifestHash = facts.get('manifestHash')
+        for field in REPLAY_GAIN_FIELDS:
+            setattr(ret, field, facts.get(field))
         if ret.urls:
             ret.url = ret.urls[0]
         return ret
+
+    def _openApiLoudnessFacts(self, attrs):
+        """Map trackManifests normalization data onto StreamUrl loudness fields."""
+        facts = {}
+        for scope in ('track', 'album'):
+            data = attrs.get(f'{scope}AudioNormalizationData')
+            if isinstance(data, dict):
+                facts[f'{scope}ReplayGain'] = data.get('replayGain')
+                facts[f'{scope}PeakAmplitude'] = data.get('peakAmplitude')
+        return facts
 
     def _openApiFormatsForQuality(self, quality: AudioQuality):
         if quality in (AudioQuality.Max, AudioQuality.Master):
@@ -1414,7 +1428,8 @@ class TidalAPI(object):
             raise TidalStreamUnavailable("Dolby Atmos manifest is empty.")
 
         xmldata = self._decodeManifestDataUri(uri)
-        ret = self._dashStreamUrl(id, 'DOLBY_ATMOS', xmldata, manifestHash=attrs.get('hash'))
+        ret = self._dashStreamUrl(id, 'DOLBY_ATMOS', xmldata, manifestHash=attrs.get('hash'),
+                                  **self._openApiLoudnessFacts(attrs))
         self._atmosUnavailableTrackIds.discard(track_id)
         return ret
 
@@ -1440,7 +1455,8 @@ class TidalAPI(object):
             raise TidalStreamUnavailable("Lossless FLAC manifest is empty.")
 
         xmldata = self._decodeManifestDataUri(uri)
-        return self._dashStreamUrl(id, sound_quality, xmldata, manifestHash=attrs.get('hash'))
+        return self._dashStreamUrl(id, sound_quality, xmldata, manifestHash=attrs.get('hash'),
+                                   **self._openApiLoudnessFacts(attrs))
 
     def _getAudioStreamUrlForQuality(self, id, quality: AudioQuality):
         chain = []
@@ -1592,6 +1608,8 @@ class TidalAPI(object):
             ret.container = manifest.get('mimeType', '')
             ret.bitDepth = resp.bitDepth or manifest.get('bitDepth')
             ret.sampleRate = resp.sampleRate or manifest.get('sampleRate')
+            for field in REPLAY_GAIN_FIELDS:
+                setattr(ret, field, getattr(resp, field, None))
             return ret
         elif "dash+xml" in mime_type:
             xmldata = self._decodeManifest(resp.manifest)
@@ -1601,6 +1619,7 @@ class TidalAPI(object):
                 xmldata,
                 bitDepth=resp.bitDepth,
                 sampleRate=resp.sampleRate,
+                **{field: getattr(resp, field, None) for field in REPLAY_GAIN_FIELDS},
             )
 
         raise TidalStreamUnavailable(f"Unsupported audio manifest type: {mime_type or 'unknown'}")

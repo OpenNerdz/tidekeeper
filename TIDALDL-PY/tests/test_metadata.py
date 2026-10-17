@@ -6,8 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from mutagen.flac import FLAC
+from mutagen.mp4 import MP4FreeForm
+
 from tidal_dl import download
-from tidal_dl.model import Album, Artist, Track
+from tidal_dl.model import Album, Artist, StreamUrl, Track
 from tidal_dl.settings import SETTINGS
 from tidal_dl.tidal import TIDAL_API, TidalAPI
 from tidal_dl.transfer_state import (
@@ -16,7 +19,7 @@ from tidal_dl.transfer_state import (
     record_completion,
 )
 
-from fixtures import CatalogFixtures, FakeResponse, TransferFixture
+from fixtures import SILENT_FLAC, CatalogFixtures, FakeResponse, TransferFixture
 
 
 def _track(title, number, volume):
@@ -182,6 +185,55 @@ class MetadataTagTests(CatalogFixtures, unittest.TestCase):
 
         fake_handle.add_tags.assert_called_once_with()
         fake_tag.save.assert_called_once_with("")
+
+    def _loudness_stream(self):
+        stream = StreamUrl()
+        stream.trackReplayGain = -7.318
+        stream.trackPeakAmplitude = 0.988525
+        stream.albumReplayGain = -8.0
+        stream.albumPeakAmplitude = 1.0
+        return stream
+
+    def test_replaygain_tags_are_written_to_flac(self):
+        track = self._track()
+        album = self._album()
+        track.album = album
+        track.copyRight = "Copyright"
+        track.isrc = "ISRC"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "track.flac"
+            path.write_bytes(SILENT_FLAC)
+            with mock.patch.object(download.TIDAL_API, "getCoverUrl", return_value=""):
+                download._setMetaData(track, album, str(path), None, "", self._loudness_stream())
+            tags = FLAC(str(path)).tags
+
+        self.assertEqual(tags["REPLAYGAIN_TRACK_GAIN"], ["-7.32 dB"])
+        self.assertEqual(tags["REPLAYGAIN_TRACK_PEAK"], ["0.988525"])
+        self.assertEqual(tags["REPLAYGAIN_ALBUM_GAIN"], ["-8.00 dB"])
+        self.assertEqual(tags["REPLAYGAIN_ALBUM_PEAK"], ["1.000000"])
+        self.assertEqual(tags["TITLE"], ["Track"])
+
+    def test_replaygain_tags_use_itunes_atoms_in_m4a(self):
+        tags = {}
+        fake_tag = SimpleNamespace(_ext="m4a", _handle=SimpleNamespace(tags=tags))
+
+        download._setReplayGainTags(fake_tag, self._loudness_stream())
+
+        self.assertEqual(tags["----:com.apple.iTunes:replaygain_track_gain"], [MP4FreeForm(b"-7.32 dB")])
+        self.assertEqual(tags["----:com.apple.iTunes:replaygain_album_peak"], [MP4FreeForm(b"1.000000")])
+
+    def test_replaygain_tags_skip_missing_or_invalid_values(self):
+        stream = StreamUrl()
+        stream.trackReplayGain = -6.5
+        stream.trackPeakAmplitude = float("nan")
+        stream.albumReplayGain = "-3"
+        tags = {}
+        fake_tag = SimpleNamespace(_ext="flac", _handle=SimpleNamespace(tags=tags))
+
+        download._setReplayGainTags(fake_tag, stream)
+        download._setReplayGainTags(fake_tag, None)
+
+        self.assertEqual(tags, {"REPLAYGAIN_TRACK_GAIN": "-6.50 dB"})
 
 
 if __name__ == "__main__":

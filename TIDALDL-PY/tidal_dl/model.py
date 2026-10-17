@@ -31,6 +31,11 @@ class StreamUrl(aigpy.model.ModelBase):
         self.channels = None
         self.representationId = None
         self.manifestHash = None
+        # TIDAL loudness data, written as ReplayGain tags.
+        self.trackReplayGain = None
+        self.trackPeakAmplitude = None
+        self.albumReplayGain = None
+        self.albumPeakAmplitude = None
 
 
 class VideoStreamUrl(aigpy.model.ModelBase):
@@ -223,3 +228,7 @@ class StreamRespond(aigpy.model.ModelBase):
         self.manifest = None
         self.bitDepth = None
         self.sampleRate = None
+        self.trackReplayGain = None
+        self.trackPeakAmplitude = None
+        self.albumReplayGain = None
+        self.albumPeakAmplitude = None

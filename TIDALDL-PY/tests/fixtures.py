@@ -1,5 +1,6 @@
 """Shared test fixtures: stub HTTP responses, catalog builders, and isolated state."""
 
+import base64
 import copy
 import json
 import tempfile
@@ -13,6 +14,11 @@ from tidal_dl import download
 from tidal_dl.model import StreamUrl
 from tidal_dl.settings import SETTINGS, TOKEN
 from tidal_dl.tidal import TidalAPI
+
+# A tiny FLAC of generated silence, not a copyrighted track.
+SILENT_FLAC = base64.b64decode(
+    'ZkxhQwAAACICQAJAAAAAAASVAfQA8AAAAAAAAAAAAAAAAAAAAAAAAAAABAAADgYAAABmZm1wZWcAAAAAgQAAAP/4ZAgAnzcAAABBLQ=='
+)
 
 
 def response(content=b'', headers=None, status=200, url='https://cdn.example/media'):

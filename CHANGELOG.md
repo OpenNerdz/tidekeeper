@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+<!-- release-title: ReplayGain tags for even volume -->
+
+- Write ReplayGain tags (track and album gain and peak) from TIDAL's own
+  loudness data, so players with ReplayGain or volume levelling turned on play
+  tracks at an even volume. Works for FLAC and M4A, including Dolby Atmos.
+
 ## 2026.10.17.0 - 2026-10-17
 
 <!-- release-title: Fix empty artist names in file names -->

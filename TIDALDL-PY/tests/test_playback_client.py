@@ -21,7 +21,7 @@ from tidal_dl.runtime import DownloadCancelled, job_context
 from tidal_dl.settings import SETTINGS, TokenSettings
 from tidal_dl.tidal import API_BASE_PRIMARY, TidalAPI, TidalApiError, TidalStreamUnavailable
 
-from fixtures import ApiFixture, CatalogFixtures, playback_params
+from fixtures import SILENT_FLAC, ApiFixture, CatalogFixtures, playback_params
 
 
 def response(status=200, payload=None):
@@ -200,14 +200,44 @@ class PlaybackClientTests(unittest.TestCase):
             with self.assertRaisesRegex(TidalStreamUnavailable, r'preview-only .*\(needs a higher TIDAL plan\)'):
                 self.api._getOpenApiTrackManifest(465909959, ['FLAC_HIRES'])
 
-    def test_openapi_manifest_hash_is_kept_on_the_stream(self):
-        attrs = {'trackPresentation': 'FULL', 'formats': ['FLAC'], 'uri': 'data:,x', 'hash': 'abc123'}
+    def test_openapi_manifest_hash_and_loudness_are_kept_on_the_stream(self):
+        attrs = {
+            'trackPresentation': 'FULL', 'formats': ['FLAC'], 'uri': 'data:,x', 'hash': 'abc123',
+            'trackAudioNormalizationData': {'replayGain': -7.5, 'peakAmplitude': 0.98},
+            'albumAudioNormalizationData': {'replayGain': -8.25},
+        }
         with mock.patch.object(self.api, '_getOpenApiTrackManifest', return_value=attrs), \
                 mock.patch.object(self.api, '_decodeManifestDataUri', return_value='<MPD/>'), \
                 mock.patch.object(self.api, '_dashStreamUrl', return_value='stream') as dash:
             self.assertEqual(self.api._getOpenApiFlacStreamUrl(465909959, AudioQuality.HiFi), 'stream')
 
-        self.assertEqual(dash.call_args.kwargs['manifestHash'], 'abc123')
+        self.assertEqual(dash.call_args.kwargs, {
+            'manifestHash': 'abc123',
+            'trackReplayGain': -7.5,
+            'trackPeakAmplitude': 0.98,
+            'albumReplayGain': -8.25,
+            'albumPeakAmplitude': None,
+        })
+
+    def test_dash_stream_keeps_loudness_facts(self):
+        uri = openapi().json()['data']['attributes']['uri']
+        mpd = self.api._decodeManifestDataUri(uri)
+        stream = self.api._dashStreamUrl(465909959, 'LOSSLESS', mpd, trackReplayGain=-7.5, albumPeakAmplitude=0.9)
+
+        self.assertEqual(stream.trackReplayGain, -7.5)
+        self.assertEqual(stream.albumPeakAmplitude, 0.9)
+        self.assertIsNone(stream.albumReplayGain)
+
+    def test_standard_playback_keeps_loudness_facts(self):
+        payload = playback().json()
+        payload.update(trackReplayGain=-9.25, trackPeakAmplitude=0.97, albumReplayGain=-8.5, albumPeakAmplitude=1.0)
+        with mock.patch.object(self.api, '_getPlaybackData', return_value=payload):
+            stream = self.api._getStandardStreamUrl(465909959, AudioQuality.HiFi)
+
+        self.assertEqual(
+            (stream.trackReplayGain, stream.trackPeakAmplitude, stream.albumReplayGain, stream.albumPeakAmplitude),
+            (-9.25, 0.97, -8.5, 1.0),
+        )
 
     def test_catalog_4022_still_clears_unusable_session_without_legacy_retry(self):
         with mock.patch.object(self.api.session, 'get', return_value=rejected()) as get, \
@@ -337,11 +367,8 @@ class PlaybackClientTests(unittest.TestCase):
                     self.api._dashStreamUrl(1, 'LOSSLESS', ElementTree.tostring(root))
 
     def test_real_http_login_fallback_download_tagging_and_retry(self):
-        # A tiny FLAC of generated silence, not a copyrighted track. The server
-        # models a US login accepted by auth but rejected for hi-res playback.
-        media = base64.b64decode(
-            'ZkxhQwAAACICQAJAAAAAAASVAfQA8AAAAAAAAAAAAAAAAAAAAAAAAAAABAAADgYAAABmZm1wZWcAAAAAgQAAAP/4ZAgAnzcAAABBLQ=='
-        )
+        # The server models a US login accepted by auth but rejected for hi-res playback.
+        media = SILENT_FLAC
         calls = []
         artist = {'id': 1, 'name': 'Fixture artist'}
         album = {'id': 2, 'title': 'Fixture album', 'artist': artist, 'artists': [artist],

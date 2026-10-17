@@ -12,6 +12,7 @@
 from .runtime import check_cancelled, DownloadCancelled, sleep as cancellable_sleep
 import logging
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -26,6 +27,7 @@ from urllib.parse import urljoin
 
 import aigpy
 import requests
+from mutagen.mp4 import MP4FreeForm
 
 from .decryption import decrypt_file, decrypt_security_token
 from .enums import AudioQuality, Type
@@ -1166,6 +1168,32 @@ def _ensureMetadataTags(tagTool):
         handle.add_tags()
 
 
+# StreamUrl loudness fields and the ReplayGain tags they become.
+REPLAY_GAIN_TAGS = (
+    ('trackReplayGain', 'replaygain_track_gain', '{:.2f} dB'),
+    ('trackPeakAmplitude', 'replaygain_track_peak', '{:.6f}'),
+    ('albumReplayGain', 'replaygain_album_gain', '{:.2f} dB'),
+    ('albumPeakAmplitude', 'replaygain_album_peak', '{:.6f}'),
+)
+
+
+def _setReplayGainTags(tagTool, stream):
+    """Write TIDAL's loudness data as ReplayGain tags, skipping missing values."""
+    tags = getattr(getattr(tagTool, '_handle', None), 'tags', None)
+    ext = getattr(tagTool, '_ext', '') or ''
+    if tags is None or stream is None:
+        return
+    for field, name, form in REPLAY_GAIN_TAGS:
+        value = getattr(stream, field, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            continue
+        text = form.format(value)
+        if 'flac' in ext:
+            tags[name.upper()] = text
+        elif 'mp4' in ext or 'm4a' in ext:
+            tags['----:com.apple.iTunes:' + name] = [MP4FreeForm(text.encode('utf-8'))]
+
+
 def _metadataArtistNames(item):
     """Return tag artist names, falling back to the item's primary artist."""
     names = _rawArtistNames(getattr(item, 'artists', None))
@@ -1176,7 +1204,7 @@ def _metadataArtistNames(item):
     return [str(name).strip()] if name else []
 
 
-def _setMetaData(track: Track, album: Album, filepath, contributors, lyrics):
+def _setMetaData(track: Track, album: Album, filepath, contributors, lyrics, stream=None):
     obj = aigpy.tag.TagTool(filepath)
     obj.album = track.album.title
     obj.title = track.title
@@ -1198,6 +1226,7 @@ def _setMetaData(track: Track, album: Album, filepath, contributors, lyrics):
         obj.totaltrack = int(getattr(album, 'numberOfTracks', 0) or 0)
     coverpath = TIDAL_API.getCoverUrl(album.cover, "1280", "1280")
     _ensureMetadataTags(obj)
+    _setReplayGainTags(obj, stream)
     artwork = None
     try:
         if coverpath:
@@ -1467,7 +1496,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
                 contributors = None
             lyrics = _saveLyricsForTrack(track, existingPath)
             try:
-                _setMetaData(track, album, existingPath, contributors, lyrics)
+                _setMetaData(track, album, existingPath, contributors, lyrics, stream)
                 facts = _verifyMediaQuality(existingPath, stream)
                 record_completion(existingPath, audio_identity(stream), media_facts=facts)
                 _removeFile(partPath)
@@ -1531,7 +1560,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
 
         metadata_complete = True
         try:
-            _setMetaData(track, album, processingPath, contributors, lyrics)
+            _setMetaData(track, album, processingPath, contributors, lyrics, stream)
         except DownloadCancelled:
             raise
         except Exception as e:

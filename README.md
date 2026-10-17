@@ -16,7 +16,8 @@ maintained fork of
   when a format is unavailable.
 - **Anything with a link.** Tracks, albums, playlists, mixes, artists, videos, or
   a text file full of links.
-- **Tagged and organized.** Metadata, cover art, and lyrics, in folders you name.
+- **Tagged and organized.** Metadata, cover art, lyrics, and ReplayGain, in
+  folders you name.
 - **Picks up where it left off.** Interrupted downloads resume and finished
   files are skipped.
 - **Runs everywhere.** Windows, macOS, Linux, Android (Termux), and Docker.
