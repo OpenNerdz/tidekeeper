@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+<!-- release-title: No more silent hangs when TIDAL limits requests -->
+
+- Fix downloads going silent for hours when TIDAL asks Tidekeeper to slow down
+  (#82). Short waits work as before. When TIDAL asks for a longer break,
+  Tidekeeper now pauses and says when it will carry on, instead of waiting
+  without a word.
+- Skip tracks that are already downloaded without asking TIDAL about them
+  first, so resuming a big playlist no longer uses up TIDAL's request limit
+  before reaching new tracks. Files from older versions get this after one more
+  run.
+
 ## 2026.10.17.1 - 2026-10-17
 
 <!-- release-title: ReplayGain tags for even volume -->

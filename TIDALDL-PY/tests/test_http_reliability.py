@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 from email.utils import format_datetime
+import http.server
 from pathlib import Path
 import tempfile
 import threading
@@ -175,6 +176,31 @@ class HttpReliabilityTests(unittest.TestCase):
                 self.assertEqual(session.get_adapter('https://')._pool_maxsize, 1)
             finally:
                 session.close()
+
+    def test_api_transport_returns_retry_after_responses_without_sleeping(self):
+        hits = []
+
+        class Limited(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append(self.path)
+                self.send_response(429)
+                self.send_header('Retry-After', '3600')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Limited)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        # urllib3 used to sleep out Retry-After itself, unseen by the 429 handling.
+        with mock.patch('urllib3.util.retry.time.sleep') as sleep:
+            result = self.api.session.get(f'http://127.0.0.1:{server.server_port}/', timeout=5)
+        self.assertEqual(result.status_code, 429)
+        self.assertEqual(len(hits), 1)
+        sleep.assert_not_called()
 
     def test_restarted_transfer_does_not_double_count_progress(self):
         first = response(headers={'Content-Length': '6'})

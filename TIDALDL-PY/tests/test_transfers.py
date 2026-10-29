@@ -17,9 +17,12 @@ from tidal_dl.runtime import DownloadCancelled, job_context
 from tidal_dl.settings import SETTINGS
 from tidal_dl.tidal import TIDAL_API
 from tidal_dl.transfer_state import (
+    audio_identity,
+    finished_for_request,
     is_completed,
     prepare_transfer,
     record_completion,
+    remember_request,
     video_identity,
 )
 
@@ -219,6 +222,70 @@ class ResumeAndReceiptTests(TransferFixture, unittest.TestCase):
             self.assertEqual(sorted(item.name for item in self.root.iterdir()), ['track.flac'])
             self.assertTrue(download.downloadTrack(track)[0])
         self.assertEqual(request.call_count, 1, 'The existing file should be skipped')
+
+    def test_receipt_request_must_match_track_and_choice(self):
+        SETTINGS.saveReceipts = True
+        path = str(self.root / 'track.flac')
+        Path(path).write_bytes(b'media')
+        identity = {'type': 'track', 'id': '1', 'quality': 'LOSSLESS', 'codec': 'flac'}
+        record_completion(path, identity, request='choice')
+        self.assertTrue(finished_for_request(path, 1, 'choice'))
+        self.assertFalse(finished_for_request(path, 1, 'other choice'))
+        self.assertFalse(finished_for_request(path, 2, 'choice'))
+        self.assertFalse(finished_for_request(str(self.root / 'track.m4a'), 1, 'choice'))
+        record_completion(path, identity, metadata_complete=False, request='choice')
+        self.assertFalse(finished_for_request(path, 1, 'choice'), 'Tags still need repair')
+        record_completion(path, identity, request='choice')
+        Path(path).write_bytes(b'other')
+        self.assertFalse(finished_for_request(path, 1, 'choice'))
+
+    def test_older_receipt_learns_the_request(self):
+        SETTINGS.saveReceipts = True
+        path = str(self.root / 'track.flac')
+        Path(path).write_bytes(b'media')
+        record_completion(path, {'type': 'track', 'id': '1', 'quality': 'LOSSLESS', 'codec': 'flac'})
+        self.assertFalse(finished_for_request(path, 1, 'choice'))
+        remember_request(path, 'choice')
+        self.assertTrue(finished_for_request(path, 1, 'choice'))
+
+    def _downloadTwice(self, stream, existing=False):
+        """Download (or find) a track twice; return how often a stream was needed."""
+        path = str(self.root / 'track.flac')
+        track = SimpleNamespace(id=1, title='Track', allowStreaming=True, streamReady=True)
+        SETTINGS.checkExist = SETTINGS.saveReceipts = True
+        SETTINGS.showTrackInfo = SETTINGS.showProgress = SETTINGS.multiThread = False
+        if existing:
+            # A finished download from a version that wrote no request.
+            Path(path).write_bytes(b'media')
+            record_completion(path, audio_identity(stream))
+        candidates = [str(self.root / 'track.m4a'), path]
+        with mock.patch.object(download, '_resolveTrackForAtmosDownload', return_value=(track, None)), \
+             mock.patch.object(download, '_getTrackStream', return_value=stream) as resolve, \
+             mock.patch.object(download, 'getTrackPath', return_value=path), \
+             mock.patch.object(download, 'getTrackPathCandidates', return_value=candidates), \
+             mock.patch.object(download, '_httpRequest', return_value=FakeResponse(b'media')) as request, \
+             mock.patch.object(TIDAL_API, 'getTrackContributors', return_value=None), \
+             mock.patch.object(download, '_saveLyricsForTrack', return_value=''), \
+             mock.patch.object(download, '_setMetaData'), \
+             mock.patch.object(download, '_verifyMediaQuality', return_value={}):
+            self.assertEqual(download.downloadTrack(track), (True, ''))
+            self.assertEqual(download.downloadTrack(track), (True, ''))
+        self.assertEqual(request.call_count, 0 if existing else 1)
+        return resolve.call_count
+
+    def _flacStream(self, fallbackQuality=None):
+        return SimpleNamespace(trackid=1, soundQuality='LOSSLESS', codec='flac', container='flac',
+                               encryptionKey=None, fallbackQuality=fallbackQuality,
+                               url='https://cdn.invalid/file', urls=['https://cdn.invalid/file'])
+
+    def test_finished_track_is_skipped_without_a_stream_lookup(self):
+        self.assertEqual(self._downloadTwice(self._flacStream()), 1)
+
+    def test_fallback_quality_keeps_checking_for_the_chosen_quality(self):
+        self.assertEqual(self._downloadTwice(self._flacStream(fallbackQuality='HiFi')), 2)
+
+    def test_older_download_needs_one_stream_lookup_then_none(self):
+        self.assertEqual(self._downloadTwice(self._flacStream(), existing=True), 1)
 
     def test_cover_download_leaves_only_the_image(self):
         album = SimpleNamespace(title='Album', cover='cover-id')

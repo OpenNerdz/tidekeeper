@@ -118,7 +118,7 @@ def video_identity(video, quality):
     return {'type': 'video', 'id': str(video.id), 'quality': quality.name}
 
 
-def record_completion(path, identity, metadata_complete=True, media_facts=None):
+def record_completion(path, identity, metadata_complete=True, media_facts=None, request=None):
     stat = os.stat(path)
     if stat.st_size <= 0:
         raise OSError('Cannot finalize an empty media file')
@@ -130,12 +130,49 @@ def record_completion(path, identity, metadata_complete=True, media_facts=None):
         except OSError:
             pass
         return
-    _atomicWrite(path + '.tidekeeper.json', json.dumps({
+    receipt = {
         'identity': identity, 'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns,
         'sha256': file_digest(path), 'fingerprint': file_fingerprint(path),
         'media': media_facts or {},
         'metadata_complete': metadata_complete,
-    }))
+    }
+    if request:
+        receipt['request'] = request
+    _atomicWrite(path + '.tidekeeper.json', json.dumps(receipt))
+
+
+def remember_request(path, request):
+    """Note on an existing receipt that the current quality choice yields it."""
+    if not SETTINGS.saveReceipts or not request:
+        return
+    receipt_path = path + '.tidekeeper.json'
+    receipt = _read(receipt_path)
+    if receipt and receipt.get('request') != request:
+        receipt['request'] = request
+        try:
+            _atomicWrite(receipt_path, json.dumps(receipt))
+        except OSError:
+            # Only costs a manifest lookup when this track is next skipped.
+            pass
+
+
+def finished_for_request(path, track_id, request):
+    """Whether path is a complete, tagged copy of a track made for request.
+
+    Lets a resumed download skip finished tracks without asking TIDAL for a
+    stream first. Receipts without a matching request never qualify.
+    """
+    if not SETTINGS.saveReceipts:
+        try:
+            return os.path.isfile(path) and os.path.getsize(path) > 0
+        except OSError:
+            return False
+    receipt = _read(path + '.tidekeeper.json')
+    identity = receipt.get('identity')
+    if (not request or receipt.get('request') != request or not isinstance(identity, dict)
+            or identity.get('type') != 'track' or identity.get('id') != str(track_id)):
+        return False
+    return completion_state(path, identity) == (True, True)
 
 
 def completion_state(path, identity, verify=False):

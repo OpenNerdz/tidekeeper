@@ -1,13 +1,18 @@
+import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from tidal_dl.http import retry_after_seconds
+from tidal_dl.settings import SETTINGS
 from tidal_dl.tidal import (
     API_BASE_PRIMARY,
     PLAYBACK_ASSET_NOT_READY_ATTEMPTS,
     RateLimitWaitBudget,
+    RequestRateLimiter,
     TidalAPI,
     TidalApiError,
+    _pauseText,
 )
 
 
@@ -134,6 +139,77 @@ class RateLimitWaitCapTests(unittest.TestCase):
         self.assertEqual(result, {"manifest": "ok"})
         self.assertEqual(get.call_count, 5)
         self.assertEqual(sleep.call_count, 4)
+
+
+class LongRetryAfterTests(unittest.TestCase):
+    """A Retry-After beyond the wait budget pauses visibly instead of failing."""
+
+    def setUp(self):
+        self.api = TidalAPI()
+        self.addCleanup(self.api.session.close)
+        self.api.playbackRateLimiter = RequestRateLimiter(minInterval=0.0)
+        for name, value in [("downloadDelay", False), ("adaptiveRateLimit", False)]:
+            patcher = mock.patch.object(SETTINGS, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_catalog_request_pauses_for_long_retry_after_then_retries(self):
+        limited = _response(429, text="rate limited", headers={"Retry-After": "600"})
+        success = _response(200, {"id": 1}, text='{"id":1}')
+        with mock.patch.object(self.api.session, "get", side_effect=[limited, success]) as get, \
+             mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+             mock.patch("tidal_dl.tidal.print") as printed:
+            result = self.api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
+        self.assertEqual(result, {"id": 1})
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_called_once_with(600.0)
+        self.assertIn("10 min pause", printed.call_args.args[0])
+        # Other paced requests wait for the same pause.
+        self.assertGreater(self.api.playbackRateLimiter._nextAllowed, time.monotonic() + 500)
+
+    def test_manifest_request_pauses_for_long_retry_after_then_retries(self):
+        limited = _response(429, text="rate limited", headers={"Retry-After": "3600"})
+        success = _response(200, {"data": {"attributes": {"manifest": "ok"}}})
+        with mock.patch.object(self.api.session, "get", side_effect=[limited, success]), \
+             mock.patch.object(self.api, "_waitForStreamRequestQuota"), \
+             mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+             mock.patch("tidal_dl.tidal.print"):
+            result = self.api._getOpenApiTrackManifestOnce(1, ["FLAC"], "DOWNLOAD")
+        self.assertEqual(result, {"manifest": "ok"})
+        sleep.assert_called_once_with(3600.0)
+
+    def test_pause_beyond_the_cap_fails_without_waiting(self):
+        limited = _response(429, text="rate limited", headers={"Retry-After": str(7 * 60 * 60)})
+        with mock.patch.object(self.api.session, "get", return_value=limited) as get, \
+             mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+             mock.patch("tidal_dl.tidal.print"):
+            with self.assertRaises(TidalApiError) as raised:
+                self.api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
+        self.assertEqual(raised.exception.statusCode, 429)
+        self.assertEqual(get.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_repeated_pauses_stop_at_the_cap(self):
+        limited = _response(429, text="rate limited", headers={"Retry-After": str(4 * 60 * 60)})
+        with mock.patch.object(self.api.session, "get", return_value=limited) as get, \
+             mock.patch("tidal_dl.tidal.time.sleep") as sleep, \
+             mock.patch("tidal_dl.tidal.print"):
+            with self.assertRaises(TidalApiError):
+                self.api._getOnce("albums/1", urlpre=API_BASE_PRIMARY)
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_called_once_with(4 * 60 * 60.0)
+
+    def test_pause_text(self):
+        for seconds, text in [(91, "2 min"), (600, "10 min"), (3600, "1 h"), (5000, "1 h 24 min")]:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(_pauseText(seconds), text)
+
+    def test_retry_after_seconds_without_a_usable_header(self):
+        for headers in [{}, {"Retry-After": "soon"}, {"Retry-After": "-5"}, {"Retry-After": "inf"}]:
+            with self.subTest(headers=headers):
+                self.assertIsNone(retry_after_seconds(_response(429, headers=headers)))
+        self.assertIsNone(retry_after_seconds(None))
+        self.assertEqual(retry_after_seconds(_response(429, headers={"Retry-After": "120"})), 120.0)
 
 
 if __name__ == "__main__":

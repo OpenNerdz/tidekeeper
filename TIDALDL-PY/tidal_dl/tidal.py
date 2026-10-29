@@ -18,11 +18,13 @@ from .runtime import print, check_cancelled, DownloadCancelled, sleep as cancell
 import logging
 import math
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from threading import Lock, RLock
 from urllib.parse import quote, unquote, urlparse
 
 import aigpy
 import requests
+from urllib3.util.retry import Retry
 
 from . import apiKey as apiKeys
 from .enums import (
@@ -44,7 +46,7 @@ from .model import (
     VideoStreamUrl,
 )
 from .manifests import MAX_MANIFEST_BYTES, ProtectedManifestError, best_dash_representation, hls_variants
-from .http import retry_delay, response_bytes
+from .http import retry_after_seconds, retry_delay, response_bytes
 from .settings import SETTINGS, TOKEN, Settings, syncPlaybackRateLimiter
 
 REQUEST_TIMEOUT = (5, 60)
@@ -57,6 +59,10 @@ AUTH_MAX_ATTEMPTS = 3
 # HTTP 429 retries never consume the attempt budget above. Instead the total
 # time spent waiting on rate limits for one logical request is capped here.
 RATE_LIMIT_MAX_WAIT_SECONDS = 90
+# A Retry-After longer than that budget is a deliberate pause request from
+# TIDAL: honour it visibly instead of failing every remaining track, up to
+# this total per logical request (urllib3's own Retry-After cap).
+RATE_LIMIT_MAX_PAUSE_SECONDS = 6 * 60 * 60
 # Keep short: signed CDN URLs often expire well under 10 minutes.
 STREAM_CACHE_TTL_SECONDS = 90
 STREAM_CACHE_MAX_ITEMS = 256
@@ -103,6 +109,11 @@ class RequestRateLimiter:
             self._nextAllowed = max(self._nextAllowed, time.monotonic() + self._adaptiveInterval)
             return self._adaptiveInterval
 
+    def holdUntil(self, deadline):
+        """Keep other paced requests back until a server-requested pause ends."""
+        with self._lock:
+            self._nextAllowed = max(self._nextAllowed, deadline)
+
     def reward(self):
         with self._lock:
             if self._adaptiveInterval <= self.minInterval:
@@ -144,6 +155,8 @@ class RateLimitWaitBudget:
         self.maxWaitSeconds = maxWaitSeconds
         self.waited = 0.0
         self.attempts = 0
+        # Long, server-requested pauses are tracked apart from short waits.
+        self.paused = 0.0
 
     def allows(self, delay):
         return math.isfinite(delay) and delay > 0 and self.waited + delay <= self.maxWaitSeconds
@@ -151,6 +164,14 @@ class RateLimitWaitBudget:
     def record(self, delay):
         self.waited += delay
         self.attempts += 1
+
+
+def _pauseText(seconds):
+    minutes = max(1, math.ceil(seconds / 60))
+    hours, minutes = divmod(minutes, 60)
+    if not hours:
+        return f"{minutes} min"
+    return f"{hours} h {minutes} min" if minutes else f"{hours} h"
 
 
 class TidalApiError(Exception):
@@ -174,8 +195,10 @@ class TidalAPI(object):
         self.apiKey = apiKeys.getItem(apiKeys.getDefaultIndex())
         self.session = requests.Session()
         # Retry transient connection failures at the transport level; HTTP
-        # status handling (401/404/429) stays in the request helpers.
-        adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=3)
+        # status handling (401/404/429) stays in the request helpers. urllib3
+        # would otherwise sleep out a 429/503 Retry-After (up to 6 h) unseen.
+        retries = Retry(total=3, respect_retry_after_header=False)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=retries)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         self.playbackRateLimiter = PLAYBACK_RATE_LIMITER
@@ -426,6 +449,10 @@ class TidalAPI(object):
         Shared by the catalog and OpenAPI manifest request loops so both apply
         the same adaptive penalty, logging, and wait-cap semantics.
         """
+        requested = retry_after_seconds(response)
+        if requested is not None and requested > budget.maxWaitSeconds:
+            self._pauseForRateLimit(action, response, budget, requested)
+            return
         delay = self._applyRateLimitPenalty(response, budget.attempts)
         if not budget.allows(delay):
             raise self._httpError(action, response)
@@ -433,6 +460,29 @@ class TidalAPI(object):
         response.close()
         cancellable_sleep(delay)
         budget.record(delay)
+
+    def _pauseForRateLimit(self, action, response, budget, seconds):
+        """Honour a long Retry-After, telling the user when requests resume.
+
+        Failing instead would fail every following track too, since TIDAL
+        answers each of them the same way until the pause is over.
+        """
+        if budget.paused + seconds > RATE_LIMIT_MAX_PAUSE_SECONDS:
+            raise self._httpError(action, response)
+        if SETTINGS.adaptiveRateLimit:
+            # The pause itself satisfies TIDAL; only ease back in afterwards.
+            penalize = getattr(self.playbackRateLimiter, 'penalize', None)
+            if penalize is not None:
+                penalize()
+        holdUntil = getattr(self.playbackRateLimiter, 'holdUntil', None)
+        if holdUntil is not None:
+            holdUntil(time.monotonic() + seconds)
+        resume = datetime.now() + timedelta(seconds=seconds)
+        print(f"Too many requests: TIDAL asked for a {_pauseText(seconds)} pause. "
+              f"Waiting until {resume:%H:%M}; cancel to stop.")
+        response.close()
+        cancellable_sleep(seconds)
+        budget.paused += seconds
 
     def _backOffForAssetNotReady(self, response, attempt):
         """Sleep with a linear, capped delay while TIDAL finishes preparing an asset."""

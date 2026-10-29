@@ -350,6 +350,32 @@ def getTrackPath(track, stream, album=None, playlist=None):
     return os.path.join(base, _safeMediaPath(retpath, extension))
 
 
+def getTrackPathCandidates(track, album=None, playlist=None):
+    """Every path getTrackPath could give the track, before its stream is known.
+
+    Without {StreamQuality} or {Codec} in the format, the stream only picks
+    the extension and the Atmos suffix. With them, nothing is returned.
+    """
+    pathFormat = SETTINGS.trackFileFormat or SETTINGS.getDefaultPathFormat(Type.Track)
+    if _hasStreamIdentifierToken(pathFormat):
+        return []
+    flac = StreamUrl()
+    flac.codec, flac.url = 'flac', 'track.flac'
+    m4a = StreamUrl()
+    m4a.container = 'mp4'
+    streams = [flac, m4a]
+    if SETTINGS.audioQuality == AudioQuality.Atmos:
+        atmos = StreamUrl()
+        atmos.container, atmos.soundQuality = 'mp4', 'DOLBY_ATMOS'
+        streams.append(atmos)
+    paths = []
+    for stream in streams:
+        path = getTrackPath(track, stream, album, playlist)
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
 def getVideoPath(video, album=None, playlist=None):
     base = os.path.join(downloadRoot(), 'Video')
     if album is not None and album.title is not None:

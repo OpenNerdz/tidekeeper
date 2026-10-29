@@ -163,9 +163,10 @@ options, such as `.lrc` lyrics files, parallel downloads, request delays, and
 playlist folders, are in **Settings** or the terminal menu's **Options**.
 
 Each finished file also gets a small `.tidekeeper.json` receipt, which lets
-Tidekeeper skip files that are already complete at the chosen quality and repair
-missing tags later. To keep folders clean, turn off **Save download receipts**;
-skipping then only checks that the file exists.
+Tidekeeper skip files that are already complete at the chosen quality, without
+asking TIDAL about them again, and repair missing tags later. To keep folders
+clean, turn off **Save download receipts**; skipping then only checks that the
+file exists.
 
 ## Update
 
@@ -226,6 +227,10 @@ include the endpoint, client, country, and quality from the error in an issue.
 
 TIDAL is limiting requests. Keep the request delay on and raise it to `30` or
 `60` seconds in **Settings** (terminal menu **Options**), then retry.
+
+When TIDAL asks for a longer break, Tidekeeper pauses and shows when it will
+carry on, for example `Waiting until 18:35`. Cancel to stop instead; finished
+files are skipped next time.
 
 </details>
 

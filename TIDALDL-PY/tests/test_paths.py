@@ -199,6 +199,42 @@ class PathTests(unittest.TestCase):
             self.assertNotIn(illegal, name)
 
 
+class TrackPathCandidateTests(unittest.TestCase):
+    def setUp(self):
+        self.track = Track()
+        self.track.id, self.track.title, self.track.trackNumber = 4, 'Song', 1
+        for name in ('saveAsFlac', 'audioQuality', 'trackFileFormat'):
+            patcher = mock.patch.object(SETTINGS, name, getattr(SETTINGS, name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _stream(self, **fields):
+        stream = StreamUrl()
+        for name, value in fields.items():
+            setattr(stream, name, value)
+        return stream
+
+    def test_candidates_cover_every_stream_the_track_can_get(self):
+        streams = [
+            self._stream(codec='FLAC', container='mp4', manifestMimeType='application/dash+xml'),
+            self._stream(codec='FLAC', url='https://cdn.invalid/a.flac'),
+            self._stream(codec='mp4a.40.2', container='mp4', soundQuality='HIGH'),
+            self._stream(codec='eac3', container='mp4', soundQuality='DOLBY_ATMOS'),
+        ]
+        for saveAsFlac in (True, False):
+            for quality in (AudioQuality.Max, AudioQuality.Atmos):
+                SETTINGS.saveAsFlac, SETTINGS.audioQuality = saveAsFlac, quality
+                candidates = paths.getTrackPathCandidates(self.track)
+                for stream in streams:
+                    with self.subTest(saveAsFlac=saveAsFlac, quality=quality, codec=stream.codec):
+                        self.assertIn(getTrackPath(self.track, stream), candidates)
+
+    def test_stream_tokens_in_the_format_leave_no_candidates(self):
+        for token in ('{StreamQuality}', '{Codec}'):
+            SETTINGS.trackFileFormat = '{TrackNumber} - {TrackTitle} ' + token
+            self.assertEqual(paths.getTrackPathCandidates(self.track), [])
+
+
 class DownloadRootTests(unittest.TestCase):
     def test_home_relative_download_folder_is_expanded_for_every_output(self):
         album = Album()

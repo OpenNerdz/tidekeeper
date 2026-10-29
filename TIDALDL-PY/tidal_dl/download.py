@@ -10,6 +10,7 @@
 '''
 
 from .runtime import check_cancelled, DownloadCancelled, sleep as cancellable_sleep
+import hashlib
 import logging
 import json
 import math
@@ -32,7 +33,7 @@ from mutagen.mp4 import MP4FreeForm
 from .decryption import decrypt_file, decrypt_security_token
 from .enums import AudioQuality, Type
 from .model import Album, Lyrics, Playlist, Track, Video
-from .paths import downloadRoot, getAlbumPath, getTrackPath, getVideoPath
+from .paths import downloadRoot, getAlbumPath, getTrackPath, getTrackPathCandidates, getVideoPath
 from .printf import Printf
 from .settings import SETTINGS
 from .tidal import TIDAL_API
@@ -40,7 +41,7 @@ from .manifests import MAX_MANIFEST_BYTES, hls_segments
 from .http import retry_delay, response_bytes
 from .transfer_state import (
     prepare_transfer, complete_transfer, audio_identity, video_identity,
-    record_completion, is_completed, completion_state,
+    record_completion, is_completed, completion_state, finished_for_request, remember_request,
 )
 from .runtime import run_process, redact, output_lock
 from .network_policy import UnsafeMediaUrl, validate_media_url
@@ -1402,6 +1403,49 @@ def _getTrackStream(track_id):
     return TIDAL_API.getStreamUrlByPriority(track_id, priority)
 
 
+def _streamRequest():
+    """Short key for the quality choice and client that select a track's stream."""
+    choice = {
+        'client': TIDAL_API.apiKey.get('clientId'),
+        'qualities': [quality.name for quality in SETTINGS.getDownloadAudioQualityPriority()],
+    }
+    return hashlib.sha256(json.dumps(choice, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _receiptRequest(stream):
+    # A fallback quality (say HiFi after Max failed) is no promise for later
+    # runs, so those files keep the manifest check and can still be upgraded.
+    return None if getattr(stream, 'fallbackQuality', None) else _streamRequest()
+
+
+def _skipFinishedTrack(track, path):
+    if SETTINGS.lyricFile:
+        _saveLyricsForTrack(track, path)
+    Printf.success(aigpy.path.getFileName(path) + " (skip:already exists!)")
+    return True, ''
+
+
+def _finishedTrackPath(track, album=None, playlist=None):
+    """A finished copy of the track found without asking TIDAL for a stream.
+
+    Resuming a large playlist would otherwise spend a rate-limited manifest
+    request on every track that is already on disk.
+    """
+    if not SETTINGS.checkExist:
+        return None
+    try:
+        candidates = getTrackPathCandidates(track, album, playlist)
+    except Exception as error:
+        # Only a shortcut: the stream-based path reports real path problems.
+        logging.debug("No stream-free skip check for track %s: %s", getattr(track, 'id', None), error)
+        return None
+    request = _streamRequest()
+    for path in candidates:
+        if finished_for_request(path, track.id, request):
+            return path
+    return None
+
+
 def _wantsAtmosDownload():
     return any(quality == AudioQuality.Atmos for quality in SETTINGS.getDownloadAudioQualityPriority())
 
@@ -1449,6 +1493,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
     """Resolve stream → download CDN bytes → decrypt → tag.
 
     Pipeline:
+      0. Skip with no stream lookup when a receipt shows the same quality choice made the file
       1. Quality priority + OpenAPI/playback fallback (``getStreamUrlByPriority``)
       2. Skip only when a completion receipt matches the file and requested media
       3. Download to ``path.part`` with Range resume / multi-segment concat
@@ -1464,6 +1509,9 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         track, album = _resolveTrackForAtmosDownload(track, album)
         title = getattr(track, 'title', None) or str(getattr(track, 'id', 'unknown'))
         _ensureTrackStreamable(track)
+        existingPath = _finishedTrackPath(track, album, playlist)
+        if existingPath is not None:
+            return _skipFinishedTrack(track, existingPath)
         stream = _getTrackStream(track.id)
         stream.trackid = track.id
         path = getTrackPath(track, stream, album, playlist)
@@ -1480,10 +1528,10 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
         # Inspect receipts once for both skipping and metadata-only repair.
         existingPath, metadataComplete = _existingMediaState(path, stream)
         if SETTINGS.checkExist and existingPath is not None and metadataComplete:
-            if SETTINGS.lyricFile:
-                _saveLyricsForTrack(track, existingPath)
-            Printf.success(aigpy.path.getFileName(existingPath) + " (skip:already exists!)")
-            return True, ''
+            # Receipts from older versions learn the request here, so the
+            # next run can skip this track without a manifest lookup.
+            remember_request(existingPath, _receiptRequest(stream))
+            return _skipFinishedTrack(track, existingPath)
 
         # A completed audio file whose tag write failed is repaired in place;
         # never fetch or decrypt the media bytes a second time just for tags.
@@ -1498,7 +1546,8 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             try:
                 _setMetaData(track, album, existingPath, contributors, lyrics, stream)
                 facts = _verifyMediaQuality(existingPath, stream)
-                record_completion(existingPath, audio_identity(stream), media_facts=facts)
+                record_completion(existingPath, audio_identity(stream), media_facts=facts,
+                                  request=_receiptRequest(stream))
                 _removeFile(partPath)
                 _removeFile(partPath + '.source.json')
                 _removeDir(partsDir)
@@ -1510,7 +1559,8 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
                 # Re-probe before preserving it as media-complete.
                 facts = _verifyMediaQuality(existingPath, stream)
                 record_completion(
-                    existingPath, audio_identity(stream), metadata_complete=False, media_facts=facts
+                    existingPath, audio_identity(stream), metadata_complete=False, media_facts=facts,
+                    request=_receiptRequest(stream),
                 )
                 logging.warning("Unable to repair metadata for %s: %s", existingPath, error)
                 Printf.info(f"Downloaded '{title}', but metadata tagging is still incomplete: {str(error)}")
@@ -1579,6 +1629,7 @@ def downloadTrack(track: Track, album=None, playlist=None, userProgress=None, pa
             audio_identity(stream),
             metadata_complete=metadata_complete,
             media_facts=media_facts,
+            request=_receiptRequest(stream),
         )
         # The final media is complete regardless of whether optional metadata
         # succeeded. Its receipt is enough for a tag-only retry.
