@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.10.29.0 - 2026-10-29
+
 <!-- release-title: No more silent hangs when TIDAL limits requests -->
 
 - Fix downloads going silent for hours when TIDAL asks Tidekeeper to slow down
@@ -12,6 +14,8 @@
   first, so resuming a big playlist no longer uses up TIDAL's request limit
   before reaching new tracks. Files from older versions get this after one more
   run.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.17.1...v2026.10.29.0)
 
 ## 2026.10.17.1 - 2026-10-17
 
