@@ -1,8 +1,8 @@
 # Runtime dependencies — also read by setup.py when building distributions.
 aigpy>=2022.7.8.1
 requests>=2.34.2
-pycryptodome>=3.23.0
+pycryptodome>=4.2.0
 prettytable>=3.18.0
 defusedxml>=0.7.1
-filelock>=4.0.5
-mutagen>=1.47.0
+filelock>=4.1.0
+mutagen>=1.48.1
