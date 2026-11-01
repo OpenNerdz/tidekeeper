@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.11.1.0 - 2026-11-01
+
 <!-- release-title: Fix failed downloads in the Linux apps -->
 
 - Fix every track failing with "Downloaded media failed ffprobe validation" in
@@ -9,6 +11,8 @@
   `ffprobe` and `ffmpeg` were picking up the older libraries bundled with
   Tidekeeper and could not start. They now use the system's own libraries, and
   so does opening folders and links from the app.
+
+[Full changes](https://github.com/OpenNerdz/tidekeeper/compare/v2026.10.29.0...v2026.11.1.0)
 
 ## 2026.10.29.0 - 2026-10-29
 
