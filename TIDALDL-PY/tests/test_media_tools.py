@@ -205,6 +205,70 @@ class MediaProcessingTests(TransferFixture, unittest.TestCase):
         self.assertEqual(facts['verifiedBy'], 'ffprobe')
 
 
+class LibraryPathTests(unittest.TestCase):
+    BUNDLE = '/tmp/_MEIbundle'
+
+    def restored_path(self, environ, frozen=True, platform='linux'):
+        with mock.patch.dict(os.environ, environ), \
+                mock.patch.object(runtime.sys, 'frozen', frozen, create=True), \
+                mock.patch.object(runtime.sys, 'platform', platform):
+            runtime.restore_library_path()
+            return os.environ.get('LD_LIBRARY_PATH')
+
+    def test_standalone_linux_app_restores_the_users_library_path(self):
+        path = self.restored_path({
+            'LD_LIBRARY_PATH': f'{self.BUNDLE}:/opt/lib',
+            'LD_LIBRARY_PATH_ORIG': '/opt/lib',
+        })
+        self.assertEqual(path, '/opt/lib')
+
+    def test_standalone_linux_app_drops_the_bundle_when_the_user_set_no_path(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop('LD_LIBRARY_PATH_ORIG', None)
+            self.assertIsNone(self.restored_path({'LD_LIBRARY_PATH': self.BUNDLE}))
+
+    def test_library_path_is_untouched_outside_standalone_linux_apps(self):
+        cases = {
+            'source install': {'frozen': False, 'platform': 'linux'},
+            'standalone macOS': {'frozen': True, 'platform': 'darwin'},
+            'standalone Windows': {'frozen': True, 'platform': 'win32'},
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                path = self.restored_path({
+                    'LD_LIBRARY_PATH': '/opt/lib',
+                    'LD_LIBRARY_PATH_ORIG': '/other/lib',
+                }, **case)
+                self.assertEqual(path, '/opt/lib')
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Only Linux bundles set this path')
+    def test_media_tools_never_inherit_the_bundle_once_the_package_is_imported(self):
+        # Keep the runner's own path: some Python builds need it to start at all.
+        inherited = os.environ.get('LD_LIBRARY_PATH', '')
+        code = (
+            'import sys\n'
+            'sys.frozen = True\n'
+            'from tidal_dl.runtime import run_process\n'
+            "child = 'import os; print(os.environ.get(\"LD_LIBRARY_PATH\"))'\n"
+            "done = run_process([sys.executable, '-c', child], capture_output=True, text=True)\n"
+            'print(done.stdout)\n'
+        )
+        completed = subprocess.run(
+            [sys.executable, '-c', code],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=Path(__file__).resolve().parents[1],
+            env={
+                **os.environ,
+                'LD_LIBRARY_PATH': f'{self.BUNDLE}:{inherited}',
+                'LD_LIBRARY_PATH_ORIG': inherited,
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), inherited)
+
+
 class FlacExportCancellationTests(ProfileFixture, unittest.TestCase):
     def test_cancelled_flac_export_cleans_up_ffmpeg_output(self):
         SETTINGS.saveAsFlac = True

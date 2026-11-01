@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+<!-- release-title: Fix failed downloads in the Linux apps -->
+
+- Fix every track failing with "Downloaded media failed ffprobe validation" in
+  the standalone Linux apps on newer systems such as Fedora (#85). The system's
+  `ffprobe` and `ffmpeg` were picking up the older libraries bundled with
+  Tidekeeper and could not start. They now use the system's own libraries, and
+  so does opening folders and links from the app.
+
 ## 2026.10.29.0 - 2026-10-29
 
 <!-- release-title: No more silent hangs when TIDAL limits requests -->

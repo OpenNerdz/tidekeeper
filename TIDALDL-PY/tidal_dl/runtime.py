@@ -31,6 +31,27 @@ _LEGACY_LOCK_NAME = re.compile(r'^[0-9a-f]{64}\.lock$')
 _NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
+def restore_library_path():
+    """Give child processes the library path the user started the app with.
+
+    PyInstaller's Linux bootloader puts its bundled libraries first on
+    LD_LIBRARY_PATH. System tools such as ffprobe, ffmpeg and xdg-open inherit
+    that and fail to start when the bundle's libraries are older than theirs.
+    The app itself is unaffected: the loader read the variable at startup.
+    """
+    if not (getattr(sys, 'frozen', False) and sys.platform.startswith('linux')):
+        return
+    original = os.environ.get('LD_LIBRARY_PATH_ORIG')
+    if original is None:
+        os.environ.pop('LD_LIBRARY_PATH', None)
+    else:
+        os.environ['LD_LIBRARY_PATH'] = original
+
+
+# This is the package's first import, so it runs before anything can start a process.
+restore_library_path()
+
+
 class DownloadCancelled(Exception):
     pass
 
